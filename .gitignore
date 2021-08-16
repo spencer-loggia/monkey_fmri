@@ -1,4 +1,4 @@
-*.DStore*
+*.DS_Store*
 *MAC*
 *OSX*
 *osx*
@@ -6,4 +6,6 @@
 *checkpoint*
 *pycharm*
 *cache*
+test/data/*
+test/tmp/*
 
