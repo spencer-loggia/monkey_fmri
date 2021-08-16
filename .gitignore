@@ -1,0 +1,9 @@
+*.DStore*
+*MAC*
+*OSX*
+*osx*
+*.idea*
+*checkpoint*
+*pycharm*
+*cache*
+
