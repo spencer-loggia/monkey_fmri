@@ -32,13 +32,15 @@ def unpack(inF,outF,runs,HDR):
     HDRs = ['mion','bold']
     if HDR.lower() in HDRs:
         for x in runs:
-            runlist += '\ -run %s %s nii f.nii'%(x,HDR)
-        end
-        cmd = 'dcmunpack -src . -index-in'
+            runlist += '\ -run %s %s nii f.nii '%(x,HDR)
+        inxF = os.path.join(outF,'dcm.index.dat')
+        cmd = 'dcmunpack -src %s -index-in %s -targ %s %s'%(inF,inxF,outF,runlist)
+        call(cmd,shell=True)
+    else:
+        print('Please enter either "MION" or "BOLD"')
             
         
     
 
 
-# def unpack_tsv():
 
