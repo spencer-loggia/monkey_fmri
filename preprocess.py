@@ -15,6 +15,7 @@ import nipype.interfaces.utility as util  # utility
 import nipype.pipeline.engine as pe  # pypeline engine
 import nipype.algorithms.modelgen as model  # model generation
 import nipype.algorithms.rapidart as ra  # artifact detection
+import nibabel as nib
 
 from matplotlib import pyplot as plt
 
@@ -117,4 +118,125 @@ def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, th
     fig.show()
     fig.savefig(save_loc + '/moco_rms_displacement.eps', format='eps')
     return good_moco
+
+
+def linear_affine_registration(functional_input_dirs: List[str], template_file: str, fname: str ='moco.nii', output: str = None):
+    flt = fsl.FLIRT()
+    outputs = []
+    for source_dir in functional_input_dirs:
+        try:
+            files = os.listdir(source_dir)
+        except (FileExistsError, FileNotFoundError):
+            print("could not find file")
+            exit(1)
+        for source in files:
+            if fname == source:
+                if not output:
+                    local_out = os.path.join(source_dir, 'moco_flirt.nii'.gz)
+                    mat_out = os.path.join(source_dir, 'moco_flirt.mat')
+                else:
+                    out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+                    local_out = os.path.join(out_dir, 'moco_flirt.nii.gz')
+                    mat_out = os.path.join(out_dir, 'moco_flirt.mat')
+                flt.inputs.in_file =  os.path.join(source_dir, source)
+                flt.inputs.reference = template_file
+                flt.inputs.out_file = local_out
+                flt.inputs.out_matrix_file = mat_out
+                flt.cmdline
+                out = flt.run()
+                outputs.append(out)
+    return outputs
+
+
+def nonlinear_registration(functional_input_dirs: List[str], template_file: str, fname: str ='moco_flirt.nii.gz', output: str = None):
+    fnt = fsl.FNIRT()
+    outputs = []
+    for source_dir in functional_input_dirs:
+        try:
+            files = os.listdir(source_dir)
+        except (FileExistsError, FileNotFoundError):
+            print("could not find file")
+            exit(1)
+        for source in files:
+            if fname in source:
+                if not output:
+                    local_out = os.path.join(source_dir, 'nirt.nii.gz')
+                    mat_out = os.path.join(source_dir, 'nirt_jacobian.mat')
+                else:
+                    out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+                    local_out = os.path.join(out_dir, 'nirt.nii.gz')
+                    mat_out = os.path.join(out_dir, 'nirt_jacobian.nii.gz')
+                fnt.inputs.in_file = os.path.join(source_dir, source)
+                fnt.inputs.ref_file = template_file
+                fnt.inputs.jacobian_file = mat_out
+                fnt.inputs.warped_file = local_out
+                fnt.cmdline
+                out = fnt.run()
+                outputs.append(out)
+    return outputs
+
+
+def fix_nii_headers(input_dirs: List[str], output: str, fname: str = 'nirt.nii.gz', tr=2000):
+    for scan_dir in input_dirs:
+        files = os.listdir(scan_dir)
+        os.environ.setdefault("SUBJECTS_DIR", scan_dir)
+        cvt = freesurfer.MRIConvert()
+        for f in files:
+            if len(f) > 3 and f == fname:
+                cvt.inputs.in_file = os.path.join(scan_dir, f)
+                if not output:
+                    local_out = os.path.join(scan_dir, 'fixed.nii')
+                else:
+                    out_dir = _create_dir_if_needed(output, os.path.basename(scan_dir))
+                    local_out = os.path.join(out_dir, 'fixed.nii')
+                cvt.inputs.out_file = local_out
+                cvt.inputs.tr = tr
+                cvt.inputs.out_type = 'nii'
+                cvt.cmdline
+                cvt.run()
+
+
+def smooth(input_dirs: List[str], output: str, fname: str = 'fixed.nii', bright_tresh=1000.0, fwhm=4.0):
+    sus = fsl.SUSAN()
+    outputs = []
+    for source_dir in input_dirs:
+        try:
+            files = os.listdir(source_dir)
+        except (FileExistsError, FileNotFoundError):
+            print("could not find file")
+            exit(1)
+        for source in files:
+            if fname in source:
+                if not output:
+                    local_out = os.path.join(source_dir, 'smoothed.nii')
+                else:
+                    out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+                    local_out = os.path.join(out_dir, 'smoothed.nii')
+                sus.inputs.in_file = os.path.join(source_dir, source)
+                sus.inputs.fwhm = fwhm
+                sus.smoothed_file = local_out
+                sus.inputs.brightness_threshold = bright_tresh
+                sus.cmdline
+                out = sus.run()
+                outputs.append(out)
+        return outputs
+
+
+def normalize(input_dirs: List[str], output: str, fname='smooth.nii'):
+    for source_dir in input_dirs:
+        try:
+            files = os.listdir(source_dir)
+        except (FileExistsError, FileNotFoundError):
+            print("could not find file")
+            exit(1)
+        for source in files:
+            if fname in source:
+                if not output:
+                    local_out = os.path.join(source_dir, 'smoothed.nii.gz')
+                else:
+                    out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+                    local_out = os.path.join(out_dir, 'smoothed.nii.gz')
+                    nifti = nib.load(os.path.join(source_dir, source))
+                    print(nifti.header)
+    raise NotImplementedError
 

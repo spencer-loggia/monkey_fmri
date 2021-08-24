@@ -6,6 +6,7 @@ import sys
 import os
 import glob
 
+
 def scan_log(inF,outF):
     if os.path.isfile(os.path.join(outF, 'scan.info')):
         while True:

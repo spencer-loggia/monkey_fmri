@@ -1,5 +1,6 @@
 import pytest
-from preprocess import convert_to_sphinx, motion_correction, plot_moco_rms_displacement
+from preprocess import convert_to_sphinx, motion_correction, plot_moco_rms_displacement, \
+    linear_affine_registration, nonlinear_registration, fix_nii_headers, smooth
 import os
 import shutil
 
@@ -43,6 +44,53 @@ def test_plot_moco():
     assert all(good_moco[k] for k in good_moco.keys())
 
 
+def test_linear_registration():
+    path = 'data/castor_2010_small_moco/11'
+    anatomical = 'data/castor_anatomical/castor.nii'
+    try:
+        os.mkdir('./tmp')
+    except FileExistsError:
+        shutil.rmtree('./tmp')
+        os.mkdir('./tmp')
+    res = linear_affine_registration([path], anatomical, output='tmp')
+    assert(all(['moco_flirt.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+           and len(os.listdir('./tmp')) > 0)
+    print('tested linear affine registration')
 
 
+def test_nonlinear_registration():
+    path = 'data/castor_2010_small_flirt/11'
+    anatomical = 'data/castor_anatomical/castor.nii'
+    try:
+        os.mkdir('./tmp')
+    except FileExistsError:
+        shutil.rmtree('./tmp')
+        os.mkdir('./tmp')
+    res = nonlinear_registration([path], anatomical, output='tmp')
+    assert(all(['nirt.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+           and len(os.listdir('./tmp')) > 0)
+    print('tested nonlinear registration')
 
+
+def test_fix_header():
+    path = 'data/castor_2010_small_nirt/11'
+    try:
+        os.mkdir('./tmp')
+    except FileExistsError:
+        shutil.rmtree('./tmp')
+        os.mkdir('./tmp')
+    res = fix_nii_headers([path], output='tmp')
+    assert(all(['fixed.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+           and len(os.listdir('./tmp')) > 0)
+
+
+def test_smooth():
+    path = 'data/castor_2010_small_fixed/11'
+    try:
+        os.mkdir('./tmp')
+    except FileExistsError:
+        shutil.rmtree('./tmp')
+        os.mkdir('./tmp')
+    res = smooth([path], output='tmp')
+    assert(all(['smoothed.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+           and len(os.listdir('./tmp')) > 0)
