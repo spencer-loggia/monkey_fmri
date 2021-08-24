@@ -1,5 +1,7 @@
 from __future__ import print_function
 from __future__ import division
+
+import shutil
 from typing import List, Union, Tuple, Dict
 
 import numpy as np
@@ -208,21 +210,29 @@ def smooth(input_dirs: List[str], output: str, fname: str = 'fixed.nii', bright_
         for source in files:
             if fname in source:
                 if not output:
-                    local_out = os.path.join(source_dir, 'smoothed.nii')
+                    local_out = os.path.join(source_dir, 'smooth.nii.gz')
                 else:
                     out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                    local_out = os.path.join(out_dir, 'smoothed.nii')
+                    local_out = os.path.join(out_dir, 'smooth.nii.gz')
                 sus.inputs.in_file = os.path.join(source_dir, source)
                 sus.inputs.fwhm = fwhm
-                sus.smoothed_file = local_out
                 sus.inputs.brightness_threshold = bright_tresh
                 sus.cmdline
                 out = sus.run()
+                shutil.copy('./' + fname[:-4] + '_smooth.nii.gz', local_out)
+                os.remove('./' + fname[:-4] + '_smooth.nii.gz')
                 outputs.append(out)
         return outputs
 
 
-def normalize(input_dirs: List[str], output: str, fname='smooth.nii'):
+def _normalize_array(arr: np.ndarray) -> np.ndarray:
+    mean = np.mean(arr.reshape(-1))
+    std = np.std(arr.reshape(-1))
+    new_arr = (arr - mean) / std
+    return new_arr
+
+
+def normalize(input_dirs: List[str], output: str, fname='smooth.nii.gz'):
     for source_dir in input_dirs:
         try:
             files = os.listdir(source_dir)
@@ -232,11 +242,16 @@ def normalize(input_dirs: List[str], output: str, fname='smooth.nii'):
         for source in files:
             if fname in source:
                 if not output:
-                    local_out = os.path.join(source_dir, 'smoothed.nii.gz')
+                    local_out = os.path.join(source_dir, 'normalized.nii')
                 else:
                     out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                    local_out = os.path.join(out_dir, 'smoothed.nii.gz')
-                    nifti = nib.load(os.path.join(source_dir, source))
-                    print(nifti.header)
-    raise NotImplementedError
+                    local_out = os.path.join(out_dir, 'normalized.nii')
+                nifti = nib.load(os.path.join(source_dir, source))
+                n_data = np.array(nifti.get_fdata())
+                n_data = _normalize_array(n_data)
+                new_nifti = nib.Nifti1Image(n_data, affine=nifti.affine, header=nifti.header)
+                nib.save(new_nifti, local_out)
+                print(nifti.header)
 
+
+def

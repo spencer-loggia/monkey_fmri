@@ -1,6 +1,6 @@
 import pytest
 from preprocess import convert_to_sphinx, motion_correction, plot_moco_rms_displacement, \
-    linear_affine_registration, nonlinear_registration, fix_nii_headers, smooth
+    linear_affine_registration, nonlinear_registration, fix_nii_headers, smooth, normalize
 import os
 import shutil
 
@@ -92,5 +92,17 @@ def test_smooth():
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
     res = smooth([path], output='tmp')
-    assert(all(['smoothed.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+    assert(all(['smooth.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+           and len(os.listdir('./tmp')) > 0)
+
+
+def test_normalize():
+    path = 'data/castor_2010_small_fixed/11'
+    try:
+        os.mkdir('./tmp')
+    except FileExistsError:
+        shutil.rmtree('./tmp')
+        os.mkdir('./tmp')
+    res = normalize([path], output='tmp', fname='fixed.nii')
+    assert(all(['normalized.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
            and len(os.listdir('./tmp')) > 0)
