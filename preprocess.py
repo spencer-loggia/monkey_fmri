@@ -50,7 +50,7 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str], ) -> str:
                     local_out = os.path.join(scan_dir, 'f.nii')
                 else:
                     out_dir = _create_dir_if_needed(output, os.path.basename(scan_dir))
-                    local_out = os.path.join(out_dir, 'f.nii')
+                    local_out = os.path.join(out_dir, 'f_sphinx.nii')
                 cvt.inputs.out_file = local_out
                 cvt.inputs.args = "--sphinx"
                 cvt.inputs.out_type = 'nii'
@@ -60,11 +60,12 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str], ) -> str:
     return output
 
 
-def motion_correction(input_dirs: List[str], output: Union[None, str], check_rms=True) -> List[List[Tuple[str]]]:
+def motion_correction(input_dirs: List[str], output: Union[None, str], fname='f_sphinx.nii', check_rms=True) -> List[List[Tuple[str]]]:
     """
     preform fsl motion correction
     :param output:
     :param input_dirs:
+    :param fname:
     :param check_rms:
     :return:
     """
@@ -72,30 +73,29 @@ def motion_correction(input_dirs: List[str], output: Union[None, str], check_rms
     out_dirs = []
     for source_dir in input_dirs:
         outputs = []
-        try:
-            files = os.listdir(source_dir)
-        except (FileExistsError, FileNotFoundError):
+        if os.path.isfile(os.path.join(source_dir,fname)):
+            source = os.path.join(source_dir, fname)
+            mcflt = fsl.MCFLIRT()
+            if not output:
+                out_dir = source_dir
+                local_out = os.path.join(source_dir, 'moco.nii.gz')
+            else:
+                out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+                local_out = os.path.join(out_dir, 'moco.nii.gz')
+            path = os.path.join(source_dir, source)
+            mcflt.inputs.in_file = path
+            mcflt.inputs.cost = 'mutualinfo'
+            mcflt.inputs.out_file = local_out
+            mcflt.inputs.save_plots = True
+            mcflt.inputs.save_rms = True
+            mcflt.cmdline
+            out = mcflt.run()
+            outputs.append(out)
+            out_dirs.append(out_dir)
+            all_outputs.append(outputs)
+        else:
             print("could not find file")
             exit(1)
-        mcflt = fsl.MCFLIRT()
-        for source in files:
-            if source[-4:] == '.nii':
-                if not output:
-                    local_out = os.path.join(source_dir, 'moco.nii.gz')
-                else:
-                    out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                    local_out = os.path.join(out_dir, 'moco.nii.gz')
-                path = os.path.join(source_dir, source)
-                mcflt.inputs.in_file = path
-                mcflt.inputs.cost = 'mutualinfo'
-                mcflt.inputs.out_file = local_out
-                mcflt.inputs.save_plots = True
-                mcflt.inputs.save_rms = True
-                mcflt.cmdline
-                out = mcflt.run()
-                outputs.append(out)
-                out_dirs.append(out_dir)
-        all_outputs.append(outputs)
     if check_rms:
         if not output:
             output = './'
