@@ -1,7 +1,7 @@
 import pytest
 from preprocess import convert_to_sphinx, motion_correction, plot_moco_rms_displacement, \
     linear_affine_registration, nonlinear_registration, fix_nii_headers, smooth, normalize, \
-    create_mask, preform_nifti_registration, skull_strip_4d
+    create_functional_mask, preform_nifti_registration, skull_strip_4d
 import os
 import shutil
 
@@ -46,7 +46,7 @@ def test_plot_moco():
 
 
 def test_linear_registration():
-    path = 'data/castor_2010_small_moco/11'
+    path = 'data/castor_2010_small_stripped/11'
     anatomical = 'data/castor_anatomical/castor.nii'
     try:
         os.mkdir('./tmp')
@@ -60,7 +60,7 @@ def test_linear_registration():
 
 
 def test_nonlinear_registration():
-    path = 'data/castor_2010_small_moco/11'
+    path = 'data/castor_2010_small_stripped/11'
     transform = 'data/castor_2010_small_flirt/11'
     anatomical = 'data/castor_anatomical/castor.nii'
     try:
@@ -90,7 +90,7 @@ def test_fix_header():
 
 
 def test_apply_transform():
-    path = 'data/castor_2010_small_moco/11'
+    path = 'data/castor_2010_small_stripped/11'
     transform = 'data/castor_2010_small_nirt/11'
     anatomical = 'data/castor_anatomical/castor.nii'
     try:
@@ -144,12 +144,12 @@ def test_normalize():
 
 
 def test_brain_mask():
-    path = 'data/castor_2010_small_fixed/11'
+    path = 'data/castor_2010_small_registered/11'
     try:
         os.mkdir('./tmp')
     except FileExistsError:
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
-    res = create_mask([path], output='tmp', fname='fixed.nii')
-    assert (all(['normalized.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+    res = create_functional_mask([path], output='tmp', fname='registered.nii.gz')
+    assert (all(['bin_mask.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
             and len(os.listdir('./tmp')) > 0)

@@ -48,7 +48,7 @@ def _apply_binary_mask(ts_in: nib.Nifti1Image, mask: nib.Nifti1Image) -> nib.Nif
     return new_nifti
 
 
-def _extract_frame(nii: nib.Nifti1Image, loc: Union[None, int] = None):
+def _extract_frame(nii: nib.Nifti1Image, loc: Union[None, int] = None, norm: bool = True):
     """
     extracts a 3D reference frame from 4D nifti object and generates a 3D nifti object
     :param nii:
@@ -59,6 +59,8 @@ def _extract_frame(nii: nib.Nifti1Image, loc: Union[None, int] = None):
     if not loc:
         loc = int(n_data.shape[2] / 2)
     n_data = n_data[:, :, :, loc]
+    if norm:
+        n_data = _normalize_array(n_data)
     new_nifti = nib.Nifti1Image(n_data, affine=nii.affine, header=nii.header)
     return new_nifti
 
@@ -92,7 +94,7 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str], ) -> str:
     return output
 
 
-def motion_correction(input_dirs: List[str], output: Union[None, str], fname='f_sphinx.nii', check_rms=True) -> List[List[Tuple[str]]]:
+def motion_correction(input_dirs: List[str], output: Union[None, str], fname='f.nii', check_rms=True) -> List[List[Tuple[str]]]:
     """
     preform fsl motion correction
     :param output:
@@ -105,8 +107,7 @@ def motion_correction(input_dirs: List[str], output: Union[None, str], fname='f_
     out_dirs = []
     for source_dir in input_dirs:
         outputs = []
-        if os.path.isfile(os.path.join(source_dir,fname)):
-            source = os.path.join(source_dir, fname)
+        if os.path.isfile(os.path.join(source_dir, fname)):
             mcflt = fsl.MCFLIRT()
             if not output:
                 out_dir = source_dir
@@ -114,7 +115,7 @@ def motion_correction(input_dirs: List[str], output: Union[None, str], fname='f_
             else:
                 out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
                 local_out = os.path.join(out_dir, 'moco.nii.gz')
-            path = os.path.join(source_dir, source)
+            path = os.path.join(source_dir, fname)
             mcflt.inputs.in_file = path
             mcflt.inputs.cost = 'mutualinfo'
             mcflt.inputs.out_file = local_out
@@ -154,7 +155,7 @@ def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, th
     return good_moco
 
 
-def linear_affine_registration(functional_input_dirs: List[str], template_file: str, fname: str ='moco.nii', output: str = None):
+def linear_affine_registration(functional_input_dirs: List[str], template_file: str, fname: str = 'stripped.nii.gz', output: str = None):
     flt = fsl.FLIRT()
     outputs = []
     for source_dir in functional_input_dirs:
@@ -165,25 +166,30 @@ def linear_affine_registration(functional_input_dirs: List[str], template_file: 
             exit(1)
         for source in files:
             if fname == source:
+                chosen_name = fname.split('.')[0]
                 if not output:
                     local_out = os.path.join(source_dir, 'moco_flirt.nii'.gz)
                     mat_out = os.path.join(source_dir, 'moco_flirt.mat')
                 else:
                     out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                    local_out = os.path.join(out_dir, 'moco_flirt.nii.gz')
-                    mat_out = os.path.join(out_dir, 'moco_flirt.mat')
+                    local_out = os.path.join(out_dir, chosen_name + '_flirt.nii.gz')
+                    mat_out = os.path.join(out_dir, chosen_name + '_flirt.mat')
                 flt.inputs.in_file = os.path.join(source_dir, source)
                 flt.inputs.reference = template_file
                 flt.inputs.dof = 12
+                flt.inputs.out_file = local_out
                 flt.inputs.args = '-omat ' + mat_out
                 flt.cmdline
-                out = flt.run()
-                outputs.append(out)
+                try:
+                    out = flt.run()
+                    outputs.append(out)
+                except Exception:
+                    pass
     return outputs
 
 
 def nonlinear_registration(functional_input_dirs: List[str], transform_input_dir: List[str], template_file: str,
-                           source_fname: str = 'moco.nii.gz', affine_fname: str = 'moco_flirt.mat',
+                           source_fname: str = 'stripped.nii.gz', affine_fname: str = 'stripped_flirt.mat',
                            output: str = None):
     fnt = fsl.FNIRT()
     outputs = []
@@ -207,7 +213,7 @@ def nonlinear_registration(functional_input_dirs: List[str], transform_input_dir
                 local_out = os.path.join(out_dir, 'reg_tensor.nii.gz')
             fnt.inputs.in_file = os.path.join(source_dir, source_fname)
             fnt.inputs.ref_file = template_file
-            fnt.inputs.affine_file = os.path.join(source_dir, affine_fname)
+            fnt.inputs.affine_file = os.path.join(transform_dir, affine_fname)
             fnt.cmdline
             out = fnt.run()
             outputs.append(out)
@@ -222,7 +228,7 @@ def nonlinear_registration(functional_input_dirs: List[str], transform_input_dir
 
 
 def preform_nifti_registration(functional_input_dirs: List[str], transform_input_dir: Union[None, List[str]] = None, template_file: str = None,
-                    output: str = None, source_fname: str = 'moco.nii.gz', transform_fname: str = 'reg_tensor.nii.gz'):
+                    output: str = None, source_fname: str = 'stripped.nii.gz', transform_fname: str = 'reg_tensor.nii.gz'):
     """
     Apply a registration file to a 4D nifti and save the output.
     :param functional_input_dirs: Directories where we expect to find scan directories containing 4D input niftis.
@@ -325,20 +331,13 @@ def skull_strip_4d(input_dirs: List[str], output: str, fname: str = 'moco.nii.gz
         else:
             out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
             local_out = os.path.join(out_dir, 'stripped.nii.gz')
-        nii = nib.load(os.path.join(source_dir, fname))
-        # create reference 3D nifti
-        s_nii = _extract_frame(nii)
-        _create_dir_if_needed('./', 'tmp')
-        nib.save(s_nii, './tmp/3d.nii')
-        bet.inputs.in_file = './tmp/3d.nii'
+        bet.inputs.in_file = os.path.join(source_dir, fname)
+        bet.inputs.out_file = local_out
         bet.inputs.mask = True
+        bet.inputs.functional = True
         bet.cmdline
         out = bet.run()
         outputs.append(out)
-        mask_file = os.path.join('./', [s for s in os.listdir('./') if '_brain_mask' in s][0])
-        mask = nib.load(mask_file)
-        result = _apply_binary_mask(nii, mask)
-        nib.save(result, local_out)
         return outputs
 
 
@@ -371,7 +370,7 @@ def normalize(input_dirs: List[str], output: str, fname='smooth.nii.gz'):
                 print(nifti.header)
 
 
-def create_mask(input_dirs: List[str], output: str, fname='normalized.nii.gz', thresh: Union[float, None] = None):
+def create_functional_mask(input_dirs: List[str], output: str, fname='normalized.nii.gz', thresh: Union[float, None] = None):
     """
     creates a binary mask of a input nifti. By default sets threshold at 3 std devs above the mean.
     :param input_dirs:
@@ -380,7 +379,6 @@ def create_mask(input_dirs: List[str], output: str, fname='normalized.nii.gz', t
     :param thresh:
     :return:
     """
-    bet = fsl.BET()
     for source_dir in input_dirs:
         try:
             files = os.listdir(source_dir)
@@ -391,16 +389,9 @@ def create_mask(input_dirs: List[str], output: str, fname='normalized.nii.gz', t
             if fname in source:
                 if not output:
                     mask_out = os.path.join(source_dir, 'bin_mask.nii')
-                    ss_out = os.path.join(source_dir, 'skull_stripped.nii')
                 else:
                     out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
                     mask_out = os.path.join(out_dir, 'bin_mask.nii')
-                    ss_out = os.path.join(out_dir, 'skull_stripped.nii')
-                bet.inputs.in_file = os.path.join(source_dir, source)
-                bet.inputs.functional = True
-                bet.inputs.out_file = ss_out
-                bet.cmdline
-                bet.run()
                 nifti = nib.load(os.path.join(source_dir, source))
                 n_data = np.array(nifti.get_fdata())
                 if not thresh:
