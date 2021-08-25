@@ -1,6 +1,7 @@
 import pytest
 from preprocess import convert_to_sphinx, motion_correction, plot_moco_rms_displacement, \
-    linear_affine_registration, nonlinear_registration, fix_nii_headers, smooth, normalize
+    linear_affine_registration, nonlinear_registration, fix_nii_headers, smooth, normalize, \
+    create_mask, preform_nifti_registration, skull_strip_4d
 import os
 import shutil
 
@@ -13,8 +14,8 @@ def test_convert_to_sphinx():
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
     _ = convert_to_sphinx([path], output='./tmp')
-    assert(all(['f.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
-           and len(os.listdir('./tmp')) > 0)
+    assert (all(['f.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
     print('tested sphinx')
 
 
@@ -26,8 +27,8 @@ def test_motion_correction():
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
     res = motion_correction([path], output='./tmp', check_rms=False)
-    assert(all(['moco.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
-           and len(os.listdir('./tmp')) > 0)
+    assert (all(['moco.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
     print('tested motion correction')
 
 
@@ -53,22 +54,26 @@ def test_linear_registration():
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
     res = linear_affine_registration([path], anatomical, output='tmp')
-    assert(all(['moco_flirt.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
-           and len(os.listdir('./tmp')) > 0)
+    assert (all(['moco_flirt.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
     print('tested linear affine registration')
 
 
 def test_nonlinear_registration():
-    path = 'data/castor_2010_small_flirt/11'
+    path = 'data/castor_2010_small_moco/11'
+    transform = 'data/castor_2010_small_flirt/11'
     anatomical = 'data/castor_anatomical/castor.nii'
     try:
         os.mkdir('./tmp')
     except FileExistsError:
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
-    res = nonlinear_registration([path], anatomical, output='tmp')
-    assert(all(['nirt.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
-           and len(os.listdir('./tmp')) > 0)
+    res = nonlinear_registration(functional_input_dirs=[path],
+                                 transform_input_dir=[transform],
+                                 template_file=anatomical,
+                                 output='tmp')
+    assert (all(['nirt.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
     print('tested nonlinear registration')
 
 
@@ -80,8 +85,26 @@ def test_fix_header():
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
     res = fix_nii_headers([path], output='tmp')
-    assert(all(['fixed.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
-           and len(os.listdir('./tmp')) > 0)
+    assert (all(['fixed.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
+
+
+def test_apply_transform():
+    path = 'data/castor_2010_small_moco/11'
+    transform = 'data/castor_2010_small_nirt/11'
+    anatomical = 'data/castor_anatomical/castor.nii'
+    try:
+        os.mkdir('./tmp')
+    except FileExistsError:
+        shutil.rmtree('./tmp')
+        os.mkdir('./tmp')
+    res = preform_nifti_registration(functional_input_dirs=[path],
+                                     transform_input_dir=[transform],
+                                     template_file=anatomical,
+                                     output='tmp')
+    assert (all(['registered.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
+    print('tested nonlinear registration')
 
 
 def test_smooth():
@@ -92,8 +115,20 @@ def test_smooth():
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
     res = smooth([path], output='tmp')
-    assert(all(['smooth.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
-           and len(os.listdir('./tmp')) > 0)
+    assert (all(['smooth.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
+
+
+def test_skull_strip():
+    path = 'data/castor_2010_small_moco/11'
+    try:
+        os.mkdir('./tmp')
+    except FileExistsError:
+        shutil.rmtree('./tmp')
+        os.mkdir('./tmp')
+    res = skull_strip_4d([path], output='tmp')
+    assert (all(['stripped.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
 
 
 def test_normalize():
@@ -104,5 +139,17 @@ def test_normalize():
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
     res = normalize([path], output='tmp', fname='fixed.nii')
-    assert(all(['normalized.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
-           and len(os.listdir('./tmp')) > 0)
+    assert (all(['normalized.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
+
+
+def test_brain_mask():
+    path = 'data/castor_2010_small_fixed/11'
+    try:
+        os.mkdir('./tmp')
+    except FileExistsError:
+        shutil.rmtree('./tmp')
+        os.mkdir('./tmp')
+    res = create_mask([path], output='tmp', fname='fixed.nii')
+    assert (all(['normalized.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
+            and len(os.listdir('./tmp')) > 0)
