@@ -8,4 +8,5 @@
 *cache*
 test/data/*
 test/tmp/*
-
+*.nii*
+*.dcm*

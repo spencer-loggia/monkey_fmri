@@ -21,6 +21,7 @@ import nipype.algorithms.rapidart as ra  # artifact detection
 import nibabel as nib
 
 from matplotlib import pyplot as plt
+from multiprocessing import Pool
 
 
 def _create_dir_if_needed(base: str, name: str):
@@ -33,9 +34,9 @@ def _create_dir_if_needed(base: str, name: str):
 
 
 def _normalize_array(arr: np.ndarray) -> np.ndarray:
-    mean = np.mean(arr.reshape(-1))
-    std = np.std(arr.reshape(-1))
-    new_arr = (arr - mean) / std
+    flat = arr.flatten()
+    std = np.std(flat)
+    new_arr = arr / std
     return new_arr
 
 
@@ -65,10 +66,11 @@ def _extract_frame(nii: nib.Nifti1Image, loc: Union[None, int] = None, norm: boo
     return new_nifti
 
 
-def convert_to_sphinx(input_dirs: List[str], output: Union[None, str], ) -> str:
+def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii') -> str:
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION dir)
+    :param fname: the expected name of unpacked nifitis
     :param output: output directory to create or populate (if None put in same dirs as input)
     :return: path to output directory
     """
@@ -81,7 +83,7 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str], ) -> str:
             if len(f) > 3 and f[-4:] == '.nii':
                 cvt.inputs.in_file = os.path.join(scan_dir, f)
                 if not output:
-                    local_out = os.path.join(scan_dir, 'f.nii')
+                    local_out = os.path.join(scan_dir, 'f_sphinx.nii')
                 else:
                     out_dir = _create_dir_if_needed(output, os.path.basename(scan_dir))
                     local_out = os.path.join(out_dir, 'f_sphinx.nii')
@@ -94,7 +96,17 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str], ) -> str:
     return output
 
 
-def motion_correction(input_dirs: List[str], output: Union[None, str], fname='f.nii', check_rms=True) -> List[List[Tuple[str]]]:
+def _mcflt_mp_wrapper(in_file, out_file, mcflt):
+    mcflt.inputs.in_file = in_file
+    mcflt.inputs.cost = 'mutualinfo'
+    mcflt.inputs.out_file = out_file
+    mcflt.inputs.save_plots = True
+    mcflt.inputs.save_rms = True
+    mcflt.cmdline
+    return mcflt.run()
+
+
+def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii', check_rms=True) -> List[List[Tuple[str]]]:
     """
     preform fsl motion correction
     :param output:
@@ -103,7 +115,7 @@ def motion_correction(input_dirs: List[str], output: Union[None, str], fname='f.
     :param check_rms:
     :return:
     """
-    all_outputs = []
+    args = []
     out_dirs = []
     for source_dir in input_dirs:
         outputs = []
@@ -116,24 +128,14 @@ def motion_correction(input_dirs: List[str], output: Union[None, str], fname='f.
                 out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
                 local_out = os.path.join(out_dir, 'moco.nii.gz')
             path = os.path.join(source_dir, fname)
-            mcflt.inputs.in_file = path
-            mcflt.inputs.cost = 'mutualinfo'
-            mcflt.inputs.out_file = local_out
-            mcflt.inputs.save_plots = True
-            mcflt.inputs.save_rms = True
-            mcflt.cmdline
-            out = mcflt.run()
-            outputs.append(out)
+            args.append((path, local_out, mcflt))
             out_dirs.append(out_dir)
-            all_outputs.append(outputs)
-        else:
-            print("could not find file")
-            exit(1)
+    with Pool() as p:
+        res = p.starmap(_mcflt_mp_wrapper, args)
     if check_rms:
-        if not output:
-            output = './'
+        output = './'
         plot_moco_rms_displacement(out_dirs, output)
-    return all_outputs
+    return res
 
 
 def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, threshold=.5) -> Dict[str, bool]:
@@ -168,8 +170,8 @@ def linear_affine_registration(functional_input_dirs: List[str], template_file: 
             if fname == source:
                 chosen_name = fname.split('.')[0]
                 if not output:
-                    local_out = os.path.join(source_dir, 'moco_flirt.nii'.gz)
-                    mat_out = os.path.join(source_dir, 'moco_flirt.mat')
+                    local_out = os.path.join(source_dir, chosen_name + '_flirt.nii.gz')
+                    mat_out = os.path.join(source_dir, chosen_name + '_flirt.mat')
                 else:
                     out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
                     local_out = os.path.join(out_dir, chosen_name + '_flirt.nii.gz')
@@ -319,7 +321,7 @@ def smooth(input_dirs: List[str], output: str, fname: str = 'fixed.nii', bright_
         return outputs
 
 
-def skull_strip_4d(input_dirs: List[str], output: str, fname: str = 'moco.nii.gz'):
+def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: str = 'moco.nii.gz', is_time_series=True):
     bet = fsl.BET()
     outputs = []
     for source_dir in input_dirs:
@@ -334,7 +336,8 @@ def skull_strip_4d(input_dirs: List[str], output: str, fname: str = 'moco.nii.gz
         bet.inputs.in_file = os.path.join(source_dir, fname)
         bet.inputs.out_file = local_out
         bet.inputs.mask = True
-        bet.inputs.functional = True
+        if is_time_series:
+            bet.inputs.functional = True
         bet.cmdline
         out = bet.run()
         outputs.append(out)
