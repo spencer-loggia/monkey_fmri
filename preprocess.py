@@ -66,6 +66,15 @@ def _extract_frame(nii: nib.Nifti1Image, loc: Union[None, int] = None, norm: boo
     return new_nifti
 
 
+def _mri_convert_sphinx_wrapper(in_file, out_file, cvt):
+    cvt.inputs.in_file = in_file
+    cvt.inputs.out_file = out_file
+    cvt.inputs.args = "--sphinx"
+    cvt.inputs.out_type = 'nii'
+    cvt.cmdline
+    return cvt.run()
+
+
 def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii') -> str:
     """
     Convert to sphinx
@@ -74,29 +83,23 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fn
     :param output: output directory to create or populate (if None put in same dirs as input)
     :return: path to output directory
     """
-
+    args = []
     for scan_dir in input_dirs:
-        files = os.listdir(scan_dir)
         os.environ.setdefault("SUBJECTS_DIR", scan_dir)
         cvt = freesurfer.MRIConvert()
-        for f in files:
-            if len(f) > 3 and f[-4:] == '.nii':
-                cvt.inputs.in_file = os.path.join(scan_dir, f)
-                if not output:
-                    local_out = os.path.join(scan_dir, 'f_sphinx.nii')
-                else:
-                    out_dir = _create_dir_if_needed(output, os.path.basename(scan_dir))
-                    local_out = os.path.join(out_dir, 'f_sphinx.nii')
-                cvt.inputs.out_file = local_out
-                cvt.inputs.args = "--sphinx"
-                cvt.inputs.out_type = 'nii'
-                cvt.cmdline
-                cvt.run()
-
-    return output
+        in_file = os.path.join(scan_dir, fname)
+        if not output:
+            local_out = os.path.join(scan_dir, 'f_sphinx.nii')
+        else:
+            out_dir = _create_dir_if_needed(output, os.path.basename(scan_dir))
+            local_out = os.path.join(out_dir, 'f_sphinx.nii')
+        args.append((in_file, local_out, cvt))
+    with Pool() as p:
+        res = p.starmap(_mri_convert_sphinx_wrapper, args)
+    return res
 
 
-def _mcflt_mp_wrapper(in_file, out_file, mcflt):
+def _mcflt_wrapper(in_file, out_file, mcflt):
     mcflt.inputs.in_file = in_file
     mcflt.inputs.cost = 'mutualinfo'
     mcflt.inputs.out_file = out_file
@@ -131,7 +134,7 @@ def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fn
             args.append((path, local_out, mcflt))
             out_dirs.append(out_dir)
     with Pool() as p:
-        res = p.starmap(_mcflt_mp_wrapper, args)
+        res = p.starmap(_mcflt_wrapper, args)
     if check_rms:
         output = './'
         plot_moco_rms_displacement(out_dirs, output)
@@ -157,44 +160,60 @@ def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, th
     return good_moco
 
 
+def _flirt_wrapper(in_file, out_file, mat_out_file, temp_file, flt):
+    flt.inputs.in_file = in_file
+    flt.inputs.reference = temp_file
+    flt.inputs.dof = 12
+    flt.inputs.out_file = out_file
+    flt.inputs.args = '-omat ' + mat_out_file
+    flt.cmdline
+    try:
+        out = flt.run()
+    except Exception:
+        out = None
+    return out
+
+
 def linear_affine_registration(functional_input_dirs: List[str], template_file: str, fname: str = 'stripped.nii.gz', output: str = None):
     flt = fsl.FLIRT()
-    outputs = []
+    args = []
     for source_dir in functional_input_dirs:
-        try:
-            files = os.listdir(source_dir)
-        except (FileExistsError, FileNotFoundError):
-            print("could not find file")
-            exit(1)
-        for source in files:
-            if fname == source:
-                chosen_name = fname.split('.')[0]
-                if not output:
-                    local_out = os.path.join(source_dir, chosen_name + '_flirt.nii.gz')
-                    mat_out = os.path.join(source_dir, chosen_name + '_flirt.mat')
-                else:
-                    out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                    local_out = os.path.join(out_dir, chosen_name + '_flirt.nii.gz')
-                    mat_out = os.path.join(out_dir, chosen_name + '_flirt.mat')
-                flt.inputs.in_file = os.path.join(source_dir, source)
-                flt.inputs.reference = template_file
-                flt.inputs.dof = 12
-                flt.inputs.out_file = local_out
-                flt.inputs.args = '-omat ' + mat_out
-                flt.cmdline
-                try:
-                    out = flt.run()
-                    outputs.append(out)
-                except Exception:
-                    pass
-    return outputs
+        if not os.path.isdir(source_dir):
+            print("Failure", sys.stderr)
+        chosen_name = fname.split('.')[0]
+        if not output:
+            local_out = os.path.join(source_dir, chosen_name + '_flirt.nii.gz')
+            mat_out = os.path.join(source_dir, chosen_name + '_flirt.mat')
+        else:
+            out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+            local_out = os.path.join(out_dir, chosen_name + '_flirt.nii.gz')
+            mat_out = os.path.join(out_dir, chosen_name + '_flirt.mat')
+        in_file = os.path.join(source_dir, fname)
+        args.append((in_file, local_out, mat_out, template_file, flt))
+    with Pool() as p:
+        return p.starmap(_flirt_wrapper, args)
+
+
+def _nirt_wrapper(in_file, out_file, temp_file, affine_mat_file, fnt):
+    fnt.inputs.in_file = in_file
+    fnt.inputs.ref_file = temp_file
+    fnt.inputs.affine_file = affine_mat_file
+    fnt.cmdline
+    out = fnt.run()
+
+    # workaround fsl fnirt cout error
+    source_dir = os.path.dirname(out_file)
+    warp_file = os.path.join(source_dir, [s for s in os.listdir(source_dir) if '_warpcoef' in s][0])
+    shutil.copy(warp_file, out_file)
+    os.remove(warp_file)
+    return out
 
 
 def nonlinear_registration(functional_input_dirs: List[str], transform_input_dir: List[str], template_file: str,
                            source_fname: str = 'stripped.nii.gz', affine_fname: str = 'stripped_flirt.mat',
                            output: str = None):
     fnt = fsl.FNIRT()
-    outputs = []
+    args = []
     try:
         sources = zip(functional_input_dirs, transform_input_dir)
     except Exception:
@@ -213,20 +232,22 @@ def nonlinear_registration(functional_input_dirs: List[str], transform_input_dir
             else:
                 out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
                 local_out = os.path.join(out_dir, 'reg_tensor.nii.gz')
-            fnt.inputs.in_file = os.path.join(source_dir, source_fname)
-            fnt.inputs.ref_file = template_file
-            fnt.inputs.affine_file = os.path.join(transform_dir, affine_fname)
-            fnt.cmdline
-            out = fnt.run()
-            outputs.append(out)
-
-            # workaround fsl fnirt cout error
-            warp_file = os.path.join(source_dir, [s for s in os.listdir(source_dir) if '_warpcoef' in s][0])
-            shutil.copy(warp_file, local_out)
-            os.remove(warp_file)
+            in_file = os.path.join(source_dir, source_fname)
+            affine_mat_file = os.path.join(transform_dir, affine_fname)
+            args.append((in_file, local_out, template_file, affine_mat_file, fnt))
         else:
             raise FileNotFoundError("The specified source nifti or affine transform matrix cannot be found.")
-    return outputs
+    with Pool() as p:
+        return p.starmap(_nirt_wrapper, args)
+
+
+def _apply_warp_wrapper(in_file, out_file, temp_file, warp_coef, apw):
+    apw.inputs.in_file = in_file
+    apw.inputs.ref_file = temp_file
+    apw.inputs.field_file = warp_coef
+    apw.inputs.out_file = out_file
+    apw.cmdline
+    return apw.run()
 
 
 def preform_nifti_registration(functional_input_dirs: List[str], transform_input_dir: Union[None, List[str]] = None, template_file: str = None,
@@ -243,7 +264,7 @@ def preform_nifti_registration(functional_input_dirs: List[str], transform_input
     :return:
     """
     apw = fsl.ApplyWarp()
-    outputs = []
+    args = []
     try:
         sources = zip(functional_input_dirs, transform_input_dir)
     except Exception:
@@ -262,16 +283,13 @@ def preform_nifti_registration(functional_input_dirs: List[str], transform_input
             else:
                 out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
                 local_out = os.path.join(out_dir, 'registered.nii.gz')
-            apw.inputs.in_file = os.path.join(source_dir, source_fname)
-            apw.inputs.ref_file = template_file
-            apw.inputs.field_file = os.path.join(transform_dir, transform_fname)
-            apw.inputs.out_file = local_out
-            apw.cmdline
-            res = apw.run()
-            outputs.append(res)
+            in_file = os.path.join(source_dir, source_fname)
+            field_file = os.path.join(transform_dir, transform_fname)
+            args.append((in_file, local_out, template_file, field_file, apw))
         else:
             raise FileNotFoundError("The specified source nifti or nonlinear transform tensor cannot be found.")
-        return outputs
+    with Pool() as p:
+        return p.starmap(_apply_warp_wrapper, args)
 
 
 def fix_nii_headers(input_dirs: List[str], output: str, fname: str = 'nirt.nii.gz', tr=2000):
@@ -321,9 +339,18 @@ def smooth(input_dirs: List[str], output: str, fname: str = 'fixed.nii', bright_
         return outputs
 
 
+def _bet_wrapper(in_file, out_file, functional, bet):
+    bet.inputs.in_file = in_file
+    bet.inputs.out_file = out_file
+    bet.inputs.mask = True
+    bet.inputs.functional = functional
+    bet.cmdline
+    out = bet.run()
+
+
 def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: str = 'moco.nii.gz', is_time_series=True):
     bet = fsl.BET()
-    outputs = []
+    args  = []
     for source_dir in input_dirs:
         if fname not in os.listdir(source_dir):
             print("could not find file")
@@ -333,15 +360,10 @@ def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: s
         else:
             out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
             local_out = os.path.join(out_dir, 'stripped.nii.gz')
-        bet.inputs.in_file = os.path.join(source_dir, fname)
-        bet.inputs.out_file = local_out
-        bet.inputs.mask = True
-        if is_time_series:
-            bet.inputs.functional = True
-        bet.cmdline
-        out = bet.run()
-        outputs.append(out)
-        return outputs
+        in_file = os.path.join(source_dir, fname)
+        args.append((in_file, local_out, is_time_series, bet))
+    with Pool() as p:
+        p.starmap(_bet_wrapper, args)
 
 
 def normalize(input_dirs: List[str], output: str, fname='smooth.nii.gz'):

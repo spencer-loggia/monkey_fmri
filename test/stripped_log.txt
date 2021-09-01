@@ -1,9 +1,9 @@
 # 	name of reference image
---ref=data/castor_anatomical/castor.nii
+--ref=../full_session_test/anatomical/anatomical/stripped.nii.gz
 # 	name of input image
---in=data/castor_2010_small_stripped/11/stripped.nii.gz
+--in=../full_session_test/20100131Castor/MION/005/stripped.nii.gz
 # 	name of file containing affine transform
---aff=data/castor_2010_small_flirt/11/stripped_flirt.mat
+--aff=../full_session_test/20100131Castor/MION/005/stripped_flirt.mat
 # 	name of output image
 --iout=/Users/loggiasr/Projects/fmri/monkey_fmri/test/stripped_warped.nii.gz
 # Name of log-file

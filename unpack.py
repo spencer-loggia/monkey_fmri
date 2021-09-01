@@ -7,17 +7,14 @@ import os
 import glob
 
 
-def scan_log(inF,outF):
-    if os.path.isfile(os.path.join(outF, 'scan.info')):
-        while True:
-            check = input('scan.info already exists. Would you like to scan the dicom files anyway? This may take several minutes. (y/n)')
-            if check == 'y':
-                scan_log_cmd(inF,outF)
-                break
-            elif check == 'n':
-                return 'Dicom Scan Aborted'
-            else:
-                print('Please enter either \"y\" or \"n\".')
+def scan_log(inF, outF, re_scan=True):
+    if not os.path.isfile(outF):
+        os.mkdir(outF)
+    if os.path.isfile(os.path.join(outF, 'scan.info')) and not re_scan:
+        print("dicom scan exists, aborting...", sys.stderr)
+        return
+    print("Generating scan.info from dicom headers...")
+    scan_log_cmd(inF, outF)
 
 
 def scan_log_cmd(inF, outF):
@@ -27,6 +24,7 @@ def scan_log_cmd(inF, outF):
     print(waitMsg)
     call(cmd,shell=True)
     print('Done')
+
 
 def unpack(inF,outF,runs,HDR):
     runlist = ''
