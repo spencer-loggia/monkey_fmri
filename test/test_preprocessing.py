@@ -1,7 +1,8 @@
 import pytest
 from preprocess import convert_to_sphinx, motion_correction, plot_moco_rms_displacement, \
     linear_affine_registration, nonlinear_registration, fix_nii_headers, smooth, normalize, \
-    create_functional_mask, preform_nifti_registration, skull_strip_4d
+    create_functional_mask, preform_nifti_registration, skull_strip
+from analysis import contrast_np
 import os
 import shutil
 
@@ -153,3 +154,12 @@ def test_brain_mask():
     res = create_functional_mask([path], output='tmp', fname='registered.nii.gz')
     assert (all(['bin_mask.nii' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
             and len(os.listdir('./tmp')) > 0)
+
+
+def test_contrast_np():
+    import pandas as pd
+    stimuli = pd.read_csv('../full_session_test/meridian_stimuli/meridian_mapper_order1.para', delimiter=' ')
+    stimuli.head()
+    stimuli_list = list(stimuli['ID'])
+    sources = ['../full_session_test/20100131Castor/MION/005/', '../full_session_test/20100131Castor/MION/006/']
+    res = contrast_np(sources, stimuli_list, output_dir='../full_session_test/analysis_out')
