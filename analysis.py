@@ -37,7 +37,7 @@ def _create_dir_if_needed(base: str, name: str):
     return out_dir
 
 
-def ts_smooth(input_ts: np.ndarray, kernel_std=2, temporal_smoothing=True):
+def ts_smooth(input_ts: np.ndarray, kernel_std=2., temporal_smoothing=True):
     # assumes last axis is time
     def _smooth(input_arr, std):
         output = gaussian_filter(input_arr, sigma=std)
@@ -118,7 +118,7 @@ def mv_glm_regressor(x_arr: np.ndarray, gt: np.ndarray) -> Tuple[np.ndarray, np.
     """
     og_shape = gt.shape
     if np.ndim(gt) > 1:
-        gt = gt.reshape(-1, x_arr.shape[0]).T # reshape to all time, LL VOXELS
+        gt = gt.reshape(-1, x_arr.shape[0]).T  # reshape to all time, LL VOXELS
     glm = LinearRegression()
     glm.fit(x_arr, gt)
     beta = glm.coef_
@@ -138,7 +138,7 @@ def contrast(beta_coef: np.ndarray, contrast_matrix: np.ndarray) -> np.ndarray:
 
 
 def _pipe(d_mat, run, c_mat):
-    beta, res = mv_glm_regressor(d_mat, ts_smooth(run))
+    beta, res = mv_glm_regressor(d_mat, ts_smooth(run, kernel_std=.5))
     contrasts = contrast(beta, c_mat)
     return contrasts
 
@@ -171,7 +171,9 @@ def intra_subject_contrast(run_dirs: List[str], active_condition: List[int], con
             raise FileNotFoundError("Couldn't find " + fname + " in specified source dir " + source_dir)
 
     with Pool() as p:
+        # dispatch workers, by default will claim all but one cpu core.
         res = p.starmap(_pipe, zip([design_matrix]*len(run_stack), run_stack, [contrast_matrix]*len(run_stack)))
+
     avg_contrasts = np.mean(np.stack(res, axis=0), axis=0)[0]
     affine = np.concatenate(affines, axis=0).mean(axis=0)
     for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
@@ -202,5 +204,5 @@ if __name__ == '__main__':
     sources = [os.path.join(root, f) for f in os.listdir(root) if f.isnumeric()]
     res = intra_subject_contrast(sources, stimuli_list,
                                  output_dir='full_session_test/analysis_out',
-                                 contrast_matrix=np.array([[-1, 1, 0], [-1, 0, 1]]).T,
-                                 contrast_descriptors=['null_vs_horizontal', 'null_vs_vertical'])
+                                 contrast_matrix=np.array([[0, -1, 1], [-1, .5, .5]]).T,
+                                 contrast_descriptors=['vertical_vs_horizontal', 'null_vs_avg_vert_horiz'])
