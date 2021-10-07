@@ -1,15 +1,18 @@
 import os
+import shutil
 from typing import List, Tuple
+import subprocess
 
 import numpy as np
-import nipype
 import nibabel as nib
-import nipy
+
 from scipy.special import gamma
 from scipy.stats import norm
 from scipy.ndimage import gaussian_filter
-from matplotlib import pyplot as plt
+
 from multiprocessing import Pool
+from preprocess import _pad_to_cube
+
 from sklearn.preprocessing import OneHotEncoder
 try:
     from sklearnex import patch_sklearn
@@ -19,10 +22,17 @@ except ModuleNotFoundError:
     print("Intel(R) Hardware Acceleration is not enabled. ")
     from sklearn.linear_model import LinearRegression
 
+import pandas as pd
 
-def _pos_norm_4d(arr: np.ndarray):
-    time_base = np.min(arr, axis=3)
-    arr -= time_base
+
+def _norm_4d(arr: np.ndarray):
+    """
+    Simple normalization function, centers on mean, 1 unit equal one std dev of original data.
+    :param arr: input array
+    :return: normalized array
+    """
+    mean = np.mean(arr.flatten())
+    arr -= mean
     norm_factor = np.std(arr.flatten())
     arr /= norm_factor
     return arr
@@ -38,7 +48,13 @@ def _create_dir_if_needed(base: str, name: str):
 
 
 def ts_smooth(input_ts: np.ndarray, kernel_std=2., temporal_smoothing=True):
-    # assumes last axis is time
+    """
+    Smooth the functional data
+    :param input_ts: original time series data
+    :param kernel_std: std dev of the gaussian kernel
+    :param temporal_smoothing: Bool, defualt: True. Keep in mid using temporal may effect hemodynamic estimate negatively
+    :return: timeseries of the same shape as input
+    """
     def _smooth(input_arr, std):
         output = gaussian_filter(input_arr, sigma=std)
         return output
@@ -138,20 +154,87 @@ def contrast(beta_coef: np.ndarray, contrast_matrix: np.ndarray) -> np.ndarray:
 
 
 def _pipe(d_mat, run, c_mat):
+    """
+    Single thread worker dispatch function.
+    :param d_mat: design matrix from fsfast or local
+    :param run: preprocessed functional data
+    :param c_mat: contrast test definition matrix
+    :return:
+    """
     beta, res = mv_glm_regressor(d_mat, ts_smooth(run, kernel_std=.5))
     contrasts = contrast(beta, c_mat)
     return contrasts
 
 
-def intra_subject_contrast(run_dirs: List[str], active_condition: List[int], contrast_matrix: np.ndarray,
+def create_design_matrix(param_file, subject_ids: List[str], subject_dir_paths: List[str], anal_name=None, mode='manual',
+                         tr=2.0, paradigm_type='blocked', funcstem='registered'):
+    """
+    Creates an experiment design matrix. Either Uses fsfast functions or uses hemodynamic convolution functions defined
+    here (~10x faster)
+    :param param_file:
+    :param subject_ids:
+    :param subject_dir_paths:
+    :param anal_name:
+    :param mode:
+    :param tr:
+    :param paradigm_type:
+    :param funcstem:
+    :return:
+    """
+    if mode not in ['fsfast', 'manual']:
+        raise ValueError('mode must be either fsfast or manual')
+    if mode == 'fsfast':
+        subprocess.run(['mkanalysis-sess',
+                        '-analysis', anal_name,
+                        '-TR', str(tr),
+                        '-paradigm', param_file,
+                        '-event-related',
+                        '-native',
+                        '-nc', '3',
+                        '-gamma',
+                        '-fwhm', '1',
+                        '-funcstem', funcstem,
+                        '-refeventdur', '2.0',
+                        '-fsd', 'functional'],)
+        sid = ', '.join(subject_ids)
+        with open('./tmp_subject_ids.info', 'w') as f:
+            f.write(sid)
+        sloc = ', '.join(subject_dir_paths)
+        with open('./tmp_subject_loc.info', 'w') as f:
+            f.write(sloc)
+        subprocess.run(['selxavg-sess',
+                        '-analysis', anal_name,
+                        '-sf', './tmp_subject_ids.info',
+                        '-df', './tmp_subject_loc.info'])
+
+    elif mode == 'manual':
+        stimuli = pd.read_csv(param_file, delimiter=' ')
+        stimuli_list = list(stimuli['ID'])
+        encoder = OneHotEncoder(sparse=False)
+        stimuli_feature_matrix = encoder.fit_transform(np.array([stimuli_list]).reshape(-1, 1))
+        design_matrix = hemodynamic_convolution(stimuli_feature_matrix, kernel='weighted_gamma_hrf', temporal_window=15)
+
+    return design_matrix
+
+
+def intra_subject_contrast(run_dirs: List[str], paradigm_file: str, contrast_matrix: np.ndarray,
                            contrast_descriptors: List[str], output_dir: str, fname: str = 'registered.nii.gz'):
+    """
+    Compute each desired contrast on the functional data in parallel.
+    :param run_dirs: locations of the functional runs
+    :param paradigm_file: The events as they occur.
+    :param contrast_matrix: The contrast test definitions.
+    :param contrast_descriptors: Description of the contrast test specified by each row of the matrix.
+    :param output_dir: where to save
+    :param fname: name of the preprocessed functional file to use (must exist in each of the run dirs)
+    :return:
+    """
     run_stack = []
     affines = []
-    exp_num_frames = len(active_condition)
+    header = None
+    design_matrix = create_design_matrix(paradigm_file, ['castor_test'], ['./castor_test'])
+    exp_num_frames = len(design_matrix)
 
-    encoder = OneHotEncoder(sparse=False)
-    stimuli_feature_matrix = encoder.fit_transform(np.array([active_condition]).reshape(-1, 1))
-    design_matrix = hemodynamic_convolution(stimuli_feature_matrix, kernel='weighted_gamma_hrf', temporal_window=15)
     if contrast_matrix.shape[0] != design_matrix.shape[1]:
         raise ValueError("Contrast matrix must have number of rows equal to the number of stimulus conditions.")
     if len(contrast_descriptors) != contrast_matrix.shape[1]:
@@ -167,6 +250,7 @@ def intra_subject_contrast(run_dirs: List[str], active_condition: List[int], con
                                  "active_condition map")
             run_stack.append(brain_tensor[None, :, :, :, :])
             affines.append(np.array(brain.affine)[None, :, :])
+            header = brain.header
         else:
             raise FileNotFoundError("Couldn't find " + fname + " in specified source dir " + source_dir)
 
@@ -175,34 +259,109 @@ def intra_subject_contrast(run_dirs: List[str], active_condition: List[int], con
         res = p.starmap(_pipe, zip([design_matrix]*len(run_stack), run_stack, [contrast_matrix]*len(run_stack)))
 
     avg_contrasts = np.mean(np.stack(res, axis=0), axis=0)[0]
+
     affine = np.concatenate(affines, axis=0).mean(axis=0)
     for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
-        contrast_nii = nib.Nifti1Image(cond, affine=affine)
+        contrast_nii = nib.Nifti1Image(cond, affine=affine, header=header)
         nib.save(contrast_nii, os.path.join(output_dir, 'condition_' + contrast_descriptors[i] + '_contrast.nii'))
 
     return avg_contrasts
 
 
+def _find_scale_factor(high_res: np.ndarray, low_res: np.ndarray):
+    """
+    Computes the amount one matrix to match the dims of another
+    :param high_res:
+    :param low_res:
+    :return:
+    """
+    h_s = high_res.shape
+    l_s = low_res.shape
+    prod = np.array(h_s) / np.array(l_s)
+    if all(prod == prod[0]):
+        return prod[0]
+    else:
+        raise ValueError('dimension should have been scaled evenly here')
+
+
+def create_contrast_surface(anatomical_white_surface: str,
+                            contrast_vol_path: str,
+                            orig_low_res_anatomical: str,
+                            orig_high_res_anatomical: str,
+                            hemi: str,
+                            subject_id='castor_test',
+                            output=None):
+    """
+    Takes a contrast volume, resizes it to the appropriate dimensions, corrects the affine,
+    and projects it onto an anatomical surface
+
+    :param output: default None. If None places files in the same directory as contrast volume input. Otherwise
+                   interpreted as path to directory to place output files.
+    :param anatomical_white_surface: path to the white matter surface created from the original hig res anatomical
+    :param contrast_vol_path: path to the contrast volume file
+    :param orig_low_res_anatomical: The original donwnsampled (low res) anatomical that functional data
+                                    (and thus contrasts) were registered to. Should be able to use the skull stripped
+                                    version or the full version.
+    :param orig_high_res_anatomical: The original high resolution anatomical scan image
+    :param hemi: The hemisphere to process. (make sure surface file matches)
+    :param subject_id: name of subject (project folder)
+    """
+    if hemi not in ['rh', 'lh']:
+        raise ValueError('Hemi must be one of rh or lh.')
+    high_res = nib.load(orig_high_res_anatomical)
+    high_res_data = high_res.get_fdata()
+    high_res_data = _pad_to_cube(high_res_data)
+    low_res = nib.load(orig_low_res_anatomical).get_fdata()
+    low_res = _pad_to_cube(low_res)
+    scale = _find_scale_factor(high_res_data, low_res)
+    contrast_nii = nib.load(contrast_vol_path)
+    contrast_data = _norm_4d(np.array(contrast_nii.get_fdata()))
+    aff = contrast_nii.affine
+    new_nii = nib.Nifti1Image(contrast_data, affine=aff, header=contrast_nii.header)
+
+    if not output:
+        output = os.path.dirname(contrast_vol_path)
+    out_desc = os.path.basename(contrast_vol_path).split('.')[0]
+    path = os.path.join(output, 'tmp.nii')
+    nib.save(new_nii, path)
+
+    os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.getcwd()))
+
+    if not os.path.exists('./mri/orig.mgz'):
+        _create_dir_if_needed('./', 'mri')
+        shutil.copy(orig_high_res_anatomical, './mri/orig.mgz')
+    if not os.path.exists('./surf/lh.white'):
+        _create_dir_if_needed('./', 'surf')
+        shutil.copy(anatomical_white_surface, './surf/lh.white')
+    subdivide_arg = str(1 / scale)
+    subprocess.run(['mri_convert', path, '-vs', subdivide_arg, subdivide_arg, subdivide_arg, path])
+    subprocess.run(['mri_convert', path, '-iis', '1', '-ijs', '1', '-iks', '1', path])
+    path_gz = os.path.join(output, 'tmp.nii.gz')
+    subprocess.run(['fslroi', path, path_gz, '0', '256', '0', '256', '0,', '256'])
+    overlay_out_path = os.path.join(output, 'sigsurface_' + hemi + '_' + out_desc + '.mgh')
+    subprocess.run(['mri_vol2surf', '--src', path_gz,
+                    '--out', overlay_out_path,
+                    '--hemi', hemi,
+                    '--regheader', subject_id])
+
+
 if __name__ == '__main__':
-    # x = np.zeros((90, 3))
-    # x[0:30, 0] = 1
-    # x[30:60, 1] = 1
-    # x[60:90, 2] = 1
-    # gt = np.random.normal(0, 1, (10, 10, 10, 90))
-    # gt[:, :, 2:8, 30:60] = np.random.normal(1, 1, (6, 30))
-    # h = hemodynamic_convolution(x_arr=x, kernel='weighted_gamma_hrf', temporal_window=15)
-    # gt = ts_smooth(gt)
-    # beta, residuals = mv_glm_regressor(h, gt)
-    # cont_mat = np.array([-.5, 1, -.5])
-    # contrast_matrix = contrast(beta, cont_mat)
-    # plt.show()
-    import pandas as pd
-    stimuli = pd.read_csv('full_session_test/meridian_stimuli/meridian_mapper_order1.para', delimiter=' ')
-    stimuli.head()
-    stimuli_list = list(stimuli['ID'])
-    root = 'full_session_test/20100131Castor/MION'
-    sources = [os.path.join(root, f) for f in os.listdir(root) if f.isnumeric()]
-    res = intra_subject_contrast(sources, stimuli_list,
-                                 output_dir='full_session_test/analysis_out',
-                                 contrast_matrix=np.array([[0, -1, 1], [-1, .5, .5]]).T,
-                                 contrast_descriptors=['vertical_vs_horizontal', 'null_vs_avg_vert_horiz'])
+    # main method used for quick and dirty testing, do not expect to functional properly depending on local directory
+    # structure / filenames
+    root = '/Users/loggiasr/Projects/fmri/monkey_fmri/castor_test'
+    functional_dir = os.path.join(root, 'functional/20100131/')
+    SOURCE = [os.path.join(functional_dir, f) for f in os.listdir(functional_dir) if f[0] != '.']
+    desired_contrast_mat = np.array([[0, -1, 1],
+                                     [-1, .5, .5]]).T
+    contrast_desc = ['vertical_vs_horizontal', 'null_vs_avg_vert_horiz']
+    res = intra_subject_contrast(run_dirs=SOURCE,
+                                 paradigm_file=os.path.join(root, 'stimuli/meridian_mapper_order1.para'),
+                                 contrast_matrix=desired_contrast_mat,
+                                 contrast_descriptors=contrast_desc,
+                                 output_dir=os.path.join(root, 'analysis_out'),
+                                 fname='registered.nii.gz', )
+    create_contrast_surface('castor_test/surf/lh.white',
+                            'castor_test/analysis_out/condition_vertical_vs_horizontal_contrast.nii',
+                            'castor_test/mri/stripped.nii.gz',
+                            'castor_test/mri/orig.mgz',
+                            hemi='lh', subject_id='castor_test')

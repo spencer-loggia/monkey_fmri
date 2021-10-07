@@ -1,8 +1,8 @@
 import pytest
 from preprocess import convert_to_sphinx, motion_correction, plot_moco_rms_displacement, \
     linear_affine_registration, nonlinear_registration, fix_nii_headers, smooth, normalize, \
-    create_functional_mask, preform_nifti_registration, skull_strip
-from analysis import contrast_np
+    create_functional_mask, preform_nifti_registration, skull_strip, _nifti_load_and_call_wrapper, \
+    _pad_to_cube
 import os
 import shutil
 
@@ -120,6 +120,16 @@ def test_smooth():
             and len(os.listdir('./tmp')) > 0)
 
 
+def test_nifti_load_call():
+    path = '/Users/loggiasr/Projects/fmri/monkey_fmri/test/data/castor_2010_small_moco/11/moco.nii.gz'
+    try:
+        os.mkdir('./tmp')
+    except FileExistsError:
+        shutil.rmtree('./tmp')
+        os.mkdir('./tmp')
+    res = _nifti_load_and_call_wrapper(path, _pad_to_cube, output='tmp/centered_padded.nii', to_center=True)
+
+
 def test_skull_strip():
     path = 'data/castor_2010_small_moco/11'
     try:
@@ -127,7 +137,7 @@ def test_skull_strip():
     except FileExistsError:
         shutil.rmtree('./tmp')
         os.mkdir('./tmp')
-    res = skull_strip_4d([path], output='tmp')
+    res = skull_strip([path], output='tmp')
     assert (all(['stripped.nii.gz' in os.listdir(os.path.join('./tmp', f)) for f in os.listdir('./tmp')])
             and len(os.listdir('./tmp')) > 0)
 

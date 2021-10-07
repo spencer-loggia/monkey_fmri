@@ -11,6 +11,9 @@ from builtins import str
 from builtins import range
 
 import os  # system functions
+import subprocess
+
+from scipy.ndimage import zoom, gaussian_filter
 
 import nipype.interfaces.io as nio  # Data i/o
 import nipype.interfaces.fsl as fsl  # fsl
@@ -38,6 +41,25 @@ def _normalize_array(arr: np.ndarray) -> np.ndarray:
     std = np.std(flat)
     new_arr = arr / std
     return new_arr
+
+
+def _drift_correction(arr: np.ndarray) -> np.ndarray:
+    """
+    model temporal drift and correct for it.
+    :param arr:
+    :return:
+    """
+    mean = np.mean(arr, axis=[0, 1, 2])
+    filtered = gaussian_filter(mean, std=2)
+    axis = np.arange(filtered.shape[0], dtype=float)
+    cov = np.cov(filtered, axis)
+    eig_val, eig_vec = np.linalg.eig(cov)
+    ind = np.argsort(eig_val)
+    vec = eig_vec[ind[-1]] * eig_val[ind[-1]]
+    m = vec[1] / vec[0]
+    est = m * axis
+    arr = arr - np.tile(est, (arr.shape[0], arr.shape[1], arr.shape[2], 1))
+    return arr
 
 
 def _apply_binary_mask(ts_in: nib.Nifti1Image, mask: nib.Nifti1Image) -> nib.Nifti1Image:
@@ -312,6 +334,79 @@ def fix_nii_headers(input_dirs: List[str], output: str, fname: str = 'nirt.nii.g
                 cvt.run()
 
 
+def _pad_to_cube(arr: np.ndarray, time_axis=3):
+    """
+    makes spatial dims have even size.
+    :param arr:
+    :param time_axis:
+    :return:
+    """
+    if time_axis < np.ndim(arr):
+        size = max(arr.shape[:time_axis] + arr.shape[time_axis+1:])
+        print(size)
+    else:
+        size = max(arr.shape)
+        # print('ruhroh')
+
+    ax_pad = [0] * np.ndim(arr)
+    for i in range(len(ax_pad)):
+        if i != time_axis:
+            ideal = (size - arr.shape[i]) / 2
+            ax_pad[i] = (int(np.floor(ideal)), int(np.ceil(ideal)))
+        else:
+            ax_pad[i] = (0, 0)
+    arr = np.pad(arr, ax_pad, mode='constant', constant_values=(0, 0))
+    return arr
+
+
+def _nifti_load_and_call_wrapper(path: str, fxn, output, to_center, *args):
+    nii = nib.load(path)
+    nii_data = nii.get_fdata()
+    nii_data = fxn(nii_data, *args)
+    aff = nii.affine
+    if to_center:
+        aff[:3, 3] = 0
+    new_nii = nib.Nifti1Image(nii_data, affine=aff, header=nii.header)
+    nib.save(new_nii, output)
+    return
+
+
+def center_nifti(source_dir:str, fname:str ='orig.mgz', output=None):
+    if not output:
+        output = os.path.join(source_dir, 'orig.nii')
+    nifti = nib.load(os.path.join(source_dir, fname))
+    nii_aff = nifti.affine
+    nii_aff[:3, 3] = np.zeros(3)
+    centered = nib.Nifti1Image(nifti.get_fdata(), affine=nii_aff, header=nifti.header)
+    nib.save(centered, output)
+
+
+def create_low_res_anatomical(source_dir:str, fname:str ='orig.mgz', output=None, factor=3):
+    if not output:
+        output = os.path.join(source_dir, 'low_res.nii')
+    factor = str(factor)
+    in_path = os.path.join(source_dir, fname)
+    subprocess.run(['mri_convert', in_path, '-vs', factor, factor, factor, output])
+    subprocess.run(['mri_convert', output, '-iis', '1', '-ijs', '1', '-iks', '1', output])
+
+
+def functional_to_cube(input_dirs: List[str], output: str = None, fname: str = 'moco.nii'):
+    args = []
+    for source_dir in input_dirs:
+        source = os.path.join(source_dir, fname)
+        if not os.path.exists(source):
+            print("could not find file")
+            exit(1)
+        if not output:
+            local_out = os.path.join(source_dir, 'f_cubed.nii')
+        else:
+            out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+            local_out = os.path.join(out_dir, 'f_cubed.nii')
+        args.append((source, _pad_to_cube, local_out, False))
+    with Pool() as p:
+        p.starmap(_nifti_load_and_call_wrapper, args)
+
+
 def smooth(input_dirs: List[str], output: str, fname: str = 'fixed.nii', bright_tresh=1000.0, fwhm=4.0):
     sus = fsl.SUSAN()
     outputs = []
@@ -344,13 +439,18 @@ def _bet_wrapper(in_file, out_file, functional, bet):
     bet.inputs.out_file = out_file
     bet.inputs.mask = True
     bet.inputs.functional = functional
+    if not functional:
+        bet.inputs.remove_eyes = True
+        bet.inputs.frac = .7
+        bet.inputs.args = '-R'
     bet.cmdline
     out = bet.run()
 
 
-def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: str = 'moco.nii.gz', is_time_series=True):
+def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: str = 'moco.nii.gz', is_time_series=True,
+                center=None):
     bet = fsl.BET()
-    args  = []
+    args = []
     for source_dir in input_dirs:
         if fname not in os.listdir(source_dir):
             print("could not find file")
@@ -366,12 +466,14 @@ def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: s
         p.starmap(_bet_wrapper, args)
 
 
-def normalize(input_dirs: List[str], output: str, fname='smooth.nii.gz'):
+def normalize(input_dirs: List[str], output: str = None, fname='smooth.nii.gz', drift_correction=True):
     """
     Centers and normalizes the intensity data using (X - mu) / std. Creates a normalized nifti
     :param input_dirs:
     :param output:
     :param fname:
+    :param drift_correction: Only use drift correction if the average stimulus across the whole run is the same. Works
+                             best if stimuli are presented the same number of times at regular intervals.
     :return:
     """
     for source_dir in input_dirs:
@@ -390,6 +492,8 @@ def normalize(input_dirs: List[str], output: str, fname='smooth.nii.gz'):
                 nifti = nib.load(os.path.join(source_dir, source))
                 n_data = np.array(nifti.get_fdata())
                 n_data = _normalize_array(n_data)
+                if drift_correction:
+                    n_data = _drift_correction(n_data)
                 new_nifti = nib.Nifti1Image(n_data, affine=nifti.affine, header=nifti.header)
                 nib.save(new_nifti, local_out)
                 print(nifti.header)
