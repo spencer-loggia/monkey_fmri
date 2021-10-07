@@ -6,6 +6,28 @@ import sys
 import os
 import glob
 
+def unpack(inDir,outDir,adj=False,dirdepth=5):
+    """
+    unpack unpacks DICOM data from the scanner into the NIFTI format.
+    :param inDir: Input directory where the dicom files live.
+    :param outDir: Directory where the NIFTI files will go.
+    :param adj: True/False. Are images from the same series always in the same folder? Default False
+    :param dirdepth: 1-9. How many folders of depth to convert NIFTI files? Default 5.
+    :return: 'Completed'
+    """
+    assert isinstance(inDir,str), 'Parameter inDir={} not of <class: "str">'.format(inDir)
+    assert isinstance(outDir,str), 'Parameter outDir={} not of <class: "str">'.format(outDir)
+    assert isinstance(adj,bool), 'Parameter adj={} not of <class: "bool">'.format(adj)
+    assert isinstance(dirdepth,int), 'Parameter dirdepth={} not of <class "int">'.format(dirdepth)
+
+    if adj: # Prepare the 'a' argument for dcm2niix
+        a = 'y'
+    else:
+        a = 'n'
+
+    cmd = 'dcm2niix -o {} -a {} -d {} -z y -f %p_%t_%s_%n {}'.format(outDir,a,dirdepth,inDir)
+    call(cmd, shell=True)
+    return 'Completed'
 
 def scan_log(inF, outF, re_scan=True):
     if not os.path.isfile(outF):
@@ -26,7 +48,7 @@ def scan_log_cmd(inF, outF):
     print('Done')
 
 
-def unpack(inF,outF,runs,HDR):
+def unpack_dcmunpack(inF,outF,runs,HDR):
     runlist = ''
     HDRs = ['mion','bold']
     if HDR.lower() in HDRs:
