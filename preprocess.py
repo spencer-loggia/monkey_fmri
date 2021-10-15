@@ -1,6 +1,7 @@
 from __future__ import print_function
 from __future__ import division
 
+import ntpath
 import shutil
 import sys
 from typing import List, Union, Tuple, Dict
@@ -29,17 +30,16 @@ from multiprocessing import Pool
 
 def _create_dir_if_needed(base: str, name: str):
     out_dir = os.path.join(base, name)
-    try:
+    if not os.path.exists(out_dir):
         os.mkdir(out_dir)
-    except FileExistsError:
-        pass
     return out_dir
 
 
 def _normalize_array(arr: np.ndarray) -> np.ndarray:
     flat = arr.flatten()
+    mean = np.mean(flat)
     std = np.std(flat)
-    new_arr = arr / std
+    new_arr = (arr - mean) / std
     return new_arr
 
 
@@ -131,9 +131,12 @@ def _mcflt_wrapper(in_file, out_file, mcflt):
     return mcflt.run()
 
 
-def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii', check_rms=True) -> List[List[Tuple[str]]]:
+def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii',
+                      check_rms=True, abs_threshold=.8, var_threshold=.2) -> Union[List[str], None]:
     """
-    preform fsl motion correction
+    preform fsl motion correction. If check rms is enabled will remove data where too much motion is detected.
+    :param var_threshold:
+    :param abs_threshold:
     :param output:
     :param input_dirs:
     :param fname:
@@ -159,21 +162,36 @@ def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fn
         res = p.starmap(_mcflt_wrapper, args)
     if check_rms:
         output = './'
-        plot_moco_rms_displacement(out_dirs, output)
-    return res
+        good_moco = plot_moco_rms_displacement(out_dirs, output, abs_threshold, var_threshold)
+        return good_moco
 
 
-def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, threshold=.5) -> Dict[str, bool]:
+def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_length: int=279):
+    good = []
+    for source_dir in input_dirs:
+        path = os.path.join(source_dir, fname)
+        file = nib.load(path)
+        data = file.get_fdata()
+        if data.shape[-1] == expected_length:
+            good.append(source_dir)
+    return good
+
+
+def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, abs_threshold, var_threshold) -> List[str]:
     fig, ax = plt.subplots(1)
-    good_moco = {}
+    good_moco = []
     for transform_file_dir in transform_file_dirs:
         for f in os.listdir(transform_file_dir):
             if f == 'moco.nii.gz_abs.rms':
                 disp_vec = np.loadtxt(os.path.join(transform_file_dir, f))
+                if len(disp_vec.shape) == 0:
+                    print(os.path.join(transform_file_dir, f))
+                    continue
                 label = os.path.basename(transform_file_dir)
                 ax.plot(disp_vec, label=label)
-                is_good_moco = all(disp_vec <= threshold)
-                good_moco[label] = is_good_moco
+                is_good_moco = max(disp_vec) <= abs_threshold and np.std(disp_vec) <= var_threshold
+                if is_good_moco:
+                    good_moco.append(transform_file_dir)
     ax.set_title("MOCO RMS Vector Translation (mm)")
     ax.set_xlabel("frame number")
     fig.legend(loc='upper left')
@@ -182,10 +200,10 @@ def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, th
     return good_moco
 
 
-def _flirt_wrapper(in_file, out_file, mat_out_file, temp_file, flt):
+def _flirt_wrapper(in_file, out_file, mat_out_file, temp_file, flt, dof=12):
     flt.inputs.in_file = in_file
     flt.inputs.reference = temp_file
-    flt.inputs.dof = 12
+    flt.inputs.dof = dof
     flt.inputs.out_file = out_file
     flt.inputs.args = '-omat ' + mat_out_file
     flt.cmdline
@@ -211,7 +229,7 @@ def linear_affine_registration(functional_input_dirs: List[str], template_file: 
             local_out = os.path.join(out_dir, chosen_name + '_flirt.nii.gz')
             mat_out = os.path.join(out_dir, chosen_name + '_flirt.mat')
         in_file = os.path.join(source_dir, fname)
-        args.append((in_file, local_out, mat_out, template_file, flt))
+        args.append((in_file, local_out, mat_out, template_file, flt, 12))
     with Pool() as p:
         return p.starmap(_flirt_wrapper, args)
 
@@ -434,21 +452,20 @@ def smooth(input_dirs: List[str], output: str, fname: str = 'fixed.nii', bright_
         return outputs
 
 
-def _bet_wrapper(in_file, out_file, functional, bet):
+def _bet_wrapper(in_file, out_file, functional, bet, frac):
     bet.inputs.in_file = in_file
     bet.inputs.out_file = out_file
     bet.inputs.mask = True
     bet.inputs.functional = functional
-    if not functional:
-        bet.inputs.remove_eyes = True
-        bet.inputs.frac = .7
-        bet.inputs.args = '-R'
+    bet.inputs.frac = frac
+    bet.inputs.args = '-R'
+    #bet.inputs.remove_eyes = True
     bet.cmdline
     out = bet.run()
 
 
 def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: str = 'moco.nii.gz', is_time_series=True,
-                center=None):
+                fractional_thresh=.5, center=None):
     bet = fsl.BET()
     args = []
     for source_dir in input_dirs:
@@ -461,7 +478,7 @@ def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: s
             out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
             local_out = os.path.join(out_dir, 'stripped.nii.gz')
         in_file = os.path.join(source_dir, fname)
-        args.append((in_file, local_out, is_time_series, bet))
+        args.append((in_file, local_out, is_time_series, bet, fractional_thresh))
     with Pool() as p:
         p.starmap(_bet_wrapper, args)
 

@@ -65,7 +65,7 @@ def ts_smooth(input_ts: np.ndarray, kernel_std=2., temporal_smoothing=True):
     return smoothed
 
 
-def hemodynamic_convolution(x_arr: np.ndarray, kernel: str, temporal_window: int = 10, **kwargs) -> np.ndarray:
+def hemodynamic_convolution(x_arr: np.ndarray, kernel: str, temporal_window: int = 8, **kwargs) -> np.ndarray:
     """
 
     :param temporal_window: number of trs to use in discrete convolution
@@ -270,7 +270,7 @@ def intra_subject_contrast(run_dirs: List[str], paradigm_file: str, contrast_mat
 
 def _find_scale_factor(high_res: np.ndarray, low_res: np.ndarray):
     """
-    Computes the amount one matrix to match the dims of another
+    Computes the amount to scale one matrix to match the dims of another
     :param high_res:
     :param low_res:
     :return:
@@ -354,14 +354,14 @@ if __name__ == '__main__':
     desired_contrast_mat = np.array([[0, -1, 1],
                                      [-1, .5, .5]]).T
     contrast_desc = ['vertical_vs_horizontal', 'null_vs_avg_vert_horiz']
-    res = intra_subject_contrast(run_dirs=SOURCE,
-                                 paradigm_file=os.path.join(root, 'stimuli/meridian_mapper_order1.para'),
-                                 contrast_matrix=desired_contrast_mat,
-                                 contrast_descriptors=contrast_desc,
-                                 output_dir=os.path.join(root, 'analysis_out'),
-                                 fname='registered.nii.gz', )
-    create_contrast_surface('castor_test/surf/lh.white',
+    # res = intra_subject_contrast(run_dirs=SOURCE,
+    #                              paradigm_file=os.path.join(root, 'stimuli/meridian_mapper_order1.para'),
+    #                              contrast_matrix=desired_contrast_mat,
+    #                              contrast_descriptors=contrast_desc,
+    #                              output_dir=os.path.join(root, 'analysis_out'),
+    #                              fname='registered.nii.gz', )
+    create_contrast_surface('castor_test/surf/rh.white',
                             'castor_test/analysis_out/condition_vertical_vs_horizontal_contrast.nii',
                             'castor_test/mri/stripped.nii.gz',
                             'castor_test/mri/orig.mgz',
-                            hemi='lh', subject_id='castor_test')
+                            hemi='rh', subject_id='castor_test')
