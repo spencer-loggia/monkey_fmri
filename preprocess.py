@@ -27,7 +27,11 @@ import nibabel as nib
 from matplotlib import pyplot as plt
 from multiprocessing import Pool
 
-
+'''
+TODO:
+BUGS:
+create_dir_if_needed will create folders
+'''
 def _create_dir_if_needed(base: str, name: str):
     out_dir = os.path.join(base, name)
     if not os.path.exists(out_dir):
@@ -96,16 +100,32 @@ def _mri_convert_sphinx_wrapper(in_file, out_file, cvt):
     cvt.cmdline
     return cvt.run()
 
+def _mri_convert_wrapper(in_file, out_file, in_orientation, out_orientation, cvt):
+    cvt.inputs.in_file = in_file
+    cvt.inputs.out_file = out_file
+    cvt.inputs.args = "--in_orientation {} --out_orientation {}".format(in_orientation,out_orientation)
+    cvt.inputs.out_type = 'nii'
+    cvt.cmdline
+    return cvt.run()
 
-def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii') -> str:
+def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii', scan_pos = 'HFP') -> str:
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION dir)
     :param fname: the expected name of unpacked nifitis
     :param output: output directory to create or populate (if None put in same dirs as input)
+    :param scan_pos: String specifying the scanner position of the monkey. If 'HFS' (head first supine), the sphinx
+    will be correct. If 'HFP' (head first prone), the sphinx transformation will not be correct, and the orientation
+    will have be changed from RAS to RAI.
     :return: path to output directory
     """
-    args = []
+    assert scan_pos == 'HFP' or scan_pos == 'HFS', "Parameter scan_pos must be either 'HFP' or 'HFS'"
+
+    args_sphinx = []
+    args_flip = []
+    in_orientation = 'RAS' # Only applicable for flipping
+    out_orientation = 'RAI' # Only applicable for flipping
+
     for scan_dir in input_dirs:
         os.environ.setdefault("SUBJECTS_DIR", scan_dir)
         cvt = freesurfer.MRIConvert()
@@ -115,10 +135,18 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fn
         else:
             out_dir = _create_dir_if_needed(output, os.path.basename(scan_dir))
             local_out = os.path.join(out_dir, 'f_sphinx.nii')
-        args.append((in_file, local_out, cvt))
-    with Pool() as p:
-        res = p.starmap(_mri_convert_sphinx_wrapper, args)
-    return res
+        args_sphinx.append((in_file, local_out, cvt))
+        args_flip.append((local_out, local_out, in_orientation, out_orientation, cvt))
+    if scan_pos == 'HFS':
+        with Pool() as p:
+            res = p.starmap(_mri_convert_sphinx_wrapper, args_sphinx)
+        return res
+    elif scan_pos == 'HFP':
+        with Pool() as p:
+            res = p.starmap(_mri_convert_sphinx_wrapper, args_sphinx)
+            res2 = p.starmap(_mri_convert_wrapper, args_flip)
+        return res2
+
 
 
 def _mcflt_wrapper(in_file, out_file, mcflt):
