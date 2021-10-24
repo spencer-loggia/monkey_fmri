@@ -24,6 +24,7 @@ except ModuleNotFoundError:
 
 import pandas as pd
 
+from typing import List, Union, Tuple, Dict
 
 def _norm_4d(arr: np.ndarray):
     """
@@ -164,6 +165,51 @@ def _pipe(d_mat, run, c_mat):
     beta, res = mv_glm_regressor(d_mat, ts_smooth(run, kernel_std=.5))
     contrasts = contrast(beta, c_mat)
     return contrasts
+
+def _create_SNR_volume_wrapper(input_dir, noise_path, out_path,type='tSNR'):
+    func = nib.load(input_dir)
+    func_data = func.get_fdata()
+    func_affine = func.affine
+    noise = nib.load(noise_path)
+    noise_data = noise.get_fdata()
+    if type == 'tSNR':
+        sd = np.std(noise_data,axis=3)
+        sd[np.where(sd == 0)] = 1
+        mean = np.mean(func_data,axis=3)
+        res = mean/sd
+    elif type == 'CNR':
+        sdn = np.std(noise_data, axis=3)
+        sdn[np.where(sdn == 0)] = 1
+        sdf = np.std(func_data, axis=3)
+        sdf[np.where(sdf == 0)] = 1
+        res = sdf/sdn
+    res_nii = nib.Nifti1Image(res, func_affine)
+    nib.save(res_nii, os.path.join(out_path, '{}.nii.gz'.format(type)))
+
+def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = None, fname = 'clean.nii.gz',type='tSNR'):
+    '''
+    create_SNR_map: Creates a tSND or a CNR map.
+    :param input_dirs:
+    :param output:
+    :param fname:
+    :param type:
+    :return:
+    '''
+    args = []
+    noise_path = os.path.join(noise_dir, 'noise.nii.gz')
+    for source_dir in input_dirs:
+        if os.path.isfile(os.path.join(source_dir, fname)):
+            input_dir = os.path.join(source_dir, fname)
+            if not output:
+                out_dir = source_dir
+            else:
+                out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+
+        args.append((input_dir,noise_path,out_dir,type))
+    with Pool() as p:
+        res = p.starmap(_create_SNR_volume_wrapper,args)
+
+
 
 
 def create_design_matrix(param_file, subject_ids: List[str], subject_dir_paths: List[str], anal_name=None, mode='manual',
