@@ -23,11 +23,15 @@ import nipype.pipeline.engine as pe  # pypeline engine
 import nipype.algorithms.modelgen as model  # model generation
 import nipype.algorithms.rapidart as ra  # artifact detection
 import nibabel as nib
+from nilearn import image as nimg
 
 from matplotlib import pyplot as plt
 from multiprocessing import Pool
 
-
+'''
+TODO:
+Slice timing correction
+'''
 def _create_dir_if_needed(base: str, name: str):
     out_dir = os.path.join(base, name)
     if not os.path.exists(out_dir):
@@ -96,16 +100,44 @@ def _mri_convert_sphinx_wrapper(in_file, out_file, cvt):
     cvt.cmdline
     return cvt.run()
 
+def _mri_convert_wrapper(in_file, out_file, in_orientation, out_orientation, cvt):
+    cvt.inputs.in_file = in_file
+    cvt.inputs.out_file = out_file
+    cvt.inputs.args = "--in_orientation {} --out_orientation {}".format(in_orientation,out_orientation)
+    cvt.inputs.out_type = 'nii'
+    cvt.cmdline
+    return cvt.run()
 
-def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii') -> str:
+def _slice_time_wrapper(in_file, out_file, slice_dir, TR, st):
+    st.inputs.in_file = in_file
+    st.inputs.out_file = out_file
+    st.inputs.slice_direction =  slice_dir
+    st.inputs.interleaved = True
+    st.inputs.time_repetition = TR
+    return st.run()
+
+def _clean_img_wrapper(in_file, out_file, low_pass, high_pass, TR):
+    clean_img = nimg.clean_img(in_file, confounds=None, detrend=True,standardize=False, low_pass = low_pass, high_pass = high_pass, t_r = TR)
+    nib.save(clean_img, out_file)
+
+def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii', scan_pos = 'HFP') -> str:
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION or BOLD dir)
     :param fname: the expected name of unpacked nifitis
     :param output: output directory to create or populate (if None put in same dirs as input)
+    :param scan_pos: String specifying the scanner position of the monkey. If 'HFS' (head first supine), the sphinx
+    will be correct. If 'HFP' (head first prone), the sphinx transformation will not be correct, and the orientation
+    will have be changed from RAS to RAI.
     :return: path to output directory
     """
-    args = []
+    assert scan_pos == 'HFP' or scan_pos == 'HFS', "Parameter scan_pos must be either 'HFP' or 'HFS'"
+
+    args_sphinx = []
+    args_flip = []
+    in_orientation = 'RAS' # Only applicable for flipping
+    out_orientation = 'RAI' # Only applicable for flipping
+
     for scan_dir in input_dirs:
         os.environ.setdefault("SUBJECTS_DIR", scan_dir)
         cvt = freesurfer.MRIConvert()
@@ -115,10 +147,18 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fn
         else:
             out_dir = _create_dir_if_needed(output, os.path.basename(scan_dir))
             local_out = os.path.join(out_dir, 'f_sphinx.nii')
-        args.append((in_file, local_out, cvt))
-    with Pool() as p:
-        res = p.starmap(_mri_convert_sphinx_wrapper, args)
-    return res
+        args_sphinx.append((in_file, local_out, cvt))
+        args_flip.append((local_out, local_out, in_orientation, out_orientation, cvt))
+    if scan_pos == 'HFS':
+        with Pool() as p:
+            res = p.starmap(_mri_convert_sphinx_wrapper, args_sphinx)
+        return res
+    elif scan_pos == 'HFP':
+        with Pool() as p:
+            res = p.starmap(_mri_convert_sphinx_wrapper, args_sphinx)
+            res2 = p.starmap(_mri_convert_wrapper, args_flip)
+        return res2
+
 
 
 def _mcflt_wrapper(in_file, out_file, mcflt):
@@ -164,6 +204,56 @@ def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fn
         output = './'
         good_moco = plot_moco_rms_displacement(out_dirs, output, abs_threshold, var_threshold)
         return good_moco
+
+def slice_time_correction(input_dirs: List[str], output: Union[None, str] = None, fname='moco.nii.gz', slice_dir = 3, TR = 3):
+    '''
+    slice_time_correction: Performs slice timing on motion corrected (or non motion corrected) data.
+    :param input_dirs:
+    :param output:
+    :param fname:
+    :param TR:
+    :return:
+    '''
+    args = []
+    for source_dir in input_dirs:
+        outputs = []
+        if os.path.isfile(os.path.join(source_dir, fname)):
+            st = fsl.SliceTimer()
+            if not output:
+                out_dir = source_dir
+                local_out = os.path.join(source_dir, 'slc.nii.gz')
+            else:
+                out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+                local_out = os.path.join(source_dir, 'slc.nii.gz')
+            path = os.path.join(source_dir, fname)
+            args.append((path, local_out, slice_dir, TR, st))
+    with Pool() as p:
+        res = p.starmap(_slice_time_wrapper, args)
+
+def image_cleaner(input_dirs: List[str], output: Union[None, str] = None, fname='slc.nii.gz', low_pass = 0.08, high_pass = 0.009, TR = 3):
+    '''
+    image_cleaner: Detrends image and applies high and low pass filtering
+    :param input_dirs:
+    :param output:
+    :param fname:
+    :param TR:
+    :return:
+    '''
+    args = []
+    for source_dir in input_dirs:
+        if os.path.isfile(os.path.join(source_dir,fname)):
+            if not output:
+                out_dir = source_dir
+                local_out = os.path.join(source_dir, 'clean.nii.gz')
+            else:
+                out_dir = _create_dir_if_needed(output,os.path.basename(source_dir))
+                local_out = os.path.join(source_dir, 'clean.nii.gz')
+            path = os.path.join(source_dir,fname)
+            args.append((path,local_out,low_pass, high_pass, TR))
+    with Pool() as p:
+        res = p.starmap(_clean_img_wrapper, args)
+
+
 
 
 def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_length: int=279):
