@@ -100,7 +100,7 @@ def _mri_convert_sphinx_wrapper(in_file, out_file, cvt):
 def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii') -> str:
     """
     Convert to sphinx
-    :param input_dirs: paths to dirs with input nii files, (likely in the MION dir)
+    :param input_dirs: paths to dirs with input nii files, (likely in the MION or BOLD dir)
     :param fname: the expected name of unpacked nifitis
     :param output: output directory to create or populate (if None put in same dirs as input)
     :return: path to output directory

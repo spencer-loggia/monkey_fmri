@@ -73,7 +73,7 @@ def hemodynamic_convolution(x_arr: np.ndarray, kernel: str, temporal_window: int
     :param kernel: function name to tranform activations to hemodynamic activation space. Convolves over time dime (ax -1)
     :param mean: free parameter argument if kernel is gauss based, the lead of the peak on the current position, meausured in trs
     :param var:
-=    :return: a matrix with same shape as input.
+    :return: a matrix with same shape as input.
     """
     if 'mean' in kwargs:
         mean = kwargs['mean']

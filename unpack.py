@@ -33,9 +33,9 @@ def unpack(inDir,outDir,adj=False,dirdepth=5):
     return 'Completed'
 
 def scan_log(inF, outF, re_scan=True):
-    if not os.path.isfile(outF):
+    if not os.path.exists(outF):
         os.mkdir(outF)
-    if os.path.isfile(os.path.join(outF, 'scan.info')) and not re_scan:
+    if os.path.exists(os.path.join(outF, 'scan.info')) and not re_scan:
         print("dicom scan exists, aborting...", sys.stderr)
         return
     print("Generating scan.info from dicom headers...")
