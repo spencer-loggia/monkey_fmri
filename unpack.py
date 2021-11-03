@@ -1,5 +1,5 @@
 import shutil
-from typing import List
+from typing import List, Union
 
 import numpy as np
 import pandas as pd
@@ -8,10 +8,13 @@ from preprocess import _create_dir_if_needed
 import sys
 import os
 import glob
+from multiprocessing import Pool
 
-def unpack(inDir,outDir,adj=False,dirdepth=5):
+
+def unpack(inDir,outDir,adj=False,dirdepth=5, nifti_name='f'):
     """
     unpack unpacks DICOM data from the scanner into the NIFTI format.
+    :param nifti_name: what to name output nifti
     :param inDir: Input directory where the dicom files live.
     :param outDir: Directory where the NIFTI files will go.
     :param adj: True/False. Are images from the same series always in the same folder? Default False
@@ -28,9 +31,39 @@ def unpack(inDir,outDir,adj=False,dirdepth=5):
     else:
         a = 'n'
 
-    cmd = 'dcm2niix -o {} -a {} -d {} -z y -f %p_%t_%s_%n {}'.format(outDir,a,dirdepth,inDir)
+    cmd = 'dcm2niix -o {} -a {} -d {} -z y -f {} {}'.format(outDir,a,dirdepth, nifti_name, inDir)
     call(cmd, shell=True)
     return 'Completed'
+
+
+def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], nifti_name: str = 'f'):
+    """
+    Unpack a list of runs to target dir.
+    :param nifti_name: what to name output nifti
+    :param inDir: A directory from a day of scanning containing multiple runs
+    :param outDir: target directory for new nifti folders
+    :param run_numbers: list of good run number
+    :return: a list of the dirs created containing nifti files
+    """
+    run_dirs = os.listdir(inDir)
+    to_unpack = []
+    f_dirs = []
+    ymd = os.path.basename(inDir)[0:9]
+    for run in run_dirs:
+        if run[0] == '.':
+            continue
+        tkns = run.split('_')
+        this_run_num = int(tkns[0])
+        if this_run_num in run_numbers:
+            _create_dir_if_needed(outDir, ymd)
+            _create_dir_if_needed(os.path.join(outDir, ymd), str(this_run_num))
+            local_out = os.path.join(outDir, ymd, str(this_run_num))
+            f_dirs.append(local_out)
+            to_unpack.append((os.path.join(inDir, run), local_out, True, 2, nifti_name))
+    with Pool() as p:
+        p.starmap(unpack, to_unpack)
+    return f_dirs
+
 
 def scan_log(inF, outF, re_scan=True):
     if not os.path.exists(outF):
@@ -112,6 +145,13 @@ def create_dir_structure(input_dir: str, output_root_dir: str) -> List[str]:
             functional_dirs.append(run_dir)
     return functional_dirs
 
+
+if __name__ == '__main__':
+    # dirty test
+    dicomDir = '/Users/loggiasr/Projects/fmri/monkey_fmri/wooster_merridian_list_mgh4chan'
+    run_numbers = [9, 10, 11, 12, 20, 21, 22, 23, 24]
+    sessDir = '/Users/loggiasr/Projects/fmri/monkey_fmri/WoosterMerridianMGH4CHAN/functional/'
+    unpack_run_list(dicomDir, sessDir, run_numbers, 'f')
 
         
     
