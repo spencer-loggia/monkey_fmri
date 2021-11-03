@@ -49,20 +49,22 @@ def _normalize_array(arr: np.ndarray) -> np.ndarray:
 
 def _drift_correction(arr: np.ndarray) -> np.ndarray:
     """
-    model temporal drift and correct for it.
+    model temporal drift and correct for it. Assumes stimuli are evenly distributed throughout the run and will
+    produce potentially wrong results otherwise.
     :param arr:
     :return:
     """
-    mean = np.mean(arr, axis=[0, 1, 2])
-    filtered = gaussian_filter(mean, std=2)
+    mean = np.mean(np.mean(np.mean(arr, axis=2), axis=1), axis=0)
+    filtered = gaussian_filter(mean, sigma=2)
     axis = np.arange(filtered.shape[0], dtype=float)
     cov = np.cov(filtered, axis)
     eig_val, eig_vec = np.linalg.eig(cov)
     ind = np.argsort(eig_val)
     vec = eig_vec[ind[-1]] * eig_val[ind[-1]]
-    m = vec[1] / vec[0]
+    m = vec[0] / vec[1]
     est = m * axis
-    arr = arr - np.tile(est, (arr.shape[0], arr.shape[1], arr.shape[2], 1))
+    arr = arr + np.tile(est, (arr.shape[0], arr.shape[1], arr.shape[2], 1))
+    print('drift coefficient', m)
     return arr
 
 
@@ -100,13 +102,15 @@ def _mri_convert_sphinx_wrapper(in_file, out_file, cvt):
     cvt.cmdline
     return cvt.run()
 
+
 def _mri_convert_wrapper(in_file, out_file, in_orientation, out_orientation, cvt):
     cvt.inputs.in_file = in_file
     cvt.inputs.out_file = out_file
-    cvt.inputs.args = "--in_orientation {} --out_orientation {}".format(in_orientation,out_orientation)
+    cvt.inputs.args = "--in_orientation {} --out_orientation {}".format(in_orientation, out_orientation)
     cvt.inputs.out_type = 'nii'
     cvt.cmdline
     return cvt.run()
+
 
 def _slice_time_wrapper(in_file, out_file, slice_dir, TR, st):
     st.inputs.in_file = in_file
@@ -116,9 +120,11 @@ def _slice_time_wrapper(in_file, out_file, slice_dir, TR, st):
     st.inputs.time_repetition = TR
     return st.run()
 
+
 def _clean_img_wrapper(in_file, out_file, low_pass, high_pass, TR):
-    clean_img = nimg.clean_img(in_file, confounds=None, detrend=True,standardize=False, low_pass = low_pass, high_pass = high_pass, t_r = TR)
+    clean_img = nimg.clean_img(in_file, confounds=None, detrend=True, standardize=False, low_pass = low_pass, high_pass = high_pass, t_r = TR)
     nib.save(clean_img, out_file)
+
 
 def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii', scan_pos = 'HFP') -> str:
     """
@@ -158,7 +164,6 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fn
             res = p.starmap(_mri_convert_sphinx_wrapper, args_sphinx)
             res2 = p.starmap(_mri_convert_wrapper, args_flip)
         return res2
-
 
 
 def _mcflt_wrapper(in_file, out_file, mcflt):
@@ -205,6 +210,7 @@ def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fn
         good_moco = plot_moco_rms_displacement(out_dirs, output, abs_threshold, var_threshold)
         return good_moco
 
+
 def slice_time_correction(input_dirs: List[str], output: Union[None, str] = None, fname='moco.nii.gz', slice_dir = 3, TR = 3):
     '''
     slice_time_correction: Performs slice timing on motion corrected (or non motion corrected) data.
@@ -230,6 +236,7 @@ def slice_time_correction(input_dirs: List[str], output: Union[None, str] = None
     with Pool() as p:
         res = p.starmap(_slice_time_wrapper, args)
 
+
 def image_cleaner(input_dirs: List[str], output: Union[None, str] = None, fname='slc.nii.gz', low_pass = 0.08, high_pass = 0.009, TR = 3):
     '''
     image_cleaner: Detrends image and applies high and low pass filtering
@@ -252,8 +259,6 @@ def image_cleaner(input_dirs: List[str], output: Union[None, str] = None, fname=
             args.append((path,local_out,low_pass, high_pass, TR))
     with Pool() as p:
         res = p.starmap(_clean_img_wrapper, args)
-
-
 
 
 def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_length: int=279):

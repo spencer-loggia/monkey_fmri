@@ -26,6 +26,7 @@ import pandas as pd
 
 from typing import List, Union, Tuple, Dict
 
+
 def _norm_4d(arr: np.ndarray):
     """
     Simple normalization function, centers on mean, 1 unit equal one std dev of original data.
@@ -53,7 +54,7 @@ def ts_smooth(input_ts: np.ndarray, kernel_std=2., temporal_smoothing=True):
     Smooth the functional data
     :param input_ts: original time series data
     :param kernel_std: std dev of the gaussian kernel
-    :param temporal_smoothing: Bool, defualt: True. Keep in mid using temporal may effect hemodynamic estimate negatively
+    :param temporal_smoothing: Bool, defualt: True. Keep in mind using temporal may effect hemodynamic estimate negatively
     :return: timeseries of the same shape as input
     """
     def _smooth(input_arr, std):
@@ -64,6 +65,14 @@ def ts_smooth(input_ts: np.ndarray, kernel_std=2., temporal_smoothing=True):
     else:
         smoothed = np.apply_along_axis(lambda m: _smooth(m, kernel_std), axis=3, arr=input_ts)
     return smoothed
+
+
+def rsa():
+    raise NotImplementedError
+
+
+def hyperalign():
+    raise NotImplementedError
 
 
 def hemodynamic_convolution(x_arr: np.ndarray, kernel: str, temporal_window: int = 8, **kwargs) -> np.ndarray:
@@ -112,7 +121,7 @@ def hemodynamic_convolution(x_arr: np.ndarray, kernel: str, temporal_window: int
         if 'mean2' in kwargs:
             mean2 = kwargs['mean2']
         else:
-            mean2 = 4
+            mean2 = 5
         if 'var2' in kwargs:
             var2 = kwargs['var2']
         else:
@@ -166,6 +175,7 @@ def _pipe(d_mat, run, c_mat):
     contrasts = contrast(beta, c_mat)
     return contrasts
 
+
 def _create_SNR_volume_wrapper(input_dir, noise_path, out_path,type='tSNR'):
     func = nib.load(input_dir)
     func_data = func.get_fdata()
@@ -185,6 +195,7 @@ def _create_SNR_volume_wrapper(input_dir, noise_path, out_path,type='tSNR'):
         res = sdf/sdn
     res_nii = nib.Nifti1Image(res, func_affine)
     nib.save(res_nii, os.path.join(out_path, '{}.nii.gz'.format(type)))
+
 
 def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = None, fname = 'clean.nii.gz',type='tSNR'):
     '''
@@ -208,7 +219,6 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
         args.append((input_dir,noise_path,out_dir,type))
     with Pool() as p:
         res = p.starmap(_create_SNR_volume_wrapper,args)
-
 
 
 
