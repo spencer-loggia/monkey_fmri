@@ -397,14 +397,31 @@ def create_design_matrix(param_file, subject_ids: List[str], subject_dir_paths: 
     return design_matrix
 
 
-def intra_subject_contrast(run_dirs: List[str], paradigm_file: str, contrast_matrix: np.ndarray,
+def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int], convolve=False, aq_mode='bold'):
+    k = num_conditions
+    design_matrix = np.zeros((0, k))
+    for i in range(num_blocks):
+        block = np.zeros((block_length, k), dtype=float)
+        active_condition = order[i % k]
+        block[:, active_condition] = 1
+        np.concatenate([design_matrix, block], axis=0)
+    if convolve:
+        if aq_mode == 'bold':
+            design_matrix = hemodynamic_convolution(design_matrix, kernel='manual_bold', temporal_window=10)
+        elif aq_mode == 'mion':
+            design_matrix = hemodynamic_convolution(design_matrix, kernel='manual_mion', temporal_window=15)
+    return design_matrix
+
+
+def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray], contrast_matrix: np.ndarray,
                            contrast_descriptors: List[str], output_dir: str, fname: str = 'registered.nii.gz',
                            mode='standard', use_python_mp=False):
     """
     Compute each desired contrast on the functional data in parallel.
+    :param design_matrix: list of array of size conditions x num trs. length 1 if stim order same for all imas,
+                          len equal to number of runs otherwise. order corresonds to ima order in run dirs.
     :param mode:
     :param run_dirs: locations of the functional runs
-    :param paradigm_file: The events as they occur.
     :param contrast_matrix: The contrast test definitions.
     :param contrast_descriptors: Description of the contrast test specified by each row of the matrix.
     :param output_dir: where to save
@@ -414,22 +431,18 @@ def intra_subject_contrast(run_dirs: List[str], paradigm_file: str, contrast_mat
     run_stack = []
     affines = []
     header = None
-    if mode == 'standard':
-        design_matrix = create_design_matrix(paradigm_file, ['castor_test'], ['./castor_test'])
-    elif mode == 'maximal_dynamic':
-        design_matrix = create_design_matrix(paradigm_file, ['castor_test'], ['./castor_test'], convolve=False)
-    exp_num_frames = len(design_matrix)
+    for design_matrix in design_matrices:
+        if contrast_matrix.shape[0] != design_matrix.shape[1]:
+            raise ValueError("Contrast matrix must have number of rows equal to the number of stimulus conditions.")
+        if len(contrast_descriptors) != contrast_matrix.shape[1]:
+            raise ValueError("Number of Contrast Descriptors must match number of cols in contrast matrix")
 
-    if contrast_matrix.shape[0] != design_matrix.shape[1]:
-        raise ValueError("Contrast matrix must have number of rows equal to the number of stimulus conditions.")
-    if len(contrast_descriptors) != contrast_matrix.shape[1]:
-        raise ValueError("Number of Contrast Descriptors must match number of cols in contrast matrix")
-
-    for source_dir in run_dirs:
+    for i, source_dir in enumerate(run_dirs):
         req_path = os.path.join(source_dir, fname)
         if os.path.isfile(req_path):
             brain = nib.load(req_path)
             brain_tensor = np.array(brain.get_fdata())
+            exp_num_frames = design_matrices[i].shape[0]
             if brain_tensor.shape[-1] != exp_num_frames:
                 print("WARNIING: Loaded functional data (" + source_dir + ") must have number of frames equal to length of "
                                  "active_condition map, not " + str(brain_tensor.shape[-1]) + ' and ' + str(exp_num_frames))
@@ -439,7 +452,7 @@ def intra_subject_contrast(run_dirs: List[str], paradigm_file: str, contrast_mat
             header = brain.header
         else:
             raise FileNotFoundError("Couldn't find " + fname + " in specified source dir " + source_dir)
-    full_run_params = list(zip([design_matrix] * len(run_stack),
+    full_run_params = list(zip(design_matrices,
                                run_stack,
                                [contrast_matrix] * len(run_stack),
                                [mode] * len(run_stack),
