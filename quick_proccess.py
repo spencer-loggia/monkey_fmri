@@ -1,5 +1,6 @@
 # An interactive script to quickly proccess and get a sense for a single run of fmri data
 import json
+import numpy as np
 
 from preprocess import *
 from preprocess import _create_dir_if_needed, _apply_binary_mask
@@ -229,9 +230,54 @@ else:
     input = _dir_input("enter path to ima to order number json: ")
     ima_order_map = json.loads(input)
 
+# need to define contrasts we want to preform
+print("Need to define contrasts to preform to continue with analysis. Enter length number conditions vector defining "
+      "contribution for each condition. For example [0, 1, 0, -1] defines a direct comparison between a positive "
+      "condition number 2 and negative condition number 4")
+print("Recall: conditions are mapped as follows ", para_def_dict['condition_integerizer'])
+add_contrast = True
+contrasts = []
+contrast_descriptions = []
+while add_contrast:
+    contrast = _int_list_input("Enter vector defining constrast: ")
+    if len(contrast) != para_def_dict['num_conditions']:
+        print('contrast vector must have length equal to the number of conditions.')
+        continue
+    contrast_descriptions.append(input("Name this contrast: "))
+    contrasts.append(contrast)
+    add_contrast = _bool_input('add another contrast? ')
+contrasts = np.ndarray(contrasts).astype(float)
 
+print("Generating Contrasts...")
+design_matrices = []
+analysis_dir = _create_dir_if_needed(root, 'analysis')
+for run_dir in SOURCE:
+    ima = int(os.path.basename(run_dir))
+    order_num = ima_order_map[ima]
+    block_length = para_def_dict['block_length']
+    num_blocks = para_def_dict['trs_per_run'] / block_length
+    num_conditions = para_def_dict['num_conditions']
+    order = list(para_def_dict['order_number_definitions'][order_num])
+    design_matrix = design_matrix_from_order_def(block_length, num_blocks, num_conditions, order, convolve=False)
+    design_matrices.append(design_matrix)
+contrast_imgs = intra_subject_contrast(SOURCE, design_matrices, contrasts, contrast_descriptions,
+                                      output_dir=analysis_dir, fname=process_head,
+                                      mode='maximal_dynamic', use_python_mp=True)
+contrast_paths = [os.path.join(analysis_dir, s + '_contrast.nii') for s in contrast_descriptions]
+print("contrasts created at: " + str(contrast_paths))
 
+print('next step is to generate contrast surfaces... assuming surfaces are located in anatomical dir and called '
+      'rh.white, lh.white, rh.inflated, lh.inflated')
 
+print("Gererating Surfaces...")
+
+for contrast_path in contrast_paths:
+    for hemi in ['rh', 'lh']:
+        create_contrast_surface(os.path.join(root, 'surf',  hemi + '.white'),
+                                contrast_path,
+                                ds_t1_path,
+                                t1_path,
+                                hemi=hemi, subject_id='test')
 
 
 
