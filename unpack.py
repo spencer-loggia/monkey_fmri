@@ -48,14 +48,14 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], nifti_name:
     run_dirs = os.listdir(inDir)
     to_unpack = []
     f_dirs = []
-    ymd = os.path.basename(inDir)[0:9]
+    ymd = os.path.basename(inDir)[0:16]
+    _create_dir_if_needed(outDir, ymd)
     for run in run_dirs:
         if run[0] == '.':
             continue
         tkns = run.split('_')
         this_run_num = int(tkns[0])
         if this_run_num in run_numbers:
-            _create_dir_if_needed(outDir, ymd)
             _create_dir_if_needed(os.path.join(outDir, ymd), str(this_run_num))
             local_out = os.path.join(outDir, ymd, str(this_run_num))
             f_dirs.append(local_out)

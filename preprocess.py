@@ -2,6 +2,8 @@ from __future__ import print_function
 from __future__ import division
 
 import ntpath
+
+import scipy.ndimage
 import shutil
 import sys
 from typing import List, Union, Tuple, Dict
@@ -45,6 +47,17 @@ def _normalize_array(arr: np.ndarray) -> np.ndarray:
     std = np.std(flat)
     new_arr = (arr - mean) / std
     return new_arr
+
+
+def spatial_intensity_normalization(arr: np.ndarray):
+    if np.ndim(arr) > 3:
+        raise ValueError("must be 3 or fewer dimensions")
+    flat = arr.flatten()
+    mean = np.mean(flat)
+    disp_arr = arr - mean
+    disp_arr = scipy.ndimage.gaussian_filter(disp_arr, sigma=10)
+    arr = arr - disp_arr
+    return arr
 
 
 def _drift_correction(arr: np.ndarray) -> np.ndarray:
@@ -149,10 +162,10 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fn
         cvt = freesurfer.MRIConvert()
         in_file = os.path.join(scan_dir, fname)
         if not output:
-            local_out = os.path.join(scan_dir, 'f_sphinx.nii')
+            local_out = os.path.join(scan_dir, fname.split('.')[0] + '_sphinx.nii')
         else:
             out_dir = _create_dir_if_needed(output, os.path.basename(scan_dir))
-            local_out = os.path.join(out_dir, 'f_sphinx.nii')
+            local_out = os.path.join(out_dir, fname.split('.')[0] + '_sphinx.nii')
         args_sphinx.append((in_file, local_out, cvt))
         args_flip.append((local_out, local_out, in_orientation, out_orientation, cvt))
     if scan_pos == 'HFS':
@@ -309,7 +322,7 @@ def _flirt_wrapper(in_file, out_file, mat_out_file, temp_file, flt, dof=12):
     return out
 
 
-def linear_affine_registration(functional_input_dirs: List[str], template_file: str, fname: str = 'stripped.nii.gz', output: str = None):
+def linear_affine_registration(functional_input_dirs: List[str], template_file: str, fname: str = 'stripped.nii.gz', output: str = None, dof=12):
     flt = fsl.FLIRT()
     args = []
     for source_dir in functional_input_dirs:
@@ -324,15 +337,75 @@ def linear_affine_registration(functional_input_dirs: List[str], template_file: 
             local_out = os.path.join(out_dir, chosen_name + '_flirt.nii.gz')
             mat_out = os.path.join(out_dir, chosen_name + '_flirt.mat')
         in_file = os.path.join(source_dir, fname)
-        args.append((in_file, local_out, mat_out, template_file, flt, 12))
+        args.append((in_file, local_out, mat_out, template_file, flt, dof))
     with Pool() as p:
         return p.starmap(_flirt_wrapper, args)
+
+
+def antsApplyTransforms(inP, refP, outP, lTrns,
+                        interp='Linear', dim=3, invertTrans=False):
+    ''' might want to try interp='BSpline'
+    lTrans is a list of paths to transform files (.e.g, .h5)
+    I think invert trans will just work...
+
+    refP indicates the dimensions desired...
+
+    from kurts code
+    '''
+    from nipype.interfaces.ants import ApplyTransforms
+    at = ApplyTransforms()
+    at.inputs.dimension = dim
+    at.inputs.input_image = inP
+    #    if initialTrsnfrmP!=None:
+    #        at.inputs.initial_moving_transform = initialTrsnfrmP
+    at.inputs.reference_image = refP
+    at.inputs.output_image = outP
+    at.inputs.interpolation = interp
+    at.inputs.transforms = lTrns
+    at.inputs.invert_transform_flags = [invertTrans for i in lTrns]
+    #    at.inputs.verbose = 1
+    print(at.cmdline)
+    at.run()
+
+
+def _itkSnapManual(anatP, funcP, outF):
+    '''manually register to anat
+       author: kurt'''
+    print('-'*30)
+    s = 'do manual reg with ITK SNAP: \n\nmain image: \n%s'%(anatP)
+    s+='\n\nsecondaryimage: \n%s'%(funcP)
+    step1NiiP = outF+'/itkManual.nii.gz'
+    step1TxtP = outF+'/itkManual.txt'
+    s+='\n\nsave nii as: \n%s'%(step1NiiP)
+    s+='\n\nand transform as: \n%s'%(step1TxtP)
+    print(s)
+    done = 'y' in input('done? (y/n): ')
+    return step1TxtP,step1NiiP
+
+
+def manual_itksnap_registration(functional_input_dirs: List[str], fname: str, template_file: str):
+    """
+    :param functional_input_dirs:
+    :param fname:
+    :param template_file:
+    :return:
+    """
+    for source_dir in functional_input_dirs:
+        if not os.path.isdir(source_dir):
+            print("Failure", sys.stderr)
+        in_file = os.path.join(source_dir, fname)
+        transform, reg_nii = _itkSnapManual(os.path.abspath(template_file),
+                                            os.path.abspath(in_file),
+                                            os.path.abspath(source_dir))
+        return {'transform_path': transform,
+                'registered_path': reg_nii}
 
 
 def _nirt_wrapper(in_file, out_file, temp_file, affine_mat_file, fnt):
     fnt.inputs.in_file = in_file
     fnt.inputs.ref_file = temp_file
-    fnt.inputs.affine_file = affine_mat_file
+    if affine_mat_file:
+        fnt.inputs.affine_file = affine_mat_file
     fnt.cmdline
     out = fnt.run()
 
@@ -365,10 +438,11 @@ def nonlinear_registration(functional_input_dirs: List[str], transform_input_dir
             if not output:
                 local_out = os.path.join(source_dir, 'reg_tensor.nii.gz')
             else:
-                out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                local_out = os.path.join(out_dir, 'reg_tensor.nii.gz')
+                local_out = os.path.join(source_dir, output)
             in_file = os.path.join(source_dir, source_fname)
-            affine_mat_file = os.path.join(transform_dir, affine_fname)
+            affine_mat_file = None
+            if affine_fname:
+                affine_mat_file = os.path.join(transform_dir, affine_fname)
             args.append((in_file, local_out, template_file, affine_mat_file, fnt))
         else:
             raise FileNotFoundError("The specified source nifti or affine transform matrix cannot be found.")
@@ -400,6 +474,8 @@ def preform_nifti_registration(functional_input_dirs: List[str], transform_input
     """
     apw = fsl.ApplyWarp()
     args = []
+    if type(transform_input_dir) is str:
+        transform_input_dir = [transform_input_dir] * len(functional_input_dirs)
     try:
         sources = zip(functional_input_dirs, transform_input_dir)
     except Exception:
@@ -416,15 +492,108 @@ def preform_nifti_registration(functional_input_dirs: List[str], transform_input
             if not output:
                 local_out = os.path.join(source_dir, 'registered.nii.gz')
             else:
-                out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                local_out = os.path.join(out_dir, 'registered.nii.gz')
+                local_out = os.path.join(source_dir, output)
             in_file = os.path.join(source_dir, source_fname)
             field_file = os.path.join(transform_dir, transform_fname)
             args.append((in_file, local_out, template_file, field_file, apw))
         else:
-            raise FileNotFoundError("The specified source nifti or nonlinear transform tensor cannot be found.")
+            raise FileNotFoundError("The specified source nifti or nonlinear transform tensor cannot be found. \n "
+                                    "In file: " + in_file,
+                                    "warp field file: " + field_file)
     with Pool() as p:
         return p.starmap(_apply_warp_wrapper, args)
+
+
+def estimate_warp_field(hf_source=(), fh_source=(), lr_source=(), rl_source=(), fname='f.nii', warpfield_out_dir=None, output=None):
+    """
+    Estmates the wrpfield f=using epis with different encoding directions.
+    :param hf_source: Source files for hf encoded epis
+    :param fh_source:  Source files for fh encoded epis
+    :param lr_source:  Source files for rl encoded epis
+    :param rl_source:  Source files for lr encoded epis
+    :param fname: fname to look for
+    :param warpfield_out_dir: full path for output warpfield files directory.
+    :param output: name for corrected output nii files
+    :return:
+    """
+    out_buf = ""
+    phase_estimation_nifti = None
+    affine = None
+    f_nii = None
+    for i, encode_dir in enumerate([hf_source, fh_source, lr_source, rl_source]):
+        for dir in encode_dir:
+            if i == 0:
+                aq_dat = '0 1 0 1 \n'
+            elif i == 1:
+                aq_dat = '0 -1 0 1 \n'
+            elif i == 2:
+                aq_dat = '1 0 0 1 \n'
+            else:
+                # i == 3
+                aq_dat = '-1 0 0 1 \n'
+            out_buf = out_buf + aq_dat
+            file = os.path.join(dir, fname)
+            f_nii = nib.load(file)
+            f_data = f_nii.get_fdata()
+            if phase_estimation_nifti is None:
+                phase_estimation_nifti = f_data[:, :, :, 0].reshape(list(f_data.shape[0:3]) + [1])
+                affine = f_nii.affine.reshape([-1] + list(f_nii.affine.shape))
+            else:
+                phase_estimation_nifti = np.concatenate([phase_estimation_nifti,
+                                                         f_data[:, :, :, 0].reshape(list(f_data.shape[0:3]) + [1])],
+                                                        axis=3)
+                affine = np.concatenate([affine, f_nii.affine.reshape([-1] + list(f_nii.affine.shape))], axis=0)
+    print('loaded data and created warp est inputs.')
+    warp_est_nifti = nib.Nifti1Image(phase_estimation_nifti, affine=np.mean(affine, axis=0), header=f_nii.header)
+    warp_est_path = os.path.join(warpfield_out_dir, 'warp_est_src.nii')
+    nib.save(warp_est_nifti, warp_est_path)
+    scan_param_path = os.path.join(warpfield_out_dir, 'scan_encode_params.txt')
+    with open(scan_param_path, 'w') as f:
+        f.write(out_buf)
+    if output:
+        subprocess.run(['topup',
+                        '--imain=' + warp_est_path,
+                        '--datain=' + scan_param_path,
+                        '--config=b02b0.cnf',
+                        '--out=' + warpfield_out_dir,
+                        '--iout=' + os.path.join(warpfield_out_dir, output),
+                        '--fout=' + os.path.join(warpfield_out_dir, 'warpfield_hertz.nii.gz')])
+    else:
+        subprocess.run(['topup',
+                        '--imain=' + warp_est_path,
+                        '--datain=' + scan_param_path,
+                        '--config=b02b0.cnf',
+                        '--out=' + warpfield_out_dir,
+                        '--fout=' + os.path.join(warpfield_out_dir, 'warpfield_hertz.nii.gz')])
+    output_locs = {'warp_field_coef': os.path.join(warpfield_out_dir, 'my_out_fieldcoef.nii.gz'),
+                   'fixed_warp_nii': os.path.join(warpfield_out_dir, output)}
+    print('warp field estimate created.')
+    return output_locs
+
+
+def _epi_reg_wrapper(epi, t1_whole, t1_stripped, fmap, out):
+    if fmap:
+        subprocess.run(['epi_reg', '--epi=' + epi, '--t1=' + t1_whole, '--t1brain=' + t1_stripped, '--fmap=' + fmap, '--out=' + out])
+    else:
+        subprocess.run(['epi_reg', '--epi=' + epi, '--t1=' + t1_whole, '--t1brain=' + t1_stripped,
+                        '--out=' + out])
+
+def auto_epi_reg(functional_input_dirs: List[str], t1_whole_head: str, t1_stripped: str, field_map_estimate: str = None,
+                 fname: str = 'stripped.nii.gz', output: str = None):
+    args = []
+    for source_dir in functional_input_dirs:
+        if not os.path.isdir(source_dir):
+            print("Failure", sys.stderr)
+        chosen_name = fname.split('.')[0]
+        if not output:
+            local_out = os.path.join(source_dir, chosen_name + '_reg.nii.gz')
+        else:
+            out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+            local_out = os.path.join(out_dir, chosen_name + '_reg.nii.gz')
+        in_file = os.path.join(source_dir, fname)
+        args.append((in_file, t1_whole_head, t1_stripped, field_map_estimate, local_out))
+    with Pool() as p:
+        return p.starmap(_epi_reg_wrapper, args)
 
 
 def fix_nii_headers(input_dirs: List[str], output: str, fname: str = 'nirt.nii.gz', tr=2000):
@@ -547,20 +716,20 @@ def smooth(input_dirs: List[str], output: str, fname: str = 'fixed.nii', bright_
         return outputs
 
 
-def _bet_wrapper(in_file, out_file, functional, bet, frac):
+def _bet_wrapper(in_file, out_file, functional, bet, frac, remove_eye):
     bet.inputs.in_file = in_file
     bet.inputs.out_file = out_file
     bet.inputs.mask = True
     bet.inputs.functional = functional
     bet.inputs.frac = frac
     bet.inputs.args = '-R'
-    #bet.inputs.remove_eyes = True
+    bet.inputs.remove_eyes = remove_eye
     bet.cmdline
     out = bet.run()
 
 
 def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: str = 'moco.nii.gz', is_time_series=True,
-                fractional_thresh=.5, center=None):
+                fractional_thresh=.5, center=None, remove_eyes=False):
     bet = fsl.BET()
     args = []
     for source_dir in input_dirs:
@@ -570,15 +739,14 @@ def skull_strip(input_dirs: List[str], output: Union[str, None] = None, fname: s
         if not output:
             local_out = os.path.join(source_dir, 'stripped.nii.gz')
         else:
-            out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-            local_out = os.path.join(out_dir, 'stripped.nii.gz')
+            local_out = os.path.join(source_dir, output)
         in_file = os.path.join(source_dir, fname)
-        args.append((in_file, local_out, is_time_series, bet, fractional_thresh))
+        args.append((in_file, local_out, is_time_series, bet, fractional_thresh, remove_eyes))
     with Pool() as p:
         p.starmap(_bet_wrapper, args)
 
 
-def normalize(input_dirs: List[str], output: str = None, fname='smooth.nii.gz', drift_correction=True):
+def normalize(input_dirs: List[str], output: str = None, fname='smooth.nii.gz', drift_correction=True, spatial_intesity=False):
     """
     Centers and normalizes the intensity data using (X - mu) / std. Creates a normalized nifti
     :param input_dirs:
@@ -594,21 +762,24 @@ def normalize(input_dirs: List[str], output: str = None, fname='smooth.nii.gz', 
         except (FileExistsError, FileNotFoundError):
             print("could not find file")
             exit(1)
-        for source in files:
-            if fname in source:
-                if not output:
-                    local_out = os.path.join(source_dir, 'normalized.nii')
-                else:
-                    out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                    local_out = os.path.join(out_dir, 'normalized.nii')
-                nifti = nib.load(os.path.join(source_dir, source))
-                n_data = np.array(nifti.get_fdata())
-                n_data = _normalize_array(n_data)
-                if drift_correction:
-                    n_data = _drift_correction(n_data)
-                new_nifti = nib.Nifti1Image(n_data, affine=nifti.affine, header=nifti.header)
-                nib.save(new_nifti, local_out)
-                print(nifti.header)
+        if not output:
+            local_out = os.path.join(source_dir, 'normalized.nii')
+        else:
+            out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
+            local_out = os.path.join(out_dir, 'normalized.nii')
+        nifti = nib.load(os.path.join(source_dir, fname))
+        n_data = np.array(nifti.get_fdata())
+        if spatial_intesity:
+            n_data = spatial_intensity_normalization(n_data)
+        else:
+            n_data = _normalize_array(n_data)
+        if drift_correction and np.ndim(n_data) == 4:
+            n_data = _drift_correction(n_data)
+        else:
+            print("Drift Correction off or no a time course")
+        new_nifti = nib.Nifti1Image(n_data, affine=nifti.affine, header=nifti.header)
+        nib.save(new_nifti, local_out)
+        print(nifti.header)
 
 
 def create_functional_mask(input_dirs: List[str], output: str, fname='normalized.nii.gz', thresh: Union[float, None] = None):
