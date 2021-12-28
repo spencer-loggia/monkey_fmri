@@ -16,6 +16,8 @@ from builtins import range
 import os  # system functions
 import subprocess
 
+import glob
+
 from scipy.ndimage import zoom, gaussian_filter
 
 import nipype.interfaces.io as nio  # Data i/o
@@ -81,12 +83,17 @@ def _drift_correction(arr: np.ndarray) -> np.ndarray:
     return arr
 
 
-def _apply_binary_mask(ts_in: nib.Nifti1Image, mask: nib.Nifti1Image) -> nib.Nifti1Image:
-    n_data = np.array(ts_in.get_fdata())
-    mask_arr = np.array(mask.get_fdata())[:, :, :, None]
-    tiled_mask = np.tile(mask_arr, (1, 1, 1, n_data.shape[3]))
-    n_data[tiled_mask == 0] = 0
-    new_nifti = nib.Nifti1Image(n_data, affine=ts_in.affine, header=ts_in.header)
+def _apply_binary_mask_3D(in_img: nib.Nifti1Image, mask: nib.Nifti1Image) -> nib.Nifti1Image:
+    n_data = np.array(in_img.get_fdata())
+    mask = np.array(mask.get_fdata())
+    print(n_data.shape)
+    if len(n_data.shape) > 3:
+        mask = mask[:, :, :, None]
+        mask = np.tile(mask, (1, 1, 1, n_data.shape[-1]))
+    print(mask.shape)
+    n_data[mask == 0] = 0
+    print(n_data.shape)
+    new_nifti = nib.Nifti1Image(n_data, affine=in_img.affine, header=in_img.header)
     return new_nifti
 
 
@@ -342,8 +349,7 @@ def linear_affine_registration(functional_input_dirs: List[str], template_file: 
         return p.starmap(_flirt_wrapper, args)
 
 
-def antsApplyTransforms(inP, refP, outP, lTrns,
-                        interp='Linear', dim=3, invertTrans=False):
+def antsApplyTransforms(inP, refP, outP, lTrns, interp, img_type_code=3, dim=3, invertTrans=False):
     ''' might want to try interp='BSpline'
     lTrans is a list of paths to transform files (.e.g, .h5)
     I think invert trans will just work...
@@ -356,6 +362,7 @@ def antsApplyTransforms(inP, refP, outP, lTrns,
     at = ApplyTransforms()
     at.inputs.dimension = dim
     at.inputs.input_image = inP
+    at.inputs.input_image_type = img_type_code
     #    if initialTrsnfrmP!=None:
     #        at.inputs.initial_moving_transform = initialTrsnfrmP
     at.inputs.reference_image = refP
@@ -367,6 +374,57 @@ def antsApplyTransforms(inP, refP, outP, lTrns,
     print(at.cmdline)
     at.run()
 
+
+def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
+              across_modalities=False, outPref='antsReg',
+              transforms=['Affine', 'SyN'], run=True, n_jobs=10):
+    os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = '%d' % n_jobs
+    from nipype.interfaces.ants import Registration
+    reg = Registration()
+    reg.inputs.fixed_image = fixedP
+    reg.inputs.moving_image = movingP
+    reg.inputs.output_transform_prefix = outPref
+    reg.inputs.interpolation = 'BSpline'
+    reg.inputs.transforms = transforms
+    reg.inputs.transform_parameters = [(2.0,), (0.25, 3.0, 0.0)]
+    reg.inputs.number_of_iterations = [[1500, 200], [100, 50, 30]][:len(transforms)]
+    reg.inputs.dimension = 3
+    # if initialTrsnfrmP!=None:
+    #     reg.inputs.initial_moving_transform = initialTrsnfrmP
+    reg.inputs.write_composite_transform = True
+    reg.inputs.collapse_output_transforms = True
+    reg.inputs.initialize_transforms_per_stage = False
+    reg.inputs.metric = [['Mattes', 'MI'][1]] * 2
+    reg.inputs.metric_weight = [1] * 2  # Default (value ignored currently by ANTs)
+    reg.inputs.radius_or_number_of_bins = [32] * 2
+    reg.inputs.sampling_strategy = ['Random', None][:len(transforms)]
+    reg.inputs.sampling_percentage = [0.05, None][:len(transforms)]
+    reg.inputs.convergence_threshold = [1.e-8, 1.e-9][:len(transforms)]
+    reg.inputs.convergence_window_size = [20] * 2
+    reg.inputs.smoothing_sigmas = [[1, 0], [2, 1, 0]][:len(transforms)]
+    reg.inputs.sigma_units = ['vox'] * 2
+    reg.inputs.shrink_factors = [[2, 1], [3, 2, 1]][:len(transforms)]
+    reg.inputs.use_estimate_learning_rate_once = [True] * len(transforms)
+    reg.inputs.use_histogram_matching = [across_modalities == False] * len(transforms)  # This is the default
+    reg.inputs.output_warped_image = outP
+    reg.inputs
+    print(reg.cmdline)
+    if run:
+        reg.run()
+
+def antsCoReg(fixedP, movingP, outP, ltrns=['Affine',],n_jobs=2):
+    outF = os.path.split(outP)[0]
+    os.chdir(outF)
+    antsCoreg(fixedP,
+        movingP,
+        outP,
+        initialTrsnfrmP=None, # we are working on resampled img
+        across_modalities=True,
+        outPref='antsReg',
+        transforms=ltrns,
+        run=True,n_jobs=n_jobs)
+    frwdTrnsP =  glob.glob(outF+'/antsRegComposite.h5')[0]
+    return frwdTrnsP
 
 def _itkSnapManual(anatP, funcP, outF):
     '''manually register to anat
@@ -482,24 +540,19 @@ def preform_nifti_registration(functional_input_dirs: List[str], transform_input
         print("function_input_dirs and transform_input_dirs must be lists of the same length.", sys.stderr)
         exit(-2)
     for source_dir, transform_dir in sources:
-        try:
-            files = os.listdir(source_dir)
-            tfiles = os.listdir(transform_dir)
-        except (FileExistsError, FileNotFoundError):
-            print("could not find file")
-            exit(1)
-        if source_fname in files and transform_fname in tfiles:
+        in_file = os.path.join(source_dir, source_fname)
+        field_file = os.path.join(transform_dir, transform_fname)
+        if os.path.exists(in_file) and os.path.exists(field_file):
             if not output:
                 local_out = os.path.join(source_dir, 'registered.nii.gz')
             else:
                 local_out = os.path.join(source_dir, output)
-            in_file = os.path.join(source_dir, source_fname)
-            field_file = os.path.join(transform_dir, transform_fname)
+
             args.append((in_file, local_out, template_file, field_file, apw))
         else:
             raise FileNotFoundError("The specified source nifti or nonlinear transform tensor cannot be found. \n "
                                     "In file: " + in_file,
-                                    "warp field file: " + field_file)
+                                    "\nwarp field file: " + field_file)
     with Pool() as p:
         return p.starmap(_apply_warp_wrapper, args)
 

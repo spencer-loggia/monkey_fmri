@@ -91,7 +91,7 @@ def hyperalign():
     raise NotImplementedError
 
 
-def average_functional_data(run_dirs, output, fname='normalized.nii'):
+def average_functional_data(run_dirs, output, fname='normalized.nii', through_time=False):
     avg_func = None
     count = 0
     for source_dir in run_dirs:
@@ -99,6 +99,8 @@ def average_functional_data(run_dirs, output, fname='normalized.nii'):
         if os.path.isfile(req_path):
             brain = nib.load(req_path)
             brain_tensor = np.array(brain.get_fdata())
+            if through_time:
+                brain_tensor = np.mean(brain_tensor, axis=-1)
             if avg_func is None:
                 avg_func = brain_tensor
             else:
@@ -404,7 +406,7 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         block = np.zeros((block_length, k), dtype=float)
         active_condition = order[i % k]
         block[:, active_condition] = 1
-        np.concatenate([design_matrix, block], axis=0)
+        design_matrix = np.concatenate([design_matrix, block], axis=0)
     if convolve:
         if aq_mode == 'bold':
             design_matrix = hemodynamic_convolution(design_matrix, kernel='manual_bold', temporal_window=10)
@@ -473,7 +475,7 @@ def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray
     for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
         cond = _norm_4d(cond)
         contrast_nii = nib.Nifti1Image(cond, affine=affine, header=header)
-        nib.save(contrast_nii, os.path.join(output_dir, 'condition_' + contrast_descriptors[i] + '_contrast.nii'))
+        nib.save(contrast_nii, os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii'))
     fig, axs = plt.subplots(1)
     for i, h in enumerate(hemo):
         axs.plot(h, label=i)
