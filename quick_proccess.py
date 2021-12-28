@@ -43,12 +43,13 @@ def _int_list_input(msg: str):
         break
     return nums
 
+
 def interactive_program():
     print("Running Interactive Intrasubject fMRI Preprocessing and First Level Analysis Code. \n"
           "Preprocessing Requires the following pre-existing files:\n"
           "- full head t1 for this animal \n"
           "- brain mask for above t1\n"
-          "- functional runs from one scan session only \n",)
+          "- functional runs from one scan session only \n", )
 
     root = _dir_input("Enter the project root dir (i.e. the folder containing subfolders 'functional', 'mri', etc.)")
     f_dir = _create_dir_if_needed(root, 'functional')
@@ -137,59 +138,69 @@ def interactive_program():
 
     if do_quick_reg:
         transforms = []
-        average_f_head = None
+        average_f_man_reg_stripped = None
         ref_img = None
+        average_f = None
         do_man_reg = _bool_input("do manual registration? ")
         if do_man_reg:
-            average_f_head = 'average_functional.nii'
+            average_f = 'average_functional.nii'
             avg_func = average_functional_data(SOURCE,
-                                               output=os.path.join(sessDir, average_f_head),
+                                               output=os.path.join(sessDir, average_f),
                                                fname=process_head,
                                                through_time=True)
-            res = manual_itksnap_registration([sessDir], fname=average_f_head, template_file=ds_t1_path)
+            res = manual_itksnap_registration([sessDir], fname=average_f, template_file=ds_t1_path)
             print(res)
             man_transform_path = res['transform_path']
             transforms.append(man_transform_path)
-            average_f_head = os.path.basename(res['registered_path'])
-            ref_img = copy(average_f_head)
+            average_f_man_reg = os.path.basename(res['registered_path'])
+            ref_img = copy(average_f_man_reg)
             print('manual transform saved')
 
             print('Now the anatomical brain mask must be applied to the manually registered functional data files.')
             if _bool_input('Do you wish to apply the brain mask to average functional ?'):
-                f_masked = _apply_binary_mask_3D(in_img=nib.load(os.path.join(sessDir, average_f_head)),
+                f_masked = _apply_binary_mask_3D(in_img=nib.load(os.path.join(sessDir, average_f_man_reg)),
                                                  mask=nib.load(ds_t1_mask_path))
-                average_f_head = 'avg_f_stripped.nii'
-                nib.save(f_masked, os.path.join(sessDir, average_f_head))
+                average_f_man_reg_stripped = 'avg_f_stripped.nii'
+                nib.save(f_masked, os.path.join(sessDir, average_f_man_reg_stripped))
 
             print('Now we can automatically register the stripped epis to the t1')
         if _bool_input("Do you want to do automatic coregistration?"):
-            if not average_f_head:
-                average_f_head = _dir_input('enter path to 3D averaged representation of functional data. If you select'
-                                            ' a file that has een transformed out of the native space, you must include'
-                                            ' that transform in the transform stack when applying registration.')
-            transform_name = 'fine_grained_transform.nii.gz'
-            antsCoReg(ds_t1_masked_path,
-                      average_f_head,
-                      outP=os.path.join(sessDir, transform_name),
-                      ltrns=['Affine', 'SyN'],
-                      n_jobs=2)
-            transforms.append(os.path.join(sessDir, transform_name))
+            if not average_f_man_reg_stripped:
+                average_f_man_reg_stripped = _dir_input(
+                    'enter path to 3D averaged representation of functional data. If you select'
+                    ' a file that has een transformed out of the native space, you must include'
+                    ' that transform in the transform stack when applying registration.')
+            f3d_reg_out = 'fine_grained_transform.nii.gz'
+            transform_path = antsCoReg(ds_t1_masked_path,
+                                       average_f_man_reg_stripped,
+                                       outP=os.path.join(sessDir, f3d_reg_out),
+                                       ltrns=['Affine', 'SyN'],
+                                       n_jobs=2)
+            transforms.append(os.path.join(sessDir, transform_path))
 
-        add_transform = _bool_input("Do you want to add any other transforms to the trasform stack before applying to function head?" +
-                                    " currently, the transform stack is " + str(transforms))
+        add_transform = _bool_input(
+            "Do you want to add any other transforms to the trasform stack before applying to function head?" +
+            " currently, the transform stack is " + str(transforms))
         while add_transform:
             transform = _dir_input("enter path to transform definition: ")
-            append_front = _bool_input("append to beginning of transform of transform stack? otherwise appends to end. ")
+            append_front = _bool_input(
+                "append to beginning of transform of transform stack? otherwise appends to end. ")
             if append_front:
                 transforms = [transform] + transforms
             else:
                 transforms.append(transform)
             add_transform = _bool_input('add another transform? ')
+        transforms.reverse()
 
         if len(transforms) > 0:
             reg_args = []
-            if not average_f_head:
+            if not ref_img:
                 ref_img = _dir_input('specify path to 3d reference (img generated from gross transform): ')
+            if not average_f:
+                average_f = _dir_input('specify path to 3d functional average unstripped in native space: ')
+            # first apply the tranform to the average for sanity check
+            out = os.path.join(sessDir, 'registered_avg_f.nii.gz')
+            antsApplyTransforms(os.path.join(sessDir, average_f), ref_img, out, transforms, 'Linear', img_type_code=0)
             for run_dirs in SOURCE:
                 out = os.path.join(run_dirs, 'registered.nii.gz')
                 reg_args.append((os.path.join(run_dirs, process_head), ref_img, out, transforms, 'Linear'))
@@ -207,7 +218,8 @@ def interactive_program():
                 stripped_img = _apply_binary_mask_3D(in_img, mask)
                 nib.save(stripped_img, os.path.join(run_dir, stripped_head))
             process_head = stripped_head
-        print('the functional data has been registered to the t1 successfully. Please check the results in freeview or fsl eyes')
+        print(
+            'the functional data has been registered to the t1 successfully. Please check the results in freeview or fsl eyes')
     else:
         man_transform_path = _dir_input("enter path to manually defined gross transform")
         transform_name = _dir_input("enter path to transform file for fine grained registration")
@@ -224,7 +236,7 @@ def interactive_program():
               "unique stimuli conditions.")
         print('*' * 40)
 
-        if _bool_input("do you already have a paradigm definition json file?" ):
+        if _bool_input("do you already have a paradigm definition json file?"):
             para_json = _dir_input("Enter the path to the existing paradigm order definition json. ")
             with open(para_json, 'r') as f:
                 para_def_dict = json.load(f)
@@ -251,7 +263,8 @@ def interactive_program():
             para_def_dict['condition_integerizer'] = condition_map
             order_def_map = {}
             for i in range(num_orders):
-                order_def_map[str(i)] = _int_list_input('enter the block order if block design, or event sequence if event related.')
+                order_def_map[str(i)] = _int_list_input(
+                    'enter the block order if block design, or event sequence if event related.')
             para_def_dict['order_number_definitions'] = order_def_map
             config_dir = _create_dir_if_needed(root, 'config')
             config_file_path = os.path.join(config_dir, 'experiment_config.json')
@@ -259,7 +272,8 @@ def interactive_program():
                 json.dump(para_def_dict, f)
             print("Successfully saved experiment / paradigm configuration json at", config_file_path)
 
-        interactive_ima_map = _bool_input('Specify IMA to order number mapping interactively? (provide json file otherwise)')
+        interactive_ima_map = _bool_input(
+            'Specify IMA to order number mapping interactively? (provide json file otherwise)')
 
         ima_order_map = {}
         if interactive_ima_map:
@@ -277,9 +291,10 @@ def interactive_program():
                 ima_order_map = json.load(f)
 
         # need to define contrasts we want to preform
-        print("Need to define contrasts to preform to continue with analysis. Enter length number conditions vector defining "
-              "contribution for each condition. For example [0, 1, 0, -1] defines a direct comparison between a positive "
-              "condition number 2 and negative condition number 4")
+        print(
+            "Need to define contrasts to preform to continue with analysis. Enter length number conditions vector defining "
+            "contribution for each condition. For example [0, 1, 0, -1] defines a direct comparison between a positive "
+            "condition number 2 and negative condition number 4")
         print("Recall: conditions are mapped as follows ", para_def_dict['condition_integerizer'])
         add_contrast = True
         contrasts = []
@@ -304,11 +319,12 @@ def interactive_program():
             num_blocks = int(para_def_dict['trs_per_run'] / block_length)
             num_conditions = int(para_def_dict['num_conditions'])
             order = list(para_def_dict['order_number_definitions'][str(order_num)])
-            design_matrix = design_matrix_from_order_def(block_length, num_blocks, num_conditions, order, convolve=False)
+            design_matrix = design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
+                                                         convolve=False)
             design_matrices.append(design_matrix)
         contrast_imgs = intra_subject_contrast(SOURCE, design_matrices, contrasts, contrast_descriptions,
-                                              output_dir=analysis_dir, fname=process_head,
-                                              mode='maximal_dynamic', use_python_mp=True)
+                                               output_dir=analysis_dir, fname=process_head,
+                                               mode='maximal_dynamic', use_python_mp=True)
         contrast_paths = [os.path.join(analysis_dir, s + '_contrast.nii') for s in contrast_descriptions]
         print("contrasts created at: " + str(contrast_paths))
     else:
@@ -318,7 +334,6 @@ def interactive_program():
         while add_contrast:
             contrast_paths.append(_dir_input("enter path to contrast: "))
             add_contrast = _bool_input("add another contrast file? ")
-
 
     print('next step is to generate contrast surfaces... assuming surfaces are located in anatomical dir and called '
           'rh.white, lh.white, rh.inflated, lh.inflated')
@@ -330,7 +345,7 @@ def interactive_program():
 
         for contrast_path in contrast_paths:
             for hemi in ['rh', 'lh']:
-                create_contrast_surface(os.path.join(root, 'surf',  hemi + '.white'),
+                create_contrast_surface(os.path.join(root, 'surf', hemi + '.white'),
                                         contrast_path,
                                         ds_t1_path,
                                         t1_path,
@@ -339,6 +354,3 @@ def interactive_program():
 
 if __name__ == '__main__':
     interactive_program()
-
-
-

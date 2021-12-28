@@ -378,6 +378,19 @@ def antsApplyTransforms(inP, refP, outP, lTrns, interp, img_type_code=3, dim=3, 
 def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
               across_modalities=False, outPref='antsReg',
               transforms=['Affine', 'SyN'], run=True, n_jobs=10):
+    """
+    From kurts code
+    :param fixedP:
+    :param movingP:
+    :param outP:
+    :param initialTrsnfrmP:
+    :param across_modalities:
+    :param outPref:
+    :param transforms:
+    :param run:
+    :param n_jobs:
+    :return:
+    """
     os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = '%d' % n_jobs
     from nipype.interfaces.ants import Registration
     reg = Registration()
@@ -413,6 +426,15 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
         reg.run()
 
 def antsCoReg(fixedP, movingP, outP, ltrns=['Affine',],n_jobs=2):
+    """
+    From kurks code
+    :param fixedP:
+    :param movingP:
+    :param outP:
+    :param ltrns:
+    :param n_jobs:
+    :return:
+    """
     outF = os.path.split(outP)[0]
     os.chdir(outF)
     antsCoreg(fixedP,
@@ -443,6 +465,7 @@ def _itkSnapManual(anatP, funcP, outF):
 
 def manual_itksnap_registration(functional_input_dirs: List[str], fname: str, template_file: str):
     """
+    From kurt
     :param functional_input_dirs:
     :param fname:
     :param template_file:
