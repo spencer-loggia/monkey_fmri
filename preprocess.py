@@ -349,7 +349,7 @@ def linear_affine_registration(functional_input_dirs: List[str], template_file: 
         return p.starmap(_flirt_wrapper, args)
 
 
-def antsApplyTransforms(inP, refP, outP, lTrns, interp, img_type_code=3, dim=3, invertTrans=False):
+def antsApplyTransforms(inP, refP, outP, lTrns, interp, img_type_code=3, dim=3, invertTrans: Union[List, bool] = False):
     ''' might want to try interp='BSpline'
     lTrans is a list of paths to transform files (.e.g, .h5)
     I think invert trans will just work...
@@ -358,6 +358,11 @@ def antsApplyTransforms(inP, refP, outP, lTrns, interp, img_type_code=3, dim=3, 
 
     from kurts code
     '''
+    if type(invertTrans) is bool:
+        invertTrans = [invertTrans] * len(lTrns)
+    elif type(invertTrans) is not list or len(invertTrans) != len(lTrns):
+        raise ValueError
+
     from nipype.interfaces.ants import ApplyTransforms
     at = ApplyTransforms()
     at.inputs.dimension = dim
@@ -369,7 +374,7 @@ def antsApplyTransforms(inP, refP, outP, lTrns, interp, img_type_code=3, dim=3, 
     at.inputs.output_image = outP
     at.inputs.interpolation = interp
     at.inputs.transforms = lTrns
-    at.inputs.invert_transform_flags = [invertTrans for i in lTrns]
+    at.inputs.invert_transform_flags = invertTrans
     #    at.inputs.verbose = 1
     print(at.cmdline)
     at.run()
@@ -446,7 +451,8 @@ def antsCoReg(fixedP, movingP, outP, ltrns=['Affine',],n_jobs=2):
         transforms=ltrns,
         run=True,n_jobs=n_jobs)
     frwdTrnsP =  glob.glob(outF+'/antsRegComposite.h5')[0]
-    return frwdTrnsP
+    invTrnsP = glob.glob(outF+'/antsRegInverseComposite.h5')[0]
+    return frwdTrnsP, invTrnsP
 
 def _itkSnapManual(anatP, funcP, outF):
     '''manually register to anat

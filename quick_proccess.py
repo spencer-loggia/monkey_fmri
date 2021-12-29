@@ -135,11 +135,10 @@ def interactive_program():
           "We can either do a manual registration for every epi (probably better, but time consuming), \n "
           "Or we can register the average functional and apply the transform to each epi")
     do_quick_reg = _bool_input("Do you want to do registration?")
+    ref_img = None
 
     if do_quick_reg:
-        transforms = []
         average_f_man_reg_stripped = None
-        ref_img = None
         average_f = None
         do_man_reg = _bool_input("do manual registration? ")
         if do_man_reg:
@@ -151,7 +150,6 @@ def interactive_program():
             res = manual_itksnap_registration([sessDir], fname=average_f, template_file=ds_t1_path)
             print(res)
             man_transform_path = res['transform_path']
-            transforms.append(man_transform_path)
             average_f_man_reg = os.path.basename(res['registered_path'])
             ref_img = copy(average_f_man_reg)
             print('manual transform saved')
@@ -164,6 +162,9 @@ def interactive_program():
                 nib.save(f_masked, os.path.join(sessDir, average_f_man_reg_stripped))
 
             print('Now we can automatically register the stripped epis to the t1')
+        else:
+            man_transform_path = _dir_input("Enter path to grass spatial transform (i.e. the one that would have been "
+                                            "defined manually)")
         if _bool_input("Do you want to do automatic coregistration?"):
             if not average_f_man_reg_stripped:
                 average_f_man_reg_stripped = _dir_input(
@@ -171,58 +172,75 @@ def interactive_program():
                     ' a file that has een transformed out of the native space, you must include'
                     ' that transform in the transform stack when applying registration.')
             f3d_reg_out = 'fine_grained_transform.nii.gz'
-            transform_path = antsCoReg(ds_t1_masked_path,
+            fine_transform_path, fine_transform_inverse_path = antsCoReg(ds_t1_masked_path,
                                        average_f_man_reg_stripped,
                                        outP=os.path.join(sessDir, f3d_reg_out),
                                        ltrns=['Affine', 'SyN'],
                                        n_jobs=2)
-            transforms.append(os.path.join(sessDir, transform_path))
+        else:
+            fine_transform_path = _dir_input("Enter path to fined grained forward transform (should be an h5 file "
+                                             "defined using ants coregistration: ")
+            fine_transform_inverse_path = _dir_input("Enter path to inverse fine grained transform (h5 file): ")
 
-        add_transform = _bool_input(
-            "Do you want to add any other transforms to the trasform stack before applying to function head?" +
-            " currently, the transform stack is " + str(transforms))
-        while add_transform:
-            transform = _dir_input("enter path to transform definition: ")
-            append_front = _bool_input(
-                "append to beginning of transform of transform stack? otherwise appends to end. ")
-            if append_front:
-                transforms = [transform] + transforms
-            else:
-                transforms.append(transform)
-            add_transform = _bool_input('add another transform? ')
-        transforms.reverse()
+        print("We can use the inverse of the registration transforms to create a brain mask in the native functional "
+              "space. These masked files will be used for contrast creation")
 
-        if len(transforms) > 0:
-            reg_args = []
-            if not ref_img:
-                ref_img = _dir_input('specify path to 3d reference (img generated from gross transform): ')
+        mask_functional = _bool_input("mask the functional data? ")
+        if mask_functional:
             if not average_f:
                 average_f = _dir_input('specify path to 3d functional average unstripped in native space: ')
             # first apply the tranform to the average for sanity check
-            out = os.path.join(sessDir, 'registered_avg_f.nii.gz')
-            antsApplyTransforms(os.path.join(sessDir, average_f), ref_img, out, transforms, 'Linear', img_type_code=0)
-            for run_dirs in SOURCE:
-                out = os.path.join(run_dirs, 'registered.nii.gz')
-                reg_args.append((os.path.join(run_dirs, process_head), ref_img, out, transforms, 'Linear'))
-            process_head = 'registered.nii.gz'
-            with Pool() as p:
-                p.starmap(antsApplyTransforms, reg_args)
-        else:
-            process_head = input("Enter file name for functional data process head: ")
 
-        if _bool_input("mask functional data head? "):
-            mask = nib.load(ds_t1_mask_path)
-            stripped_head = 'stripped_registered.nii'
+            f_mask = os.path.join(sessDir, 'functional_mask.nii.gz')
+            inverse_transforms = [fine_transform_inverse_path, man_transform_path]
+            to_invert = [False, True]  # manual transform affine matrix is invertable by applywarp,
+                                       # nonlinear requires seperate transform file, so is not inverted again by
+                                       # applywarp
+            antsApplyTransforms(ds_t1_mask_path, average_f, f_mask, inverse_transforms, 'Linear',
+                                img_type_code=0, invertTrans=to_invert)
+            print('mask the functional data ')
+            mask = nib.load(f_mask)
+            stripped_head = 'f_moco_stripped.nii'
             for run_dir in SOURCE:
                 in_img = nib.load(os.path.join(run_dir, process_head))
                 stripped_img = _apply_binary_mask_3D(in_img, mask)
                 nib.save(stripped_img, os.path.join(run_dir, stripped_head))
             process_head = stripped_head
+
+        # if len(transforms) > 0:
+        #     reg_args = []
+        #     if not ref_img:
+        #         ref_img = _dir_input('specify path to 3d reference (img generated from gross transform): ')
+        #     if not average_f:
+        #         average_f = _dir_input('specify path to 3d functional average unstripped in native space: ')
+        #     # first apply the tranform to the average for sanity check
+        #     out = os.path.join(sessDir, 'registered_avg_f.nii.gz')
+        #     antsApplyTransforms(os.path.join(sessDir, average_f), ref_img, out, transforms, 'Linear', img_type_code=0)
+        #     for run_dirs in SOURCE:
+        #         out = os.path.join(run_dirs, 'registered.nii.gz')
+        #         reg_args.append((os.path.join(run_dirs, process_head), ref_img, out, transforms, 'Linear'))
+        #     process_head = 'registered.nii.gz'
+        #     with Pool() as p:
+        #         p.starmap(antsApplyTransforms, reg_args)
+        else:
+            process_head = input("Enter file name for functional data process head: ")
+        #
+        # if _bool_input("mask functional data head? "):
+        #     mask = nib.load(ds_t1_mask_path)
+        #     stripped_head = 'stripped_registered.nii'
+        #     for run_dir in SOURCE:
+        #         in_img = nib.load(os.path.join(run_dir, process_head))
+        #         stripped_img = _apply_binary_mask_3D(in_img, mask)
+        #         nib.save(stripped_img, os.path.join(run_dir, stripped_head))
+        #     process_head = stripped_head
         print(
-            'the functional data has been registered to the t1 successfully. Please check the results in freeview or fsl eyes')
+            'the functional data has been registered to the t1 successfully. Please check the results in freeview or '
+            'fsl eyes')
     else:
-        man_transform_path = _dir_input("enter path to manually defined gross transform")
-        transform_name = _dir_input("enter path to transform file for fine grained registration")
+        man_transform_path = _dir_input("Enter path to grass spatial transform (i.e. the one that would have been "
+                                        "defined manually)")
+        fine_transform_path = _dir_input("Enter path to fined grained forward transform (should be an h5 file "
+                                         "defined using ants coregistration: ")
 
     if _bool_input("Continue to first level analysis?? "):
         print('*' * 40)
@@ -335,21 +353,38 @@ def interactive_program():
             contrast_paths.append(_dir_input("enter path to contrast: "))
             add_contrast = _bool_input("add another contrast file? ")
 
-    print('next step is to generate contrast surfaces... assuming surfaces are located in anatomical dir and called '
-          'rh.white, lh.white, rh.inflated, lh.inflated')
-
-    generate_surfaces = _bool_input("Do you want to generate contrast surfaces?")
-
-    if generate_surfaces:
-        print("Gererating Surfaces...")
-
+    if _bool_input('generate contrast surfaces? '):
+        print('Registering contrasts to anatomical space...')
+        if not ref_img:
+            ref_img = _dir_input("Enter path to target registration image in anatomical space (ideally an already"
+                                 " registered average functional, though a true anatomical should also work ok): ")
+        reg_contrast_paths = []
         for contrast_path in contrast_paths:
-            for hemi in ['rh', 'lh']:
-                create_contrast_surface(os.path.join(root, 'surf', hemi + '.white'),
-                                        contrast_path,
-                                        ds_t1_path,
-                                        t1_path,
-                                        hemi=hemi, subject_id='test')
+            base = os.path.dirname(contrast_path)
+            name = 'reg_' + os.path.basename(contrast_path)
+            out = os.path.join(base, name)
+            transforms = [man_transform_path, fine_transform_path]
+            antsApplyTransforms(contrast_path, ref_img, out, transforms, 'Linear', img_type_code=0, invertTrans=False)
+            reg_contrast_paths.append(out)
+        contrast_paths = reg_contrast_paths
+
+        print('next step is to generate contrast surfaces... assuming surfaces are located in anatomical dir and called '
+              'rh.white, lh.white, rh.inflated, lh.inflated')
+
+        generate_surfaces = _bool_input("Do you want to generate contrast surfaces?")
+
+        if generate_surfaces:
+            print("Gererating Surfaces...")
+
+            for contrast_path in contrast_paths:
+                for hemi in ['rh', 'lh']:
+                    # freesurfer has the dumbest path lookup schema so we have to be careful here
+                    print(root)
+                    create_contrast_surface(os.path.join(root, 'surf', hemi + '.white'),
+                                            contrast_path,
+                                            ds_t1_path,
+                                            t1_path,
+                                            hemi=hemi, subject_id='/')
 
 
 if __name__ == '__main__':

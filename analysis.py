@@ -13,6 +13,8 @@ from scipy.stats import norm
 from scipy.ndimage import gaussian_filter, binary_fill_holes, label
 
 from multiprocessing import Pool
+
+import preprocess
 from preprocess import _pad_to_cube
 
 from sklearn.preprocessing import OneHotEncoder
@@ -693,8 +695,8 @@ def segment_get_time_course(contrast_file: str, functional_file: str, block_leng
 if __name__ == '__main__':
     # # main method used for quick and dirty testing, do not expect to functional properly depending on local directory
     # # structure / filenames
-    root = '/Users/loggiasr/Projects/fmri/monkey_fmri/castor_test'
-    functional_dir = os.path.join(root, 'functional/20100131/')
+    root = '/Users/loggiasr/Projects/fmri/monkey_fmri/WoosterMerridianMGH4CHAN'
+    functional_dir = os.path.join(root, 'functional/Wooster_20211112/')
     SOURCE = [os.path.join(functional_dir, f) for f in os.listdir(functional_dir) if f[0] != '.']
     # desired_contrast_mat = np.array([[0, -1, 1],
     #                                  [-1, .5, .5]]).T
@@ -707,19 +709,19 @@ if __name__ == '__main__':
     #                              fname='registered.nii.gz',
     #                              mode='maximal_dynamic',
     #                              use_python_mp=True)
-    create_contrast_surface('castor_test/surf/rh.white',
-                            'castor_test/analysis_out/condition_vertical_vs_horizontal_contrast.nii',
-                            'castor_test/mri/stripped.nii.gz',
-                            'castor_test/mri/orig.mgz',
-                            hemi='rh', subject_id='castor_test')
+    create_contrast_surface('WoosterMerridianMGH4CHAN/surf/lh.white',
+                            'WoosterMerridianMGH4CHAN/analysis/reg_horizontal_minus_vertical_merridians_mk2_contrast.nii',
+                            'WoosterMerridianMGH4CHAN/mri/ds_t1_masked.nii',
+                            'WoosterMerridianMGH4CHAN/mri/orig.mgz',
+                            hemi='lh', subject_id='WoosterMerridianMGH4CHAN')
 
     # average_functional_data(
     #     [os.path.join('/Users/loggiasr/Projects/fmri/monkey_fmri/castor_test/functional/20100131', f)
     #      for f in os.listdir('/Users/loggiasr/Projects/fmri/monkey_fmri/castor_test/functional/20100131')],
     #     '/Users/loggiasr/Projects/fmri/monkey_fmri/castor_test/functional/avg_func_og.nii', fname='registered.nii.gz')
-
-    cleaned_contrast = segment_get_time_course('/Users/loggiasr/Projects/fmri/monkey_fmri/castor_test/analysis_out/condition_vertical_vs_horizontal_contrast.nii',
-                                      '/Users/loggiasr/Projects/fmri/monkey_fmri/castor_test/functional/avg_func.nii',
-                                      block_length=16,
-                                      block_order=[1, 0, 2, 0])
-    nib.save(cleaned_contrast, '/Users/loggiasr/Projects/fmri/monkey_fmri/WoosterMerridianMGH4CHAN/analysis_out/condition_vertical_vs_horizontal_newmgh_CLEAN_contrast.nii')
+    #
+    # cleaned_contrast = segment_get_time_course('/Users/loggiasr/Projects/fmri/monkey_fmri/castor_test/analysis_out/condition_vertical_vs_horizontal_contrast.nii',
+    #                                   '/Users/loggiasr/Projects/fmri/monkey_fmri/castor_test/functional/avg_func.nii',
+    #                                   block_length=16,
+    #                                   block_order=[1, 0, 2, 0])
+    # nib.save(cleaned_contrast, '/Users/loggiasr/Projects/fmri/monkey_fmri/WoosterMerridianMGH4CHAN/analysis_out/condition_vertical_vs_horizontal_newmgh_CLEAN_contrast.nii')
