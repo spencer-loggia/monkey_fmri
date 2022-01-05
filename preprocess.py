@@ -1,6 +1,7 @@
 from __future__ import print_function
 from __future__ import division
 
+import math
 import ntpath
 
 import scipy.ndimage
@@ -146,7 +147,7 @@ def _clean_img_wrapper(in_file, out_file, low_pass, high_pass, TR):
     nib.save(clean_img, out_file)
 
 
-def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii', scan_pos = 'HFP') -> str:
+def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii.gz', scan_pos = 'HFP') -> str:
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION or BOLD dir)
@@ -186,23 +187,26 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fn
         return res2
 
 
-def _mcflt_wrapper(in_file, out_file, mcflt):
+def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
     mcflt.inputs.in_file = in_file
     mcflt.inputs.cost = 'mutualinfo'
+    mcflt.inputs.ref_file = ref_file
     mcflt.inputs.out_file = out_file
+    mcflt.inputs.dof = 12
     mcflt.inputs.save_plots = True
     mcflt.inputs.save_rms = True
     mcflt.cmdline
     return mcflt.run()
 
 
-def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii',
+def motion_correction(input_dirs: List[str], ref_path: str, output: Union[None, str] = None, fname='f_sphinx.nii',
                       check_rms=True, abs_threshold=.8, var_threshold=.2) -> Union[List[str], None]:
     """
     preform fsl motion correction. If check rms is enabled will remove data where too much motion is detected.
     :param var_threshold:
     :param abs_threshold:
     :param output:
+    :param ref_path: path to image to use as reference for ALL moco
     :param input_dirs:
     :param fname:
     :param check_rms:
@@ -221,7 +225,7 @@ def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fn
                 out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
                 local_out = os.path.join(out_dir, 'moco.nii.gz')
             path = os.path.join(source_dir, fname)
-            args.append((path, local_out, mcflt))
+            args.append((path, local_out, ref_path, mcflt))
             out_dirs.append(out_dir)
     with Pool() as p:
         res = p.starmap(_mcflt_wrapper, args)
@@ -229,6 +233,8 @@ def motion_correction(input_dirs: List[str], output: Union[None, str] = None, fn
         output = './'
         good_moco = plot_moco_rms_displacement(out_dirs, output, abs_threshold, var_threshold)
         return good_moco
+    else:
+        return input_dirs
 
 
 def slice_time_correction(input_dirs: List[str], output: Union[None, str] = None, fname='moco.nii.gz', slice_dir = 3, TR = 3):
@@ -290,6 +296,32 @@ def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_l
         if data.shape[-1] == expected_length:
             good.append(source_dir)
     return good
+
+
+def get_middle_frame(SOURCE: list(str), output=None, fname='moco.nii.gz') -> str:
+    """
+    Returns a frame to in the middle of a session
+    :param out: output path
+    :param SOURCE: list of source run dirs
+    :param fname: name of nifti in run dirs
+    :return: path to output 3d image
+    """
+    run_dir = SOURCE[math.floor(len(SOURCE) / 2)]
+    in_file = os.path.join(run_dir, fname)
+    if not output:
+        out = os.path.join(os.path.dirname(run_dir), '3d_epi_rep.nii')
+    if os.path.exists(in_file) and '.nii' in fname:
+        nifti = nib.load(in_file)
+        data = nifti.get_fdata()
+        dims = data.shape
+        if len(dims) != 4:
+            raise ValueError("must pass 4D timeseries inputs")
+        target_idx = math.floor(dims[3] / 2)
+        frame = data[:, :, :, target_idx]
+        frame = np.squeeze(frame)
+        rep_img = nib.Nifti1Image(frame, affine=nifti.affine, header=nifti.header)
+        nib.save(rep_img, output)
+    return output
 
 
 def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, abs_threshold, var_threshold) -> List[str]:
@@ -430,7 +462,8 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
     if run:
         reg.run()
 
-def antsCoReg(fixedP, movingP, outP, ltrns=['Affine',],n_jobs=2):
+
+def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2):
     """
     From kurks code
     :param fixedP:
@@ -454,6 +487,7 @@ def antsCoReg(fixedP, movingP, outP, ltrns=['Affine',],n_jobs=2):
     invTrnsP = glob.glob(outF+'/antsRegInverseComposite.h5')[0]
     return frwdTrnsP, invTrnsP
 
+
 def _itkSnapManual(anatP, funcP, outF):
     '''manually register to anat
        author: kurt'''
@@ -469,7 +503,7 @@ def _itkSnapManual(anatP, funcP, outF):
     return step1TxtP,step1NiiP
 
 
-def manual_itksnap_registration(functional_input_dirs: List[str], fname: str, template_file: str):
+def manual_itksnap_registration(functional_input_dirs: List[str], template_file: str, fname='moco.nii.gz'):
     """
     From kurt
     :param functional_input_dirs:
@@ -484,8 +518,7 @@ def manual_itksnap_registration(functional_input_dirs: List[str], fname: str, te
         transform, reg_nii = _itkSnapManual(os.path.abspath(template_file),
                                             os.path.abspath(in_file),
                                             os.path.abspath(source_dir))
-        return {'transform_path': transform,
-                'registered_path': reg_nii}
+        return transform, reg_nii
 
 
 def _nirt_wrapper(in_file, out_file, temp_file, affine_mat_file, fnt):
@@ -660,6 +693,7 @@ def _epi_reg_wrapper(epi, t1_whole, t1_stripped, fmap, out):
         subprocess.run(['epi_reg', '--epi=' + epi, '--t1=' + t1_whole, '--t1brain=' + t1_stripped,
                         '--out=' + out])
 
+
 def auto_epi_reg(functional_input_dirs: List[str], t1_whole_head: str, t1_stripped: str, field_map_estimate: str = None,
                  fname: str = 'stripped.nii.gz', output: str = None):
     args = []
@@ -752,6 +786,7 @@ def create_low_res_anatomical(source_dir:str, fname:str ='orig.mgz', output=None
     in_path = os.path.join(source_dir, fname)
     subprocess.run(['mri_convert', in_path, '-vs', factor, factor, factor, output])
     subprocess.run(['mri_convert', output, '-iis', '1', '-ijs', '1', '-iks', '1', output])
+    return output
 
 
 def functional_to_cube(input_dirs: List[str], output: str = None, fname: str = 'moco.nii'):

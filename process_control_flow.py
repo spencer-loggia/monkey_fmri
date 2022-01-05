@@ -3,6 +3,7 @@ from typing import List
 import networkx as nx
 import analysis
 import preprocess
+import support_functions
 from input_control import select_option_input
 
 
@@ -30,8 +31,9 @@ class BaseControlNet:
         else:
             suc = self.network.successors(action_name)
             fxn = self.network[action_name]['fxn']
-            params = sorted(pred, key=lambda x: x['order'])
-            res = fxn(*params)
+            pred = sorted(pred, key=lambda x: x['order'])
+            path_params = [self.network[p]['path'] for p in pred]
+            res = fxn(*path_params)
             for s in suc:
                 res_idx = s['order']
                 self.network[s]['path'] = res[res_idx]
@@ -54,10 +56,6 @@ class DefaultSessionControlNet(BaseControlNet):
         self.initialize_session_proccessing_structure(t1_path, t1_mask_path)
 
     def initialize_session_proccessing_structure(self, t1_path, t1_mask_path):
-        self.network.add_node('T1', path=t1_path, type='volume', bipartite=0, complete=True, space='t1_native')
-        self.network.add_node('T1_mask', path=t1_mask_path, type='volume', bipartite=0, complete=True,
-                              space='t1_native')
-
         # runtime defined. If path attribute is a list, indicates these are multiple files to process in parallel
 
         # Initial preproccessing nodes
@@ -68,9 +66,9 @@ class DefaultSessionControlNet(BaseControlNet):
 
         self.network.add_node('3d_epi_rep', path=None, type='volume', bipartite=0, complete=False, space='epi_native')
 
-        self.network.add_node('ds_t1', path=None, type='volume', bipartite=0, complete=False, space='ds_t1_native')
-        self.network.add_node('ds_t1_mask', path=None, type='volume', bipartite=0, complete=False, space='ds_t1_native')
-        self.network.add_node('ds_t1_masked', path=None, type='volume', bipartite=0, complete=False,
+        self.network.add_node('ds_t1', path=None, type='volume', bipartite=0, complete=True, space='ds_t1_native')
+        self.network.add_node('ds_t1_mask', path=None, type='volume', bipartite=0, complete=True, space='ds_t1_native')
+        self.network.add_node('ds_t1_masked', path=None, type='volume', bipartite=0, complete=True,
                               space='ds_t1_native')
 
         self.network.add_node('manual_reg_epi_rep', path=None, type='volume', bipartite=0, complete=False,
@@ -85,48 +83,38 @@ class DefaultSessionControlNet(BaseControlNet):
                               complete=False, invertable=False, space=('ds_t1_native', 'ds_t1_aprox'))
 
         self.network.add_node('epi_mask', path=None, type='volume', bipartite=0, complete=False, space='epi_native')
-        self.network.add_node('epi_masked', path=[], type='time_series', bipartite=0, complete=False,
+        self.network.add_node('epi_masked', path=[], fname=None, type='time_series', bipartite=0, complete=False,
                               space='epi_native')
 
-        self.network.add_node('paradigms', path=[], type='json', bipartite=0)
+        self.network.add_node('paradigm', path=None, type='json', bipartite=0)
+        self.network.add_node('ima_order_map', type='json', bipartite=0)
         self.network.add_node('contrast_matrix', value=None, desc=[])
 
-        self.network.add_node('contrasts', path=[], desc=[], type='volume', bipartite=0, complete=False,
+        # index in path is id of contrast
+        self.network.add_node('contrasts', path=[], type='volume', bipartite=0, complete=False,
                               space='epi_native')
 
-        self.network.add_node('reg_contrast', path=[], desc=[], type='volume', bipartite=0, complete=False,
+        self.network.add_node('reg_contrast', path=[], type='volume', bipartite=0, complete=False,
                               space='ds_t1_native')
 
         # Define functional data processing nodes
 
-        self.network.add_node('get_epi', fxn='', bipartite=1)
+        self.network.add_node('get_epi', fxn=support_functions.get_epis, bipartite=1)
         self.network.add_node('sphinx_correct', fxn=preprocess.convert_to_sphinx, bipartite=1)
         self.network.add_node('motion_correction', fxn=preprocess.motion_correction, bipartite=1)
         self.network.add_node('select_3d_rep', fxn=preprocess.get_middle_frame, bipartite=1)
         self.network.add_node('manual_registration', fxn=preprocess.manual_itksnap_registration, bipartite=1)
-        self.network.add_node('automatic_coregistration', fxn='', bipartite=1)
-        self.network.add_node('create_functional_mask', fxn='', bipartite=1)
-        self.network.add_node('down_sample_t1', fxn=preprocess.create_low_res_anatomical, bipartite=1)
-        self.network.add_node('down_sample_t1_mask', fxn=preprocess.create_low_res_anatomical, bipartite=1)
-        self.network.add_node('apply_ds_t1_mask', fxn=preprocess._apply_binary_mask_3D, bipartite=1)
-        self.network.add_node('apply_reg_epi_mask', fxn=preprocess._apply_binary_mask_3D, biprtite=1)
-        self.network.add_node('apply_functional_mask', fxn='', bipartite=1)
-        self.network.add_node('create_load_paradigm', fxn='', bipartite=1)
-        self.network.add_node('create_contrast', fxn='', bipartite=1)
-        self.network.add_node('register_contrast', fxn='', bipartite=1)
+        self.network.add_node('automatic_coregistration', fxn=support_functions.coreg_wrapper, bipartite=1)
+        self.network.add_node('create_functional_mask', fxn=support_functions.apply_warp_inverse, bipartite=1)
+        self.network.add_node('apply_reg_epi_mask', fxn=support_functions.apply_binary_mask_vol, biprtite=1)
+        self.network.add_node('apply_functional_mask', fxn=support_functions.apply_binary_mask_functional, bipartite=1)
+        self.network.add_node('create_load_paradigm', fxn=support_functions.create_load_paradigm, bipartite=1)
+        self.network.add_node('create_load_ima_order_map', fxn=support_functions.create_load_ima_order_map, bipartite=1)
+        self.network.add_node('create_contrast', fxn=support_functions.create_contrast, bipartite=1)
+        self.network.add_node('register_contrast', fxn=support_functions.apply_warp, bipartite=1)
 
         # define edges (parameter / return values)
 
-        self.network.add_edge('T1', 'down_sample_t1', order=0)  # 01
-        self.network.add_edge('down_sample_t1', 'ds_t1', order=0)  # 10
-
-        self.network.add_edge('T1_mask', 'down_sample_t1_mask', order=0)  # 01
-        self.network.add_edge('down_sample_t1_mask', 'ds_t1_mask', order=0)  # 10
-
-        self.network.add_edge('ds_t1_mask', 'apply_ds_t1_mask', order=0)  # 01
-        self.network.add_edge('apply_ds_t1_mask', 'ds_t1_masked', order=0)  # 10
-
-        self.network.add_edge('start', 'get_epi', order=0) #01
         self.network.add_edge('get_epi', 'raw_epi', order=0) #10
 
         self.network.add_edge('raw_epi', 'sphinx_correction', order=0)  # 01
@@ -140,7 +128,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('motion_correction', 'moco_epi', order=0)  # 10
 
         self.network.add_edge('3d_epi_rep', 'manual_registration', order=0)  # 01
-        self.network.add_edge('ds_t1_reg', 'manual_registration', order=1)  # 01
+        self.network.add_edge('ds_t1', 'manual_registration', order=1)  # 01
         self.network.add_edge('manual_registration', 'manual_transform', order=0)  # 10
         self.network.add_edge('manual_registration', 'manual_reg_epi_rep', order=1)  # 10
 
@@ -153,8 +141,9 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('automatic_coregistration', 'inverse_auto_composite_transform', order=1)  # 10
 
         self.network.add_edge('ds_t1_mask', 'create_functional_mask', order=0)  # 01
-        self.network.add_edge('manual_transform', 'create_functional_mask', order=1)  # 01
-        self.network.add_edge('inverse_auto_composite_transform', 'create_functional_mask', order=2)  # 01
+        self.network.add_edge('3d_epi_rep', 'create_functional_mask', order=1)
+        self.network.add_edge('manual_transform', 'create_functional_mask', order=2)  # 01
+        self.network.add_edge('inverse_auto_composite_transform', 'create_functional_mask', order=3)  # 01
         self.network.add_edge('create_functional_mask', 'epi_mask', order=0)  # 10
 
         self.network.add_edge('epi_mask', 'apply_functional_mask', order=0)  # 01
@@ -162,12 +151,18 @@ class DefaultSessionControlNet(BaseControlNet):
 
         self.network.add_edge('create_load_paradigm', 'paradigm', order=0)  # 10
 
+        self.network.add_edge('epi_mask', 'create_load_ima_order_map', order=0)  # 01
+        self.network.add_edge('paradigm', 'create_load_ima_order_map', order=1)  # 01
+        self.network.add_edge('create_load_ima_order_map', 'ima_order_map', order=0)  # 10
+
         self.network.add_edge('epi_masked', 'create_contrast', order=0)  # 01
         self.network.add_edge('paradigm', 'create_contrast', order=1)  # 01
+        self.network.add_edge('ima_order_map', 'create_contrast', order=2)  # 01
         self.network.add_edge('create_contrast', 'contrasts', order=0)  # 10
 
         self.network.add_edge('contrasts', 'register_contrast', order=0)  # 01
-        self.network.add_edge('manual_transform', 'register_contrast', order=1)  # 01
-        self.network.add_edge('auto_composite_transform', 'register_contrast', order=2)  # 01
+        self.network.add_edge('ds_t1_masked', 'register_contrast', order=1)
+        self.network.add_edge('manual_transform', 'register_contrast', order=2)  # 01
+        self.network.add_edge('auto_composite_transform', 'register_contrast', order=3)  # 01
         self.network.add_edge('register_contrast', 'reg_contrast', order=0) #10
 
