@@ -1,3 +1,5 @@
+from typing import List
+
 import json
 import nibabel
 import shutil
@@ -12,7 +14,6 @@ import numpy as np
 
 # subject support function must be operating with working directory appropriately set
 subj_root = os.path.abspath(os.getcwd())
-
 
 def include_patterns(*patterns):
     """ Function that can be used as shutil.copytree() ignore parameter that
@@ -46,24 +47,26 @@ def include_patterns(*patterns):
     return _ignore_patterns
 
 
-def get_epis():
+def get_epis(*argv):
+    session_id = argv[0]
     from_dicom = input_control.bool_input("load new session dicoms? (otherwise must import niftis from folder)")
     f_dir = preprocess._create_dir_if_needed(subj_root, 'sessions')
     if from_dicom:
         dicom_dir = input_control.dir_input('Enter directory containing DICOMS from scans we are trying to analyze')
         run_numbers = input_control.int_list_input(
             "Enter whitespace separated list of valid epi run IMA numbers. (e.g. '2 4 5')")
-        SOURCE = unpack.unpack_run_list(dicom_dir, f_dir, run_numbers, 'f')
+        SOURCE = unpack.unpack_run_list(dicom_dir, f_dir, run_numbers, session_id, 'f')
         sessDir = os.path.dirname(SOURCE[0])
         print("Created the following functional run directories: \n ",
               SOURCE,
               " \n each containing a raw functional file 'f.nii.gz'")
     else:
         nifti_source = input_control.dir_input(
-            "Enter path to directory containing run subdirectories containing niftis")
+            "Enter path to session directory containing run subdirectories containing niftis")
         nifti_name = input("Enter name of nifti files to transfer (should be unprocessed versions")
-        shutil.copytree(nifti_source, f_dir, ignore=include_patterns(nifti_name))
-        SOURCE = [f for f in os.listdir(f_dir) if f.isnumeric()]
+        sess_target_dir = preprocess._create_dir_if_needed(f_dir, str(session_id))
+        shutil.copytree(nifti_source, sess_target_dir, ignore=include_patterns(nifti_name))
+        SOURCE = [f for f in os.listdir(sess_target_dir) if f.isnumeric()]
         if nifti_name != 'f.nii.gz':
             for run_dir in SOURCE:
                 raw_nifti = os.path.join(run_dir, nifti_name)
@@ -183,6 +186,7 @@ def _create_paradigm():
     contrasts_id, contrast_desc = _define_contrasts(condition_map, num_conditions)
     para_def_dict['desired_contrasts'] = contrasts_id
     para_def_dict['contrast_descriptions'] = contrast_desc
+    para_def_dict['num_runs_included_in_contrast'] = 0
     config_file_path = os.path.join(para_dir, name + '_experiment_config.json')
     with open(config_file_path, 'w') as f:
         json.dump(para_def_dict, f, indent=4)
@@ -224,6 +228,17 @@ def create_load_ima_order_map(source):
     return omap_path
 
 
+def create_load_session(ds_t1, ds_t1_mask, ds_t1_masked):
+    pass
+
+
+def create_project_config():
+    project_config = {}
+    project_config['project_name'] = input('project name: ')
+    project_config['paradigms'] = []
+    project_config['data_map'] = {}  # subjects -> paradigms -> session_ids / run nums
+
+
 def create_contrast(source, paradigm_path, ima_order_map_path, fname='epi_masked.nii'):
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
@@ -231,6 +246,7 @@ def create_contrast(source, paradigm_path, ima_order_map_path, fname='epi_masked
         ima_order_map = json.load(f)
     contrast_def = np.array(paradigm_data['desired_contrasts'], dtype=float).T
     contrast_descriptions = paradigm_data['contrast_descriptions']
+    num_runs = len(source)
     sess_dir = os.path.dirname(source[0])
     design_matrices = []
     for run_dir in source:
@@ -249,5 +265,32 @@ def create_contrast(source, paradigm_path, ima_order_map_path, fname='epi_masked
     contrast_paths = [os.path.join(sess_dir, s + '_contrast.nii') for s in contrast_descriptions]
     print("contrasts created at: " + str(contrast_paths))
     return contrast_paths
+
+
+def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, *argv):
+    session_id = str(argv[0])
+    with open(paradigm_path, 'r') as f:
+        paradigm_data = json.load(f)
+    para_name = paradigm_data['name']
+    for con_path in reg_sontrasts:
+        contrast_file_name = os.path.basename(con_path)
+        total_path = os.path.join(subj_root, 'analysis', para_name + '_' + contrast_file_name)
+        local_nii = nibabel.load(con_path)
+        l_data = np.array(local_nii.get_fdata())
+        if os.path.exists(total_path):
+            total_nii = nibabel.load(total_path)
+            t_data = np.array(total_nii.get_fdata())
+            new_total = nibabel.Nifti1Image(t_data + l_data, affine=total_nii.affine, header=total_nii.header)
+            nibabel.save(new_total, total_path)
+        else:
+            nibabel.save(local_nii, total_path)
+    proj_config_path = os.path.join(subj_root, '..', 'config.json')
+    subject = os.path.basename(subj_root)
+    with open(proj_config_path, 'r') as f:
+        proj_config = json.load(f)
+    if paradigm_data['name'] in proj_config['data_map'][subject]:
+        proj_config['data_map'][subject][paradigm_data['name']]['sessions_included'].append(session_id)
+
+
 
 
