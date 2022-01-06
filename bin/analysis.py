@@ -546,12 +546,12 @@ def create_contrast_surface(anatomical_white_surface: str,
 
     os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.getcwd()))
 
-    if not os.path.exists('./mri/orig.mgz'):
+    if not os.path.exists('../mri/orig.mgz'):
         _create_dir_if_needed('./', 'mri')
-        shutil.copy(orig_high_res_anatomical, './mri/orig.mgz')
-    if not os.path.exists('./surf/lh.white'):
+        shutil.copy(orig_high_res_anatomical, '../mri/orig.mgz')
+    if not os.path.exists('../surf/lh.white'):
         _create_dir_if_needed('./', 'surf')
-        shutil.copy(anatomical_white_surface, './surf/lh.white')
+        shutil.copy(anatomical_white_surface, '../surf/lh.white')
     subdivide_arg = str(1 / scale)
     subprocess.run(['mri_convert', path, '-vs', subdivide_arg, subdivide_arg, subdivide_arg, path])
     subprocess.run(['mri_convert', path, '-iis', '1', '-ijs', '1', '-iks', '1', path])
@@ -710,7 +710,7 @@ if __name__ == '__main__':
     #                              mode='maximal_dynamic',
     #                              use_python_mp=True)
     create_contrast_surface('WoosterMerridianMGH4CHAN/surf/lh.white',
-                            'WoosterMerridianMGH4CHAN/analysis/reg_horizontal_minus_vertical_merridians_mk2_contrast.nii',
+                            '../WoosterMerridianMGH4CHAN/analysis/reg_horizontal_minus_vertical_merridians_mk2_contrast.nii',
                             'WoosterMerridianMGH4CHAN/mri/ds_t1_masked.nii',
                             'WoosterMerridianMGH4CHAN/mri/orig.mgz',
                             hemi='lh', subject_id='WoosterMerridianMGH4CHAN')

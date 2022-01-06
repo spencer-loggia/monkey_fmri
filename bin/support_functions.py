@@ -157,7 +157,7 @@ def _define_contrasts(condition_integerizer, num_conditions):
 
 
 def _create_paradigm():
-    para_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, '..'), 'paradigms')
+    para_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, '../..'), 'paradigms')
     print('Constructing new paradigm definition json')
     para_def_dict = {}
     name = input('what is this paradigm called? ')
@@ -195,7 +195,7 @@ def _create_paradigm():
 
 
 def create_load_paradigm():
-    proj_config = os.path.join(subj_root, '..', 'config.json')
+    proj_config = os.path.join(subj_root, '../..', 'config.json')
     with open(proj_config, 'r') as f:
         config = json.load(f)
     paradigms = config['paradigms']
@@ -257,7 +257,7 @@ def create_contrast(source, paradigm_path, ima_order_map_path, fname='epi_masked
         num_conditions = int(paradigm_data['num_conditions'])
         order = list(paradigm_data['order_number_definitions'][str(order_num)])
         design_matrix = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
-                                                     convolve=False)
+                                                              convolve=False)
         design_matrices.append(design_matrix)
     contrast_imgs = analysis.intra_subject_contrast(source, design_matrices, contrast_def, contrast_descriptions,
                                                     output_dir=sess_dir, fname=fname,
@@ -284,7 +284,7 @@ def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, *argv):
             nibabel.save(new_total, total_path)
         else:
             nibabel.save(local_nii, total_path)
-    proj_config_path = os.path.join(subj_root, '..', 'config.json')
+    proj_config_path = os.path.join(subj_root, '../..', 'config.json')
     subject = os.path.basename(subj_root)
     with open(proj_config_path, 'r') as f:
         proj_config = json.load(f)

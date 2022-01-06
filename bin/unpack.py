@@ -36,7 +36,7 @@ def unpack(inDir,outDir,adj=False,dirdepth=5, nifti_name='f'):
     return 'Completed'
 
 
-def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], nifti_name: str = 'f'):
+def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id, nifti_name: str = 'f'):
     """
     Unpack a list of runs to target dir.
     :param nifti_name: what to name output nifti
@@ -48,16 +48,15 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], nifti_name:
     run_dirs = os.listdir(inDir)
     to_unpack = []
     f_dirs = []
-    ymd = os.path.basename(inDir)[0:16]
-    _create_dir_if_needed(outDir, ymd)
+    _create_dir_if_needed(outDir, str(session_id))
     for run in run_dirs:
         if run[0] == '.':
             continue
         tkns = run.split('_')
         this_run_num = int(tkns[0])
         if this_run_num in run_numbers:
-            _create_dir_if_needed(os.path.join(outDir, ymd), str(this_run_num))
-            local_out = os.path.join(outDir, ymd, str(this_run_num))
+            _create_dir_if_needed(os.path.join(outDir, session_id), str(this_run_num))
+            local_out = os.path.join(outDir, session_id, str(this_run_num))
             f_dirs.append(local_out)
             to_unpack.append((os.path.join(inDir, run), local_out, True, 2, nifti_name))
     with Pool() as p:
