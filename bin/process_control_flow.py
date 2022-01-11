@@ -1,5 +1,7 @@
-import json
+import os
 
+import json
+import datetime
 import networkx as nx
 import preprocess
 import support_functions
@@ -12,37 +14,55 @@ class BaseControlNet:
         self.network = nx.DiGraph()
         self.head = []
 
-    def _init_head_states(self):
-        data_node, process_node = nx.bipartite.sets(self.head)
+    def init_head_states(self):
+        self.head = []
+        data_node, process_node = nx.bipartite.sets(self.network)
         for n in process_node:
-            pred = self.network.predecessors(n)
-            if len(pred) > 0 and False not in [self.network.nodes[d]['complete'] for d in pred]:
+            pred = list(self.network.predecessors(n))
+            if len(pred) == 0 or False not in [self.network.nodes[d]['complete'] for d in pred]:
                 self.head.append(n)
+
+    def control_loop(self, path):
+        while self.interactive_advance():
+            self.serialize(path)
+        return path
 
     def interactive_advance(self):
         print("action selection")
-        action_name = self.head.pop(select_option_input(self.head))
-        pred = self.network.predecessors(action_name)
-        not_complete = [p for p in pred if not p['complete']]
-        if len(not_complete) > 0:
-            print("dependency(s) " + str(not_complete) + " have not been satisfied")
-            return not_complete
+        options = [str(n) + '   modified: ' + self.network.nodes[n]['modified']
+                   if 'modified' in self.network.nodes[n] else str(n) + '   modified: unknown' for n in self.head]
+        choice = select_option_input(options + ['back'])
+        if choice == len(self.head):
+            return False
+        action_name = self.head.pop(choice)
+        self.network.nodes[action_name]['modified'] = str(datetime.datetime.now())
+        pred = list(self.network.predecessors(action_name))
+        fxn = eval(self.network.nodes[action_name]['fxn'])
+        pred = sorted(pred, key=lambda x: self.network.edges[(x, action_name)]['order'])
+        data_params = [self.network.nodes[p]['data'] for p in pred]
+        if 'argv' in self.network.nodes[action_name]:
+            res = fxn(*data_params, self.network.nodes[action_name]['argv'])
         else:
-            suc = self.network.successors(action_name)
-            fxn = self.network.nodes[action_name]['fxn']
-            pred = sorted(pred, key=lambda x: x['order'])
-            data_params = [self.network.nodes[p]['data'] for p in pred]
-            if 'argv' in self.network.nodes[action_name]:
-                res = fxn(*data_params, self.network.nodes[action_name]['argv'])
-            else:
-                res = fxn(*data_params)
-            for s in suc:
-                res_idx = s['order']
+            res = fxn(*data_params)
+        bfs_tree = nx.traversal.bfs_tree(self.network, action_name)
+        to_remove = set()
+        for node, data in bfs_tree.nodes(data=True):
+            if 'complete' in data and data['complete'] is True:
+                self.network[node]['complete'] = False
+                to_remove.add(node)
+        self.head = list(set(self.head) - to_remove)
+        suc = list(self.network.successors(action_name))
+        for s in suc:
+            if type(res) is tuple:
+                res_idx = self.network.edges[(action_name, s)]['order']
                 self.network.nodes[s]['data'] = res[res_idx]
-                if 'complete' in self.network.nodes[s]:
-                    self.network.nodes[s]['complete'] = True
-                self.head += [n for n in self.network.successors(s) if False not in
-                              [self.network.nodes[j]['complete'] for j in self.network.predecessors(n)]] # add newly available states if their dependencies are met
+            else:
+                self.network.nodes[s]['data'] = res
+            if 'complete' in self.network.nodes[s]:
+                self.network.nodes[s]['complete'] = True
+            self.head += [n for n in self.network.successors(s) if False not in
+                          [self.network.nodes[j]['complete'] for j in self.network.predecessors(n)]] # add newly available states if their dependencies are met
+        return True
 
     def serialize(self, out_path):
         node_link_dict = nx.readwrite.node_link_data(self.network)
@@ -51,9 +71,10 @@ class BaseControlNet:
         return out_path
 
     def load_net(self, in_path):
-        with open(in_path, 'w') as f:
+        with open(in_path, 'r') as f:
             node_link_dict = json.load(f)
         self.network = nx.readwrite.node_link_graph(node_link_dict, directed=True, multigraph=False)
+        self.init_head_states()
 
 
 class DefaultSubjectControlNet(BaseControlNet):
@@ -62,6 +83,26 @@ class DefaultSubjectControlNet(BaseControlNet):
         super().__init__()
         self.network.graph['subject_name'] = subject_name
         self.initialize_processing_structure()
+        self.init_head_states()
+
+    @staticmethod
+    def create_load_session(ds_t1, ds_t1_mask, ds_t1_masked, sessions):
+        """
+        local method
+        only creates a new session for now
+        :param ds_t1:
+        :param ds_t1_mask:
+        :param ds_t1_masked:
+        :return: path to session json
+        """
+        session_id = input("enter date of session")
+        subj_root = os.environ.get('FMRI_WORK_DIR')
+        path = os.path.join(subj_root, 'sessions', session_id, 'session_net.json')
+        session = DefaultSessionControlNet(session_id, ds_t1, ds_t1_mask, ds_t1_masked)
+        if path in sessions or os.path.exists(path):
+            print("loading previous session " + session_id)
+            session.load_net(path)
+        return sessions + [session.control_loop(path)]
 
     def initialize_processing_structure(self):
         """
@@ -70,27 +111,33 @@ class DefaultSubjectControlNet(BaseControlNet):
         """
         self.network.add_node('t1', data=None, type='volume', bipartite=0, complete=False, space='t1_native')
         self.network.add_node('t1_mask', data=None, type='volume', bipartite=0, complete=False, space='t1_native')
-        self.network.add_node('t1_masked', data=None, type='volume', bipartite=0, complete=False, space='t1_native')
 
         self.network.add_node('ds_t1', data=None, type='volume', bipartite=0, complete=False, space='ds_t1_native')
         self.network.add_node('ds_t1_mask', data=None, type='volume', bipartite=0, complete=False, space='ds_t1_native')
         self.network.add_node('ds_t1_masked', data=None, type='volume', bipartite=0, complete=False, space='ds_t1_native')
 
         self.network.add_node('white_surfs', data=[], type='surface', bipartite=0, complete=False, space='t1_native')
-        self.network.add_node('inflated_surfs', data=[], type='surface', bipartite=0, complete=False, space='t1_native')
 
-        self.network.add_node('sessions', data=[], type='net_json', bipartite=0)
+        self.network.add_node('sessions', data=[], type='net_json', complete=None,  bipartite=0)
 
-        self.network.add_node('subject_surface_overlays', data=[], type='overlay', bipartite=0)
+        self.network.add_node('subject_surface_overlays', data=[], complete=None, type='overlay', bipartite=0)
 
-        self.network.add_node('downsample_t1', fxn=support_functions.downsample_anatomical, bipartite=1)
-        self.network.add_node('downsample_t1_mask', fxn=support_functions.downsample_anatomical, bipartite=1)
-        self.network.add_node('mask_downsampled_t1', fxn=support_functions.apply_binary_mask_vol, bipartite=1)
-        self.network.add_node('create_load_session', fxn=support_functions.create_load_session, bipartite=1)
-        self.network.add_node('generate_sigsurface_overlays', fxn=support_functions.generate_subject_overlays, bipartite=1)
+        self.network.add_node('load_t1_data', fxn='support_functions.load_t1_data', bipartite=1)
+        self.network.add_node('load_white_surfaces', fxn='support_functions.load_white_surfs', bipartite=1)
+        self.network.add_node('downsample_t1', fxn='support_functions.downsample_anatomical', bipartite=1)
+        self.network.add_node('downsample_t1_mask', fxn='support_functions.downsample_anatomical', bipartite=1)
+        self.network.add_node('mask_downsampled_t1', fxn='support_functions.apply_binary_mask_vol', bipartite=1)
+        self.network.add_node('create_load_session', fxn='self.create_load_session', bipartite=1)
+        self.network.add_node('generate_sigsurface_overlays', fxn='support_functions.generate_subject_overlays', bipartite=1)
+
+
+        self.network.add_edge('load_t1_data', 't1', order=0) #10
+        self.network.add_edge('load_t1_data', 't1_mask', order=1) #10
+
+        self.network.add_edge('load_white_surfaces', 'white_surfs', order=0) #10
 
         self.network.add_edge('t1', 'downsample_t1', order=0) #01
-        self.network.add_edge('downsample_t1', 'ds_t1', order=1) #10
+        self.network.add_edge('downsample_t1', 'ds_t1', order=0) #10
 
         self.network.add_edge('t1_mask', 'downsample_t1_mask', order=0) #01
         self.network.add_edge('downsample_t1_mask', 'ds_t1_mask', order=0) #10
@@ -99,15 +146,16 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_edge('ds_t1_mask', 'mask_downsampled_t1', order=1)
         self.network.add_edge('mask_downsampled_t1', 'ds_t1_masked', order=0)
 
-        self.network.add_edge('t1', 'create_load_session', order=0) #01
-        self.network.add_edge('t1_mask', 'create_load_session', order=1) #01
-        self.network.add_edge('t1_masked', 'create_load_session', order=2)
+        self.network.add_edge('ds_t1', 'create_load_session', order=0) #01
+        self.network.add_edge('ds_t1_mask', 'create_load_session', order=1) #01
+        self.network.add_edge('ds_t1_masked', 'create_load_session', order=2)
+        self.network.add_edge('sessions', 'create_load_session', order=3)
         self.network.add_edge('create_load_session', 'sessions', order=0) #10
 
         self.network.add_edge('sessions', 'generate_sigsurface_overlays', order=0)
         self.network.add_edge('white_surfs', 'generate_sigsurface_overlays', order=1)
-        self.network.add_edge('ds_t1', 'generate_sigsurface_overlays', order=2)
         self.network.add_edge('t1', 'generate_sigsurface_overlays', order=2)
+        self.network.add_edge('ds_t1', 'generate_sigsurface_overlays', order=3)
         self.network.add_edge('generate_sigsurface_overlays', 'subject_surface_overlays', order=0)
 
 
@@ -121,13 +169,12 @@ class DefaultSessionControlNet(BaseControlNet):
     """
     def __init__(self, session_id, ds_t1_path, ds_t1_mask_path, ds_t1_masked_path):
         super().__init__()
-        self.initialize_proccessing_structure(ds_t1_path, ds_t1_mask_path, ds_t1_masked_path)
-        self.network.graph['session_id'] = session_id
-        self._init_head_states()
+        self.initialize_proccessing_structure(session_id, ds_t1_path, ds_t1_mask_path, ds_t1_masked_path)
+        self.init_head_states()
 
-    def initialize_proccessing_structure(self, t1_path, t1_mask_path, ds_t1_masked_path):
+    def initialize_proccessing_structure(self, session_id, t1_path, t1_mask_path, ds_t1_masked_path):
         # runtime defined. If path attribute is a list, indicates these are multiple files to process in parallel
-
+        self.network.graph['session_id'] = session_id
         # Initial preproccessing nodes
         self.network.add_node('raw_epi', data=[], type='time_series', bipartite=0, complete=False, space='epi_native')
         self.network.add_node('sphinx_epi', data=[], type='time_series', bipartite=0, complete=False,
@@ -156,9 +203,8 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('epi_masked', data=[], fname=None, type='time_series', bipartite=0, complete=False,
                               space='epi_native')
 
-        self.network.add_node('paradigm', data=None, type='json', bipartite=0)
-        self.network.add_node('ima_order_map', type='json', bipartite=0)
-        self.network.add_node('contrast_matrix', value=None, desc=[])
+        self.network.add_node('paradigm', data=None, type='json', bipartite=0, complete=False)
+        self.network.add_node('ima_order_map', type='json', bipartite=0, complete=False)
 
         # index in path is id of contrast
         self.network.add_node('contrasts', data=[], type='volume', bipartite=0, complete=False,
@@ -169,27 +215,28 @@ class DefaultSessionControlNet(BaseControlNet):
 
         # Define functional data processing nodes
 
-        self.network.add_node('get_epi', argv=self.network.graph['session_id'], fxn=support_functions.get_epis, bipartite=1)
-        self.network.add_node('sphinx_correct', fxn=preprocess.convert_to_sphinx, bipartite=1)
-        self.network.add_node('motion_correction', fxn=preprocess.motion_correction, bipartite=1)
-        self.network.add_node('select_3d_rep', fxn=preprocess.get_middle_frame, bipartite=1)
-        self.network.add_node('manual_registration', fxn=preprocess.manual_itksnap_registration, bipartite=1)
-        self.network.add_node('automatic_coregistration', fxn=support_functions.coreg_wrapper, bipartite=1)
-        self.network.add_node('create_functional_mask', fxn=support_functions.apply_warp_inverse, bipartite=1)
-        self.network.add_node('apply_reg_epi_mask', fxn=support_functions.apply_binary_mask_vol, biprtite=1)
-        self.network.add_node('apply_functional_mask', fxn=support_functions.apply_binary_mask_functional, bipartite=1)
-        self.network.add_node('create_load_paradigm', fxn=support_functions.create_load_paradigm, bipartite=1)
-        self.network.add_node('create_load_ima_order_map', fxn=support_functions.create_load_ima_order_map, bipartite=1)
-        self.network.add_node('create_contrast', fxn=support_functions.create_contrast, bipartite=1)
-        self.network.add_node('register_contrast', fxn=support_functions.apply_warp, bipartite=1)
-        self.network.add_node('add_to_subject_average_contrast', argv=self.network.graph['session_id'], fxn=support_functions.add_to_subject_contrast, bipartite=1)
+        self.network.add_node('get_epi', argv=session_id, fxn='support_functions.get_epis', bipartite=1)
+        self.network.add_node('sphinx_correct', fxn='preprocess.convert_to_sphinx', bipartite=1)
+        self.network.add_node('motion_correction', fxn='preprocess.motion_correction', bipartite=1)
+        self.network.add_node('select_3d_rep', fxn='preprocess.get_middle_frame', bipartite=1)
+        self.network.add_node('manual_registration', fxn='support_functions.itk_manual', bipartite=1)
+        self.network.add_node('automatic_coregistration', fxn='support_functions.coreg_wrapper', bipartite=1)
+        self.network.add_node('create_functional_mask', fxn='support_functions.apply_warp_inverse', bipartite=1)
+        self.network.add_node('apply_reg_epi_mask', fxn='support_functions.apply_binary_mask_vol', biprtite=1)
+        self.network.add_node('apply_functional_mask', fxn='support_functions.apply_binary_mask_functional', bipartite=1)
+        self.network.add_node('create_load_paradigm', fxn='support_functions.create_load_paradigm', bipartite=1)
+        self.network.add_node('create_load_ima_order_map', fxn='support_functions.create_load_ima_order_map', bipartite=1)
+        self.network.add_node('create_contrast', fxn='support_functions.create_contrast', bipartite=1)
+        self.network.add_node('register_contrast', fxn='support_functions.apply_warp', bipartite=1)
+        self.network.add_node('add_to_subject_average_contrast', argv=session_id,
+                              fxn='support_functions.add_to_subject_contrast', bipartite=1)
 
         # define edges (parameter / return values)
 
         self.network.add_edge('get_epi', 'raw_epi', order=0) #10
 
-        self.network.add_edge('raw_epi', 'sphinx_correction', order=0)  # 01
-        self.network.add_edge('sphinx_correction', 'sphinx_epi', order=0)  # 10
+        self.network.add_edge('raw_epi', 'sphinx_correct', order=0)  # 01
+        self.network.add_edge('sphinx_correct', 'sphinx_epi', order=0)  # 10
 
         self.network.add_edge('sphinx_epi', 'select_3d_rep', order=0)  # 01
         self.network.add_edge('select_3d_rep', '3d_epi_rep', order=0)  # 10
@@ -204,6 +251,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('manual_registration', 'manual_reg_epi_rep', order=1)  # 10
 
         self.network.add_edge('manual_reg_epi_rep', 'apply_reg_epi_mask', order=0)  # 01
+        self.network.add_edge('ds_t1_mask', 'apply_reg_epi_mask', order=0)  # 01
         self.network.add_edge('apply_reg_epi_mask', 'masked_manual_reg_epi_rep', order=0)  # 10
 
         self.network.add_edge('masked_manual_reg_epi_rep', 'automatic_coregistration', order=0)  # 01
@@ -217,13 +265,13 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('inverse_auto_composite_transform', 'create_functional_mask', order=3)  # 01
         self.network.add_edge('create_functional_mask', 'epi_mask', order=0)  # 10
 
-        self.network.add_edge('epi_mask', 'apply_functional_mask', order=0)  # 01
+        self.network.add_edge('moco_epi', 'apply_functional_mask', order=0)  # 01
+        self.network.add_edge('epi_mask', 'apply_functional_mask', order=1)  # 01
         self.network.add_edge('apply_functional_mask', 'epi_masked', order=0)  # 10
 
         self.network.add_edge('create_load_paradigm', 'paradigm', order=0)  # 10
 
-        self.network.add_edge('epi_mask', 'create_load_ima_order_map', order=0)  # 01
-        self.network.add_edge('paradigm', 'create_load_ima_order_map', order=1)  # 01
+        self.network.add_edge('epi_masked', 'create_load_ima_order_map', order=0)  # 01
         self.network.add_edge('create_load_ima_order_map', 'ima_order_map', order=0)  # 10
 
         self.network.add_edge('epi_masked', 'create_contrast', order=0)  # 01
@@ -236,4 +284,15 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('manual_transform', 'register_contrast', order=2)  # 01
         self.network.add_edge('auto_composite_transform', 'register_contrast', order=3)  # 01
         self.network.add_edge('register_contrast', 'reg_contrast', order=0) #10
+
+        self.network.add_edge('reg_contrast', 'add_to_subject_average_contrast', order=0) # 01
+        self.network.add_edge('paradigm', 'add_to_subject_average_contrast', order=1) # 01
+
+        connected = list(nx.connected_components(self.network.to_undirected()))
+        if len(connected) > 1:
+            print("Error: graph is diconnected. Print non-main components")
+            for comp in connected[1:]:
+                print(comp)
+
+
 

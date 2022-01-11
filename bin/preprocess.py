@@ -147,7 +147,7 @@ def _clean_img_wrapper(in_file, out_file, low_pass, high_pass, TR):
     nib.save(clean_img, out_file)
 
 
-def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii.gz', scan_pos = 'HFP') -> str:
+def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii.gz', scan_pos = 'HFP'):
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION or BOLD dir)
@@ -179,17 +179,15 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fn
     if scan_pos == 'HFS':
         with Pool() as p:
             res = p.starmap(_mri_convert_sphinx_wrapper, args_sphinx)
-        return res
     elif scan_pos == 'HFP':
         with Pool() as p:
             res = p.starmap(_mri_convert_sphinx_wrapper, args_sphinx)
             res2 = p.starmap(_mri_convert_wrapper, args_flip)
-        return res2
-
+    return input_dirs
 
 def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
     mcflt.inputs.in_file = in_file
-    mcflt.inputs.cost = 'mutualinfo'
+    mcflt.inputs.cost = 'normcorr'
     mcflt.inputs.ref_file = ref_file
     mcflt.inputs.out_file = out_file
     mcflt.inputs.dof = 12
@@ -200,7 +198,7 @@ def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
 
 
 def motion_correction(input_dirs: List[str], ref_path: str, output: Union[None, str] = None, fname='f_sphinx.nii',
-                      check_rms=True, abs_threshold=.8, var_threshold=.2) -> Union[List[str], None]:
+                      check_rms=True, abs_threshold=1.5, var_threshold=.6) -> Union[List[str], None]:
     """
     preform fsl motion correction. If check rms is enabled will remove data where too much motion is detected.
     :param var_threshold:
@@ -298,7 +296,7 @@ def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_l
     return good
 
 
-def get_middle_frame(SOURCE: list(str), output=None, fname='moco.nii.gz') -> str:
+def get_middle_frame(SOURCE: List[str], output=None, fname='f_sphinx.nii') -> str:
     """
     Returns a frame to in the middle of a session
     :param out: output path
@@ -309,7 +307,7 @@ def get_middle_frame(SOURCE: list(str), output=None, fname='moco.nii.gz') -> str
     run_dir = SOURCE[math.floor(len(SOURCE) / 2)]
     in_file = os.path.join(run_dir, fname)
     if not output:
-        out = os.path.join(os.path.dirname(run_dir), '3d_epi_rep.nii')
+        output = os.path.join(os.path.dirname(run_dir), '3d_epi_rep.nii')
     if os.path.exists(in_file) and '.nii' in fname:
         nifti = nib.load(in_file)
         data = nifti.get_fdata()
@@ -784,8 +782,8 @@ def create_low_res_anatomical(source_dir:str, fname:str ='orig.mgz', output=None
         output = os.path.join(source_dir, 'low_res.nii')
     factor = str(factor)
     in_path = os.path.join(source_dir, fname)
-    subprocess.run(['mri_convert', in_path, '-vs', factor, factor, factor, output])
-    subprocess.run(['mri_convert', output, '-iis', '1', '-ijs', '1', '-iks', '1', output])
+    subprocess.run(['mri_convert', in_path, '-vs', factor, factor, factor, output, '--out_type', 'nii'])
+    subprocess.run(['mri_convert', output, '-iis', '1', '-ijs', '1', '-iks', '1', output, '--out_type', 'nii'])
     return output
 
 

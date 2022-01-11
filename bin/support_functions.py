@@ -13,7 +13,6 @@ import fnmatch
 import numpy as np
 
 # subject support function must be operating with working directory appropriately set
-subj_root = os.path.abspath(os.getcwd())
 
 def include_patterns(*patterns):
     """ Function that can be used as shutil.copytree() ignore parameter that
@@ -49,6 +48,7 @@ def include_patterns(*patterns):
 
 def get_epis(*argv):
     session_id = argv[0]
+    subj_root = os.environ.get('FMRI_WORK_DIR')
     from_dicom = input_control.bool_input("load new session dicoms? (otherwise must import niftis from folder)")
     f_dir = preprocess._create_dir_if_needed(subj_root, 'sessions')
     if from_dicom:
@@ -65,8 +65,9 @@ def get_epis(*argv):
             "Enter path to session directory containing run subdirectories containing niftis")
         nifti_name = input("Enter name of nifti files to transfer (should be unprocessed versions")
         sess_target_dir = preprocess._create_dir_if_needed(f_dir, str(session_id))
-        shutil.copytree(nifti_source, sess_target_dir, ignore=include_patterns(nifti_name))
-        SOURCE = [f for f in os.listdir(sess_target_dir) if f.isnumeric()]
+        if nifti_source != sess_target_dir:
+            shutil.copytree(nifti_source, sess_target_dir, ignore=include_patterns(nifti_name))
+        SOURCE = [os.path.join(sess_target_dir, f) for f in os.listdir(sess_target_dir) if f.isnumeric()]
         if nifti_name != 'f.nii.gz':
             for run_dir in SOURCE:
                 raw_nifti = os.path.join(run_dir, nifti_name)
@@ -80,15 +81,18 @@ def get_epis(*argv):
 
 
 def downsample_anatomical(inpath):
+    subj_root = os.environ.get('FMRI_WORK_DIR')
     source_dir = os.path.dirname(inpath)
     name = os.path.basename(inpath)
+    out_name = 'ds_' + name.split('.')[0] + '.nii'
     output_dir = preprocess._create_dir_if_needed(subj_root, 'mri')
-    output = os.path.join(output_dir, 'ds_t1.nii.gz')
-    return preprocess.create_low_res_anatomical(source_dir, name, output)
+    output = os.path.join(output_dir, out_name)
+    preprocess.create_low_res_anatomical(source_dir, name, output)
+    return output
 
 
 def coreg_wrapper(source_space_vol_path, target_space_vol_path):
-    out = os.path.dirname(target_space_vol_path)
+    out = os.path.join(os.path.dirname(source_space_vol_path), 'coreg_3df.nii')
     return preprocess.antsCoReg(target_space_vol_path,
                                 source_space_vol_path,
                                 outP=out,
@@ -104,8 +108,11 @@ def apply_warp(source, vol_in_target_space, forward_gross_transform_path, revers
     out_paths = []
     for s in source:
         out = os.path.join(os.path.dirname(s), 'reg_' + os.path.basename(s))
-        preprocess.antsApplyTransforms(source, vol_in_target_space, out, transforms, 'Linear',
+        preprocess.antsApplyTransforms(s, vol_in_target_space, out, transforms, 'Linear',
                                        img_type_code=0, invertTrans=to_invert)
+        out_paths.append(out)
+    if len(out_paths) == 1:
+        out_paths = out_paths[0]
     return out_paths
 
 
@@ -119,12 +126,11 @@ def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path
 
 
 def apply_binary_mask_functional(source, mask, fname='moco.nii.gz'):
-    sess_dir = os.path.dirname(source[0])
     for run_dir in source:
         src_nii = nibabel.load(os.path.join(run_dir, fname))
         mask_nii = nibabel.load(mask)
         masked_nii = preprocess._apply_binary_mask_3D(src_nii, mask_nii)
-        nibabel.save(masked_nii, os.path.join(sess_dir, 'epi_masked.nii'))
+        nibabel.save(masked_nii, os.path.join(run_dir, 'epi_masked.nii'))
     return source
 
 
@@ -135,6 +141,11 @@ def apply_binary_mask_vol(src_vol, mask):
     masked_nii = preprocess._apply_binary_mask_3D(src_nii, mask_nii)
     nibabel.save(masked_nii, out)
     return out
+
+
+def itk_manual(epi_rep, template):
+    out_dir = os.path.dirname(epi_rep)
+    return preprocess._itkSnapManual(template, epi_rep, out_dir)
 
 
 def _define_contrasts(condition_integerizer, num_conditions):
@@ -153,10 +164,12 @@ def _define_contrasts(condition_integerizer, num_conditions):
             continue
         contrast_descriptions.append(input("Name this contrast: "))
         contrasts.append(contrast)
+        add_contrast = input_control.bool_input("Add another contrast? ")
     return contrasts, contrast_descriptions
 
 
 def _create_paradigm():
+    subj_root = os.environ.get('FMRI_WORK_DIR')
     para_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, '../..'), 'paradigms')
     print('Constructing new paradigm definition json')
     para_def_dict = {}
@@ -195,6 +208,7 @@ def _create_paradigm():
 
 
 def create_load_paradigm():
+    subj_root = os.environ.get('FMRI_WORK_DIR')
     proj_config = os.path.join(subj_root, '../..', 'config.json')
     with open(proj_config, 'r') as f:
         config = json.load(f)
@@ -218,25 +232,17 @@ def create_load_ima_order_map(source):
         if input_control.bool_input("IMA -> order number map already defined for this session. Use existing?"):
             return omap_path
     ima_order_map = {}
+    one_index_source = input_control.bool_input("Are order numbers 1 indexed (in experiment logs)? ")
     for s in source:
         ima = os.path.basename(s).strip()
-        order_num = int(input("Enter order number for ima" + ima))
+        order_num = int(input("Enter order number (as in log) for ima" + ima))
+        if one_index_source:
+            order_num -= 1
         ima_order_map[ima] = order_num
     with open(omap_path, 'w') as f:
         json.dump(ima_order_map, f, indent=4)
     print("Successfully saved ima to order number mapping json at", omap_path)
     return omap_path
-
-
-def create_load_session(ds_t1, ds_t1_mask, ds_t1_masked):
-    pass
-
-
-def create_project_config():
-    project_config = {}
-    project_config['project_name'] = input('project name: ')
-    project_config['paradigms'] = []
-    project_config['data_map'] = {}  # subjects -> paradigms -> session_ids / run nums
 
 
 def create_contrast(source, paradigm_path, ima_order_map_path, fname='epi_masked.nii'):
@@ -268,6 +274,7 @@ def create_contrast(source, paradigm_path, ima_order_map_path, fname='epi_masked
 
 
 def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, *argv):
+    subj_root = os.environ.get('FMRI_WORK_DIR')
     session_id = str(argv[0])
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
@@ -292,5 +299,41 @@ def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, *argv):
         proj_config['data_map'][subject][paradigm_data['name']]['sessions_included'].append(session_id)
 
 
+def generate_subject_overlays(source, white_surfs, t1_path, ds_t1_path):
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    os.chdir(subj_root)
+    contrasts = [os.path.join(subj_root, 'analysis', f) for f in os.listdir(os.path.join(subj_root, 'analysis')) if 'contrast.nii' in f]
+    for contrast_path in contrasts:
+        for i, hemi in enumerate(['lh', 'rh']):
+            # freesurfer has the dumbest path lookup schema so we have to be careful here
+            print(subj_root)
+            analysis.create_contrast_surface(white_surfs[i],
+                                             contrast_path,
+                                             ds_t1_path,
+                                             t1_path,
+                                             hemi=hemi, subject_id='.')
 
 
+def load_t1_data():
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    cur_t1_path = input_control.dir_input("enter path to t1: ")
+    cur_t1_mask_path = input_control.dir_input("enter path to t1 mask: ")
+    t1_name = os.path.basename(cur_t1_path)
+    t1_mask_name = os.path.basename(cur_t1_mask_path)
+    t1_proj_path = os.path.join(subj_root, 'mri', t1_name)
+    t1_mask_proj_path = os.path.join(subj_root, 'mri', t1_mask_name)
+    shutil.copy(cur_t1_path, t1_proj_path)
+    shutil.copy(cur_t1_mask_path, t1_mask_proj_path)
+    return t1_proj_path, t1_mask_proj_path
+
+
+def load_white_surfs():
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    surfs = []
+    for hemi in ['left', 'right']:
+        cur_surf_path = input_control.dir_input("enter path to " + hemi + " surf: ")
+        surf_name = os.path.basename(cur_surf_path)
+        surf_proj_path = os.path.join(subj_root, 'surf', surf_name)
+        shutil.copy(cur_surf_path, surf_proj_path)
+        surfs.append(surf_proj_path)
+    return surfs

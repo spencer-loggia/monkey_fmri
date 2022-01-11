@@ -53,7 +53,7 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id,
         if run[0] == '.':
             continue
         tkns = run.split('_')
-        this_run_num = int(tkns[0])
+        this_run_num = int(tkns[-1])
         if this_run_num in run_numbers:
             _create_dir_if_needed(os.path.join(outDir, session_id), str(this_run_num))
             local_out = os.path.join(outDir, session_id, str(this_run_num))

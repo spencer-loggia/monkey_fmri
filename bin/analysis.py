@@ -544,14 +544,14 @@ def create_contrast_surface(anatomical_white_surface: str,
     path = os.path.join(output, 'tmp.nii')
     nib.save(new_nii, path)
 
-    os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.getcwd()))
+    os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
 
-    if not os.path.exists('../mri/orig.mgz'):
-        _create_dir_if_needed('./', 'mri')
-        shutil.copy(orig_high_res_anatomical, '../mri/orig.mgz')
-    if not os.path.exists('../surf/lh.white'):
-        _create_dir_if_needed('./', 'surf')
-        shutil.copy(anatomical_white_surface, '../surf/lh.white')
+    # if not os.path.exists('../mri/orig.mgz'):
+    #     _create_dir_if_needed('./', 'mri')
+    #     shutil.copy(orig_high_res_anatomical, '../mri/orig.mgz')
+    # if not os.path.exists('../surf/lh.white'):
+    #     _create_dir_if_needed('./', 'surf')
+    #     shutil.copy(anatomical_white_surface, '../surf/lh.white')
     subdivide_arg = str(1 / scale)
     subprocess.run(['mri_convert', path, '-vs', subdivide_arg, subdivide_arg, subdivide_arg, path])
     subprocess.run(['mri_convert', path, '-iis', '1', '-ijs', '1', '-iks', '1', path])
