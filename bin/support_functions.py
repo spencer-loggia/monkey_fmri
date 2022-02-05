@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Union
 
 import json
 import nibabel
@@ -13,6 +13,7 @@ import fnmatch
 import numpy as np
 
 # subject support function must be operating with working directory appropriately set
+
 
 def include_patterns(*patterns):
     """ Function that can be used as shutil.copytree() ignore parameter that
@@ -64,9 +65,11 @@ def get_epis(*argv):
         nifti_source = input_control.dir_input(
             "Enter path to session directory containing run subdirectories containing niftis")
         nifti_name = input("Enter name of nifti files to transfer (should be unprocessed versions")
-        sess_target_dir = preprocess._create_dir_if_needed(f_dir, str(session_id))
+        sess_target_dir = os.path.join(f_dir, str(session_id))
         if nifti_source != sess_target_dir:
             shutil.copytree(nifti_source, sess_target_dir, ignore=include_patterns(nifti_name))
+        else:
+            preprocess._create_dir_if_needed(f_dir, str(session_id))
         SOURCE = [os.path.join(sess_target_dir, f) for f in os.listdir(sess_target_dir) if f.isnumeric()]
         if nifti_name != 'f.nii.gz':
             for run_dir in SOURCE:
@@ -84,10 +87,11 @@ def downsample_anatomical(inpath):
     subj_root = os.environ.get('FMRI_WORK_DIR')
     source_dir = os.path.dirname(inpath)
     name = os.path.basename(inpath)
+    factor = float(input("enter factor to downsample by (e.g. '2' will create a half sized anatomical on all dimmensions)"))
     out_name = 'ds_' + name.split('.')[0] + '.nii'
     output_dir = preprocess._create_dir_if_needed(subj_root, 'mri')
     output = os.path.join(output_dir, out_name)
-    preprocess.create_low_res_anatomical(source_dir, name, output)
+    preprocess.create_low_res_anatomical(source_dir, name, output, factor=factor)
     return output
 
 
@@ -100,10 +104,10 @@ def coreg_wrapper(source_space_vol_path, target_space_vol_path):
                                 n_jobs=2)
 
 
-def apply_warp(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path):
+def apply_warp(source, vol_in_target_space, forward_gross_transform_path, fine_transform_path):
     if type(source) is not list:
         source = [source]
-    transforms = [forward_gross_transform_path, reverse_fine_transform_path]
+    transforms = [forward_gross_transform_path, fine_transform_path]
     to_invert = [False, False]
     out_paths = []
     for s in source:
@@ -141,6 +145,31 @@ def apply_binary_mask_vol(src_vol, mask):
     masked_nii = preprocess._apply_binary_mask_3D(src_nii, mask_nii)
     nibabel.save(masked_nii, out)
     return out
+
+
+def create_slice_overlays(function_reg_vol, anatomical, reg_contrasts):
+    out_paths = []
+    if type(reg_contrasts) is not list:
+        reg_contrasts = [reg_contrasts]
+    for contrast in reg_contrasts:
+        out_paths.append(analysis.create_slice_maps(function_reg_vol, anatomical, contrast))
+    return out_paths
+
+
+def get_3d_rep(src: Union[List[str], str]):
+    from_epi = input_control.bool_input("Select 3d rep as frame from epis? Otherwise select volume file (in epi space)")
+    if from_epi:
+        return preprocess.get_middle_frame(src)
+    else:
+        return input_control.dir_input("Select volume file in epi space (probably called t2.nii.gz)")
+
+
+def convert_to_sphinx_vol_wrap(src):
+    dirname = os.path.dirname(src)
+    fname = os.path.basename(src)
+    out = preprocess.convert_to_sphinx(input_dirs=[dirname], fname=fname)[0]
+    out_path = os.path.join(out, fname.split('.')[0] + '_sphinx.nii')
+    return out_path
 
 
 def itk_manual(epi_rep, template):
@@ -207,14 +236,18 @@ def _create_paradigm():
     return para_def_dict, config_file_path
 
 
-def create_load_paradigm():
+def create_load_paradigm(add_new_option=True):
     subj_root = os.environ.get('FMRI_WORK_DIR')
-    proj_config = os.path.join(subj_root, '../..', 'config.json')
+    proj_config = os.path.abspath(os.path.join(subj_root, '../..', 'config.json'))
     with open(proj_config, 'r') as f:
         config = json.load(f)
     paradigms = config['paradigms']
     key_integerizer = list(paradigms.keys())
-    choice = input_control.select_option_input(key_integerizer + ['Define new paradigm...'])
+    if add_new_option:
+        choices = key_integerizer + ['Define new paradigm...']
+    else:
+        choices = key_integerizer
+    choice = input_control.select_option_input(choices)
     if choice == len(key_integerizer):
         paradigm_def, para_file_path = _create_paradigm()
         config['paradigms'][paradigm_def['name']] = para_file_path
@@ -245,11 +278,14 @@ def create_load_ima_order_map(source):
     return omap_path
 
 
-def create_contrast(source, paradigm_path, ima_order_map_path, fname='epi_masked.nii'):
+def create_contrast(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii'):
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
     with open(ima_order_map_path, 'r') as f:
         ima_order_map = json.load(f)
+    if mion is None:
+        mion = False
+    assert type(mion) is bool
     contrast_def = np.array(paradigm_data['desired_contrasts'], dtype=float).T
     contrast_descriptions = paradigm_data['contrast_descriptions']
     num_runs = len(source)
@@ -265,9 +301,11 @@ def create_contrast(source, paradigm_path, ima_order_map_path, fname='epi_masked
         design_matrix = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
                                                               convolve=False)
         design_matrices.append(design_matrix)
+    print("using mion: ", mion)
+    print('source fname: ', fname)
     contrast_imgs = analysis.intra_subject_contrast(source, design_matrices, contrast_def, contrast_descriptions,
                                                     output_dir=sess_dir, fname=fname,
-                                                    mode='maximal_dynamic', use_python_mp=True)
+                                                    mode='maximal_dynamic', mion=mion, use_python_mp=True, auto_conv=True, tr=3)
     contrast_paths = [os.path.join(sess_dir, s + '_contrast.nii') for s in contrast_descriptions]
     print("contrasts created at: " + str(contrast_paths))
     return contrast_paths
@@ -279,6 +317,8 @@ def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, *argv):
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
     para_name = paradigm_data['name']
+    if type(reg_sontrasts) not in [list, tuple]:
+        reg_sontrasts = [reg_sontrasts]
     for con_path in reg_sontrasts:
         contrast_file_name = os.path.basename(con_path)
         total_path = os.path.join(subj_root, 'analysis', para_name + '_' + contrast_file_name)
@@ -300,9 +340,31 @@ def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, *argv):
 
 
 def generate_subject_overlays(source, white_surfs, t1_path, ds_t1_path):
+    """
+    :param source: The total list of sessions
+    :param white_surfs:
+    :param t1_path:
+    :param ds_t1_path:
+    :return:
+    """
+    para = create_load_paradigm(add_new_option=False)
+    with open(para, 'r') as f:
+        para_data = json.load(f)
+    para_name = para_data['name']
     subj_root = os.environ.get('FMRI_WORK_DIR')
     os.chdir(subj_root)
-    contrasts = [os.path.join(subj_root, 'analysis', f) for f in os.listdir(os.path.join(subj_root, 'analysis')) if 'contrast.nii' in f]
+    full_subject = input_control.bool_input('Create Full Subject Contrast? (otherwise specify individual session)')
+    if full_subject:
+        contrasts = [os.path.join(subj_root, 'analysis', f) for f in os.listdir(os.path.join(subj_root, 'analysis')) if 'contrast.nii' in f and para_name in f]
+    else:
+        session_id = ''
+        valid_ids = [os.path.basename(os.path.dirname(s)) for s in source]
+        while session_id not in valid_ids:
+            session_id = input('enter session id: ')
+        contrasts = [os.path.join(subj_root, 'sessions', session_id, f) for f in os.listdir(os.path.join(subj_root, 'sessions', session_id)) if
+                     'contrast.nii' in f and 'reg' in f]
+    if len(contrasts) == 0:
+        print('no contrasts have been created')
     for contrast_path in contrasts:
         for i, hemi in enumerate(['lh', 'rh']):
             # freesurfer has the dumbest path lookup schema so we have to be careful here

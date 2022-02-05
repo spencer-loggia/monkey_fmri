@@ -49,16 +49,26 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id,
     to_unpack = []
     f_dirs = []
     _create_dir_if_needed(outDir, str(session_id))
+    tkn_idx = None
     for run in run_dirs:
         if run[0] == '.':
             continue
         tkns = run.split('_')
-        this_run_num = int(tkns[-1])
+        if tkn_idx is None:
+            print(tkns)
+            tkn_idx = int(input("enter 0 indexed index of token denoting run number "
+                                "(usually is 0 but seems to unexpectedly change sometimes.)"))
+        this_run_num = int(tkns[tkn_idx])
         if this_run_num in run_numbers:
-            _create_dir_if_needed(os.path.join(outDir, session_id), str(this_run_num))
-            local_out = os.path.join(outDir, session_id, str(this_run_num))
-            f_dirs.append(local_out)
-            to_unpack.append((os.path.join(inDir, run), local_out, True, 2, nifti_name))
+            if 't2' in run:
+                local_out = os.path.join(outDir, session_id)
+                name = 't2'
+            else:
+                _create_dir_if_needed(os.path.join(outDir, session_id), str(this_run_num))
+                local_out = os.path.join(outDir, session_id, str(this_run_num))
+                f_dirs.append(local_out)
+                name = nifti_name
+            to_unpack.append((os.path.join(inDir, run), local_out, True, 2, name))
     with Pool() as p:
         p.starmap(unpack, to_unpack)
     return f_dirs

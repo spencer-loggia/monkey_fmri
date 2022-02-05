@@ -5,7 +5,7 @@ import datetime
 import networkx as nx
 import preprocess
 import support_functions
-from input_control import select_option_input
+from input_control import select_option_input, bool_input
 
 
 class BaseControlNet:
@@ -70,10 +70,24 @@ class BaseControlNet:
             json.dump(node_link_dict, f, indent=4)
         return out_path
 
-    def load_net(self, in_path):
+    def load_net(self, in_path, ignore=tuple()):
+        """
+
+        :param in_path: path to json node link data
+        :param ignore: nodes to not update data attributes from file
+        :return:
+        """
         with open(in_path, 'r') as f:
             node_link_dict = json.load(f)
-        self.network = nx.readwrite.node_link_graph(node_link_dict, directed=True, multigraph=False)
+        loaded_net = nx.readwrite.node_link_graph(node_link_dict, directed=True, multigraph=False)
+        for g_att in loaded_net.graph.keys():
+            self.network.graph[g_att] = loaded_net.graph[g_att]
+        cur_nodes = self.network.nodes()
+        for n, data in loaded_net.nodes(data=True):
+            if n not in ignore:
+                if 'bipartite' in data and data['bipartite'] == 1 and n in cur_nodes:
+                    data['fxn'] = self.network.nodes[n]['fxn']
+                self.network.add_node(n, **data)
         self.init_head_states()
 
 
@@ -85,8 +99,7 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.initialize_processing_structure()
         self.init_head_states()
 
-    @staticmethod
-    def create_load_session(ds_t1, ds_t1_mask, ds_t1_masked, sessions):
+    def create_load_session(self, ds_t1, ds_t1_mask, ds_t1_masked, sessions):
         """
         local method
         only creates a new session for now
@@ -98,11 +111,17 @@ class DefaultSubjectControlNet(BaseControlNet):
         session_id = input("enter date of session")
         subj_root = os.environ.get('FMRI_WORK_DIR')
         path = os.path.join(subj_root, 'sessions', session_id, 'session_net.json')
-        session = DefaultSessionControlNet(session_id, ds_t1, ds_t1_mask, ds_t1_masked)
+        session = DefaultSessionControlNet(session_id, self.network.nodes['ds_t1'],
+                                                       self.network.nodes['ds_t1_mask'],
+                                                       self.network.nodes['ds_t1_masked'])
         if path in sessions or os.path.exists(path):
             print("loading previous session " + session_id)
-            session.load_net(path)
-        return sessions + [session.control_loop(path)]
+            session.load_net(path, ignore=('ds_t1', 'ds_t1_mask', 'ds_t1_masked'))
+        if 'is_mion' not in session.network.graph or session.network.graph['is_mion'] is None:
+            mion = bool_input("Is this session using MION?")
+            session.network.graph['is_mion'] = mion
+            session.network.nodes['create_contrast']['argv'] = mion
+        return list(set(sessions + [session.control_loop(path)]))
 
     def initialize_processing_structure(self):
         """
@@ -172,9 +191,11 @@ class DefaultSessionControlNet(BaseControlNet):
         self.initialize_proccessing_structure(session_id, ds_t1_path, ds_t1_mask_path, ds_t1_masked_path)
         self.init_head_states()
 
-    def initialize_proccessing_structure(self, session_id, t1_path, t1_mask_path, ds_t1_masked_path):
+    def initialize_proccessing_structure(self, session_id, ds_t1_node, ds_t1_mask_node, ds_t1_masked_node):
         # runtime defined. If path attribute is a list, indicates these are multiple files to process in parallel
         self.network.graph['session_id'] = session_id
+        self.network.graph['is_mion'] = None
+
         # Initial preproccessing nodes
         self.network.add_node('raw_epi', data=[], type='time_series', bipartite=0, complete=False, space='epi_native')
         self.network.add_node('sphinx_epi', data=[], type='time_series', bipartite=0, complete=False,
@@ -182,11 +203,11 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('moco_epi', data=[], type='time_series', bipartite=0, complete=False, space='epi_native')
 
         self.network.add_node('3d_epi_rep', data=None, type='volume', bipartite=0, complete=False, space='epi_native')
+        self.network.add_node('3d_epi_rep_sphinx', data=None, type='volume', bipartite=0, complete=False, space='epi_native')
 
-        self.network.add_node('ds_t1', data=t1_path, type='volume', bipartite=0, complete=True, space='ds_t1_native')
-        self.network.add_node('ds_t1_mask', data=t1_mask_path, type='volume', bipartite=0, complete=True, space='ds_t1_native')
-        self.network.add_node('ds_t1_masked', data=ds_t1_masked_path, type='volume', bipartite=0, complete=True,
-                              space='ds_t1_native')
+        self.network.add_node('ds_t1', **ds_t1_node)
+        self.network.add_node('ds_t1_mask', **ds_t1_mask_node)
+        self.network.add_node('ds_t1_masked', **ds_t1_masked_node)
 
         self.network.add_node('manual_reg_epi_rep', data=None, type='volume', bipartite=0, complete=False,
                               space='ds_t1_aprox')
@@ -213,12 +234,17 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('reg_contrast', data=[], type='volume', bipartite=0, complete=False,
                               space='ds_t1_native')
 
+        self.network.add_node('reg_3d_epi_rep', data=None, type='volume', bipartite=0, complete=False, space='ds_t1_approx')
+
+        self.network.add_node('slice_contrast_img', data=None, type='std_image', bipartite=0, complete=False, space='')
+
         # Define functional data processing nodes
 
         self.network.add_node('get_epi', argv=session_id, fxn='support_functions.get_epis', bipartite=1)
         self.network.add_node('sphinx_correct', fxn='preprocess.convert_to_sphinx', bipartite=1)
         self.network.add_node('motion_correction', fxn='preprocess.motion_correction', bipartite=1)
-        self.network.add_node('select_3d_rep', fxn='preprocess.get_middle_frame', bipartite=1)
+        self.network.add_node('select_3d_rep', fxn='support_functions.get_3d_rep', bipartite=1)
+        self.network.add_node('sphinx_correct_3d_rep', fxn='support_functions.convert_to_sphinx_vol_wrap', bipartite=1)
         self.network.add_node('manual_registration', fxn='support_functions.itk_manual', bipartite=1)
         self.network.add_node('automatic_coregistration', fxn='support_functions.coreg_wrapper', bipartite=1)
         self.network.add_node('create_functional_mask', fxn='support_functions.apply_warp_inverse', bipartite=1)
@@ -226,10 +252,13 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('apply_functional_mask', fxn='support_functions.apply_binary_mask_functional', bipartite=1)
         self.network.add_node('create_load_paradigm', fxn='support_functions.create_load_paradigm', bipartite=1)
         self.network.add_node('create_load_ima_order_map', fxn='support_functions.create_load_ima_order_map', bipartite=1)
-        self.network.add_node('create_contrast', fxn='support_functions.create_contrast', bipartite=1)
+        self.network.add_node('create_contrast', fxn='support_functions.create_contrast',
+                              bipartite=1, argv=self.network.graph['is_mion'])
         self.network.add_node('register_contrast', fxn='support_functions.apply_warp', bipartite=1)
         self.network.add_node('add_to_subject_average_contrast', argv=session_id,
                               fxn='support_functions.add_to_subject_contrast', bipartite=1)
+        self.network.add_node('register_3d_rep', fxn='support_functions.apply_warp', bipartite=1)
+        self.network.add_node('contrast_slice_overlay', fxn='support_functions.create_slice_overlays', bipartite=1)
 
         # define edges (parameter / return values)
 
@@ -238,20 +267,23 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('raw_epi', 'sphinx_correct', order=0)  # 01
         self.network.add_edge('sphinx_correct', 'sphinx_epi', order=0)  # 10
 
-        self.network.add_edge('sphinx_epi', 'select_3d_rep', order=0)  # 01
+        self.network.add_edge('raw_epi', 'select_3d_rep', order=0)  # 01
         self.network.add_edge('select_3d_rep', '3d_epi_rep', order=0)  # 10
 
+        self.network.add_edge('3d_epi_rep', 'sphinx_correct_3d_rep', order=0)
+        self.network.add_edge('sphinx_correct_3d_rep', '3d_epi_rep_sphinx', order=0)
+
         self.network.add_edge('sphinx_epi', 'motion_correction', order=0)  # 01
-        self.network.add_edge('3d_epi_rep', 'motion_correction', order=1)  # 01
+        self.network.add_edge('3d_epi_rep_sphinx', 'motion_correction', order=1)  # 01
         self.network.add_edge('motion_correction', 'moco_epi', order=0)  # 10
 
-        self.network.add_edge('3d_epi_rep', 'manual_registration', order=0)  # 01
+        self.network.add_edge('3d_epi_rep_sphinx', 'manual_registration', order=0)  # 01
         self.network.add_edge('ds_t1', 'manual_registration', order=1)  # 01
         self.network.add_edge('manual_registration', 'manual_transform', order=0)  # 10
         self.network.add_edge('manual_registration', 'manual_reg_epi_rep', order=1)  # 10
 
         self.network.add_edge('manual_reg_epi_rep', 'apply_reg_epi_mask', order=0)  # 01
-        self.network.add_edge('ds_t1_mask', 'apply_reg_epi_mask', order=0)  # 01
+        self.network.add_edge('ds_t1_mask', 'apply_reg_epi_mask', order=1)  # 01
         self.network.add_edge('apply_reg_epi_mask', 'masked_manual_reg_epi_rep', order=0)  # 10
 
         self.network.add_edge('masked_manual_reg_epi_rep', 'automatic_coregistration', order=0)  # 01
@@ -260,7 +292,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('automatic_coregistration', 'inverse_auto_composite_transform', order=1)  # 10
 
         self.network.add_edge('ds_t1_mask', 'create_functional_mask', order=0)  # 01
-        self.network.add_edge('3d_epi_rep', 'create_functional_mask', order=1)
+        self.network.add_edge('3d_epi_rep_sphinx', 'create_functional_mask', order=1)
         self.network.add_edge('manual_transform', 'create_functional_mask', order=2)  # 01
         self.network.add_edge('inverse_auto_composite_transform', 'create_functional_mask', order=3)  # 01
         self.network.add_edge('create_functional_mask', 'epi_mask', order=0)  # 10
@@ -283,10 +315,21 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('ds_t1_masked', 'register_contrast', order=1)
         self.network.add_edge('manual_transform', 'register_contrast', order=2)  # 01
         self.network.add_edge('auto_composite_transform', 'register_contrast', order=3)  # 01
-        self.network.add_edge('register_contrast', 'reg_contrast', order=0) #10
+        self.network.add_edge('register_contrast', 'reg_contrast', order=0)  # 10
 
         self.network.add_edge('reg_contrast', 'add_to_subject_average_contrast', order=0) # 01
         self.network.add_edge('paradigm', 'add_to_subject_average_contrast', order=1) # 01
+
+        self.network.add_edge('3d_epi_rep_sphinx', 'register_3d_rep', order=0)
+        self.network.add_edge('ds_t1_masked', 'register_3d_rep', order=1)
+        self.network.add_edge('manual_transform', 'register_3d_rep', order=2)
+        self.network.add_edge('auto_composite_transform', 'register_3d_rep', order=3)
+        self.network.add_edge('register_3d_rep', 'reg_3d_epi_rep', order=0)
+
+        self.network.add_edge('reg_3d_epi_rep', 'contrast_slice_overlay', order=0)
+        self.network.add_edge('ds_t1_masked', 'contrast_slice_overlay', order=1)
+        self.network.add_edge('reg_contrast', 'contrast_slice_overlay', order=2)
+        self.network.add_edge('contrast_slice_overlay', 'slice_contrast_img', order=0)
 
         connected = list(nx.connected_components(self.network.to_undirected()))
         if len(connected) > 1:

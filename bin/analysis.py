@@ -1,3 +1,5 @@
+import math
+
 import os
 import scipy.ndimage
 import shutil
@@ -7,7 +9,7 @@ import subprocess
 import numpy as np
 import nibabel as nib
 
-from scipy.special import gamma
+from scipy.stats import gamma
 from scipy.stats import norm
 
 from scipy.ndimage import gaussian_filter, binary_fill_holes, label
@@ -53,6 +55,15 @@ def _norm_4d(arr: np.ndarray):
     arr -= mean
     norm_factor = np.std(arr.flatten())
     arr /= norm_factor
+    return arr
+
+
+def _set_data_range(arr, min_range, max_range):
+    arr += min(arr.flatten())  # min 0
+    arr /= max(arr.flatten())  # 0 - 1
+    range_size = max_range - min_range
+    arr *= range_size
+    arr += min_range
     return arr
 
 
@@ -114,127 +125,94 @@ def average_functional_data(run_dirs, output, fname='normalized.nii', through_ti
     return avg_func
 
 
-def hemodynamic_convolution(x_arr: np.ndarray, kernel: str, temporal_window: int = 10, tr_len=3, **kwargs) -> np.ndarray:
+def _mion_base(tr, time_length, oversampling=16, onset=0.0):
+    """Implementation of the MION response function model.
+    Parameters
+    ----------
+    tr: float
+        scan repeat time, in seconds
+    oversampling: int, optional
+        temporal oversampling factor
+    onset: float, optional
+        hrf onset time, in seconds
+
+    Returns
+    -------
+    response_function: array of shape(length / tr * oversampling, dtype=float)
+        response_function sampling on the oversampled time grid
     """
+    dt = tr / oversampling
+    time_stamps = np.linspace(
+        0, time_length, np.rint(float(time_length) / dt).astype(int)
+    )
+    time_stamps -= onset
 
-    :param temporal_window: number of trs to use in discrete convolution
-    :param x_arr: Input stimuli sequence. (k, t) where k is the number of stimuli classes
-    :param kernel: function name to tranform activations to hemodynamic activation space. Convolves over time dime (ax -1)
-    :param mean: free parameter argument if kernel is gauss based, the lead of the peak on the current position, meausured in trs
-    :param var:
-    :return: a matrix with same shape as input.
+    # parameters of the gamma function
+    delay = 1.55
+    dispersion = 5.5
+
+    response_function = gamma.pdf(time_stamps, delay, loc=0, scale=dispersion)
+    response_function /= response_function.sum()
+
+    return response_function
+
+
+def mion_response_function(tr, time_length, oversampling=16.0):
+    """Implementation of the MION time derivative response function model.
+    Parameters
+    ----------
+    tr: float
+        scan repeat time, in seconds
+    oversampling: int, optional
+        temporal oversampling factor, optional
+
+    Returns
+    -------
+    drf: array of shape(time_length / tr * oversampling, dtype=float)
+        derived_response_function sampling on the provided grid
     """
-    if 'mean' in kwargs:
-        mean = kwargs['mean']
-    else:
-        mean = 4
-    if 'var' in kwargs:
-        var = kwargs['var']
-    else:
-        var = 3
-
-    if kernel == 'normal':
-        mean = int(temporal_window / 2) + mean
-        n_arr = norm.pdf(np.arange(temporal_window), loc=mean, scale=var)
-        hemo_resp = np.apply_along_axis(lambda m: np.convolve(m, n_arr, mode='same'), axis=0, arr=x_arr)
-        return hemo_resp
-
-    def _gamma_hrf_conv_arr(lmean, lvar, tw):
-        beta = lmean + np.sqrt(lmean + 4 * lvar) * (1 / (2 * lvar))
-        alpha = lvar * np.power(beta, 2)
-        temp_arr = np.arange(tw)
-        conv_arr = (np.power(beta, alpha) * np.power(temp_arr, (alpha - 1)) * np.power(np.e,
-                                                                                       (-temp_arr * beta))) / gamma(
-            alpha)
-        conv_arr = np.concatenate([np.zeros(tw), conv_arr])
-        return conv_arr
-
-    if kernel == 'gamma_hrf':
-        conv_arr = _gamma_hrf_conv_arr(mean, var, temporal_window)
-        hemo_resp = np.apply_along_axis(lambda m: np.convolve(m, conv_arr, mode='same'), axis=0, arr=x_arr)
-        return hemo_resp
-
-    if kernel == 'weighted_gamma_hrf':
-        if 'weight' in kwargs:
-            weight = kwargs['weight']
-        else:
-            weight = .85
-        if 'mean2' in kwargs:
-            mean2 = kwargs['mean2']
-        else:
-            mean2 = 7
-        if 'var2' in kwargs:
-            var2 = kwargs['var2']
-        else:
-            var2 = 1
-        conv_arr1 = _gamma_hrf_conv_arr(mean, var, temporal_window)
-        conv_arr2 = _gamma_hrf_conv_arr(mean2, var2, temporal_window)
-        conv_arr = weight * conv_arr1 - (1 - weight) * conv_arr2
-        plt.plot(conv_arr)
-        plt.show()
-        hemo_resp = np.apply_along_axis(lambda m: np.convolve(m, conv_arr, mode='same'), axis=0, arr=x_arr)
-        return hemo_resp
-
-    if kernel == 'manual_bold':
-        conv_arr = [.01, .02, .05, .09, .14, .2, .15, .11, .07, .03, .00, -.01, -.02, -.03, -.02, -.015, -.01, -.005, 0, 0, 0]
-        conv_arr = [0]*len(conv_arr) + conv_arr
-        plt.plot(conv_arr)
-        plt.show()
-        x_arr = scipy.ndimage.zoom(x_arr, (1, tr_len))
-        hemo_resp = np.apply_along_axis(lambda m: np.convolve(m, conv_arr, mode='same'), axis=0, arr=x_arr)
-        hemo_resp = scipy.ndimage.zoom(hemo_resp, (1, (1 / tr_len)))
-        return hemo_resp
-
-    raise NotImplementedError
+    do = 0.1
+    drf = (
+                  _mion_base(tr, time_length, oversampling)
+                  - _mion_base(tr, time_length, oversampling, do)
+          ) / do
+    target_size = time_length / tr
+    factor = target_size / drf.shape[0]
+    drf = scipy.ndimage.zoom(drf, factor, order=3)
+    drf = drf / np.abs(np.sum(drf))  # integral 0x = 1
+    drf = torch.from_numpy(drf).reshape([1, 1, -1]).float()
+    return drf
 
 
-def mv_glm_regressor(x_arr: np.ndarray, gt: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Preforms multiclass regression to predict gt (activation data) from x_arr (stimuli presentation data.)
-    :param x_arr: Transformed design matrix (convolved onehot encoded stimuli presentation)
-    :param gt: Activation signals (w, h, d, t) if whole brain or (t) if one voxel
-    :return: a tuple of Model fit parameters (Beta) and Error (difference between predicted and observed)
-    """
+def bold_response_function(tr=3, time_length=30):
+    return -1 * mion_response_function(tr, time_length, oversampling=16.0)
+
+
+def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndarray, conv_size=11, conv_pad=5,
+                                          epochs=30, pid=0, mion=False, auto_conv=True, tr=3):
     og_shape = gt.shape
-    if np.ndim(gt) > 1:
-        gt = gt.reshape(-1, x_arr.shape[0]).T  # reshape to all time, LL VOXELS
-    glm = LinearRegression()
-    glm.fit(x_arr, gt)
-    beta = glm.coef_
-    beta = beta.reshape(list(og_shape[:-1]) + [x_arr.shape[1]])
-    residuals = (gt - glm.predict(x_arr)).T.reshape(og_shape)
-    return beta, residuals
+    conv1d = torch.nn.Conv1d(kernel_size=conv_size, in_channels=1, out_channels=1, padding=conv_pad, bias=False)
+    if mion:
+        def_hrf = mion_response_function(tr, conv_size * tr)
+    else:
+        def_hrf = bold_response_function(tr, time_length=conv_size * tr)
+    if auto_conv:
+        weight = def_hrf.clone()
+    else:
+        weight = def_hrf.clone()
+        epochs = 1
 
-
-def _ssqrt_lfxn(x: torch.Tensor, y: torch.Tensor, chunk_size=10000):
-    euc_dists = y - x
-    loss = torch.sum(torch.sqrt(euc_dists))
-    return loss
-
-
-def _rmse_lfxn(x: torch.Tensor, y:torch.Tensor, chunk_size=10000):
-    x = x.contiguous()
-    y = y.contiguous()
-    loss = torch.zeros(1)
-    x_blocks = torch.split(x, split_size_or_sections=chunk_size, dim=0)
-    y_blocks = torch.split(y, split_size_or_sections=chunk_size, dim=0)
-    for i in range(len(x_blocks)):
-        euc_dists = torch.cdist(x_blocks[i], y_blocks[i])
-        loss = loss + torch.sum(torch.pow(euc_dists, 2))
-    return loss
-
-
-def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndarray, conv_size=21, conv_pad=10, epochs=100, pid=0):
-    og_shape = gt.shape
-    conv1d = torch.nn.Conv1d(kernel_size=conv_size, in_channels=1, out_channels=1, padding=conv_pad)
-    conv1d.weight = torch.nn.Parameter(torch.ones_like(conv1d.weight).float(), requires_grad=True)
-    design_matrix = torch.from_numpy(design_matrix)[:, None, :].float()  # design matrix should be (k, t) so that k conditions is treated as batch by torch convention
+    # weight[math.ceil(conv1d.weight.shape[0] / 2):] = 0 # maintain causality
+    conv1d.weight = torch.nn.Parameter(weight, requires_grad=True)
+    design_matrix = torch.from_numpy(design_matrix)[:, None,
+                    :].float()  # design matrix should be (k, t) so that k conditions is treated as batch by torch convention
     if np.ndim(gt) > 1:
         gt = gt.reshape(-1, design_matrix.shape[0]).T  # reshape to all time, LL VOXELS
     gt = torch.from_numpy(gt).float()
     # linear = torch.nn.Linear(in_features=design_matrix.shape[-1], out_features=gt.shape[1], bias=False)
     beta = torch.normal(mean=.5, std=.2, size=[design_matrix.shape[-1], gt.shape[1]], requires_grad=False).float()
-    optim = torch.optim.SGD(lr=.001, params=list(conv1d.parameters()))
+    optim = torch.optim.SGD(lr=.0001, params=list(conv1d.parameters()))
+    sched = torch.optim.lr_scheduler.StepLR(optimizer=optim, step_size=15, gamma=.1)
     mseloss = torch.nn.MSELoss()
     # mseloss = _ssqrt_lfxn
     print('Starting optimization routine... (pid=', pid, ')')
@@ -249,23 +227,28 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
         y_hat = xexp @ beta  # time is now treated as the batch, we do (t x k) * (k x v) -> (t x v) where v is all voxels
         return xexp, y_hat
 
+    loss_hist = []
     for i in range(epochs):
         # expectation
         optim.zero_grad()
-        print("optim epoch #", i, "(pid=", pid, ")")
         x_expect, y_hat = pred_seq(design_matrix)
         # analytical maximization
         with torch.no_grad():
             beta = torch.inverse(x_expect.T @ x_expect) @ x_expect.T @ gt
         y_hat = x_expect @ beta
-        loss = mseloss(gt.T, y_hat.T)
-        loss.backward()
-        optim.step()
+        flex_loss = mseloss(gt.T, y_hat.T)
+        loss = flex_loss
+        loss_hist.append(torch.log2(loss).detach().clone())
+        print("optim epoch #", i, "(pid=", pid, ")", ' loss=', flex_loss.detach().item())
+        if auto_conv:
+            loss.backward()
+            optim.step()
+            sched.step()
 
     beta = np.array(beta).T
     beta = beta.reshape(list(og_shape[:-1]) + [design_matrix.shape[-1]])
     hemodynamic_est = np.array(conv1d.weight.clone().detach()).reshape(np.prod(conv1d.weight.shape))
-    return beta, hemodynamic_est
+    return beta, hemodynamic_est, loss_hist
 
 
 def contrast(beta_coef: np.ndarray, contrast_matrix: np.ndarray, pid=0) -> np.ndarray:
@@ -281,7 +264,7 @@ def contrast(beta_coef: np.ndarray, contrast_matrix: np.ndarray, pid=0) -> np.nd
     return contrasts
 
 
-def _pipe(d_mat, run, c_mat, mode, pid):
+def _pipe(d_mat, run, c_mat, mode, mion, auto_conv, tr, pid):
     """
     Single thread worker dispatch function.
     :param d_mat: design matrix from fsfast or local
@@ -289,14 +272,10 @@ def _pipe(d_mat, run, c_mat, mode, pid):
     :param c_mat: contrast test definition matrix
     :return:
     """
-    if mode == 'standard':
-        beta, res = mv_glm_regressor(d_mat, ts_smooth(run, kernel_std=.5))
-    elif mode == 'maximal_dynamic':
-        beta, res = maximal_dynamic_convolution_regressor(d_mat, ts_smooth(run, kernel_std=.5), pid=pid)
-    else:
-        raise ValueError("intra subject contrast mode must be either standard or maximal_dynamic")
+    beta, res, loss_hist = maximal_dynamic_convolution_regressor(d_mat, run, pid=pid, mion=mion, auto_conv=auto_conv,
+                                                                 tr=tr)
     contrasts = contrast(beta, c_mat, pid=pid)
-    return contrasts, res
+    return contrasts, res, loss_hist
 
 
 def _create_SNR_volume_wrapper(input_dir, noise_path, out_path, type='tSNR'):
@@ -345,83 +324,24 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
         res = p.starmap(_create_SNR_volume_wrapper, args)
 
 
-def create_design_matrix(param_file, subject_ids: List[str], subject_dir_paths: List[str], anal_name=None,
-                         mode='manual',
-                         tr=2.0, paradigm_type='blocked', funcstem='registered', convolve=False, aq_mode='bold'):
-    """
-    Creates an experiment design matrix. Either Uses fsfast functions or uses hemodynamic convolution functions defined
-    here (~10x faster)
-    :param convolve: whether to convolve the deign matrix with a built in hemodynamic function
-    :param param_file:
-    :param subject_ids:
-    :param subject_dir_paths:
-    :param anal_name:
-    :param mode:
-    :param tr:
-    :param paradigm_type:
-    :param funcstem:
-    :return:
-    """
-    if mode not in ['fsfast', 'manual']:
-        raise ValueError('mode must be either fsfast or manual')
-    if mode == 'fsfast':
-        subprocess.run(['mkanalysis-sess',
-                        '-analysis', anal_name,
-                        '-TR', str(tr),
-                        '-paradigm', param_file,
-                        '-event-related',
-                        '-native',
-                        '-nc', '3',
-                        '-gamma',
-                        '-fwhm', '1',
-                        '-funcstem', funcstem,
-                        '-refeventdur', '2.0',
-                        '-fsd', 'functional'], )
-        sid = ', '.join(subject_ids)
-        with open('./tmp_subject_ids.info', 'w') as f:
-            f.write(sid)
-        sloc = ', '.join(subject_dir_paths)
-        with open('./tmp_subject_loc.info', 'w') as f:
-            f.write(sloc)
-        subprocess.run(['selxavg-sess',
-                        '-analysis', anal_name,
-                        '-sf', './tmp_subject_ids.info',
-                        '-df', './tmp_subject_loc.info'])
-
-    elif mode == 'manual':
-        stimuli = pd.read_csv(param_file, delimiter=' ')
-        stimuli_list = list(stimuli['ID'])
-        encoder = OneHotEncoder(sparse=False)
-        design_matrix = encoder.fit_transform(np.array([stimuli_list]).reshape(-1, 1))
-        if convolve:
-            if aq_mode == 'bold':
-                design_matrix = hemodynamic_convolution(design_matrix, kernel='manual_bold', temporal_window=10)
-            elif aq_mode == 'mion':
-                design_matrix = hemodynamic_convolution(design_matrix, kernel='manual_mion', temporal_window=10)
-    return design_matrix
-
-
-def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int], convolve=False, aq_mode='bold'):
-    k = num_conditions
-    design_matrix = np.zeros((0, k))
+def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int],
+                                 convolve=False, aq_mode='bold'):
+    k = len(order)
+    design_matrix = np.zeros((0, num_conditions))
     for i in range(num_blocks):
-        block = np.zeros((block_length, k), dtype=float)
+        block = np.zeros((block_length, num_conditions), dtype=float)
         active_condition = order[i % k]
         block[:, active_condition] = 1
         design_matrix = np.concatenate([design_matrix, block], axis=0)
-    if convolve:
-        if aq_mode == 'bold':
-            design_matrix = hemodynamic_convolution(design_matrix, kernel='manual_bold', temporal_window=10)
-        elif aq_mode == 'mion':
-            design_matrix = hemodynamic_convolution(design_matrix, kernel='manual_mion', temporal_window=15)
     return design_matrix
 
 
 def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray], contrast_matrix: np.ndarray,
                            contrast_descriptors: List[str], output_dir: str, fname: str = 'registered.nii.gz',
-                           mode='standard', use_python_mp=False):
+                           mode='standard', mion=False, use_python_mp=False, auto_conv=False, tr=3):
     """
     Compute each desired contrast on the functional data in parallel.
+    :param mion:
     :param design_matrix: list of array of size conditions x num trs. length 1 if stim order same for all imas,
                           len equal to number of runs otherwise. order corresonds to ima order in run dirs.
     :param mode:
@@ -448,8 +368,10 @@ def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray
             brain_tensor = np.array(brain.get_fdata())
             exp_num_frames = design_matrices[i].shape[0]
             if brain_tensor.shape[-1] != exp_num_frames:
-                print("WARNIING: Loaded functional data (" + source_dir + ") must have number of frames equal to length of "
-                                 "active_condition map, not " + str(brain_tensor.shape[-1]) + ' and ' + str(exp_num_frames))
+                print(
+                    "WARNIING: Loaded functional data (" + source_dir + ") must have number of frames equal to length of "
+                                                                        "active_condition map, not " + str(
+                        brain_tensor.shape[-1]) + ' and ' + str(exp_num_frames))
                 continue
             run_stack.append(brain_tensor[None, :, :, :, :])
             affines.append(np.array(brain.affine)[None, :, :])
@@ -460,6 +382,9 @@ def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray
                                run_stack,
                                [contrast_matrix] * len(run_stack),
                                [mode] * len(run_stack),
+                               [mion] * len(run_stack),
+                               [auto_conv] * len(run_stack),
+                               [tr] * len(run_stack),
                                list(range(len(run_stack)))))
     if use_python_mp:
         with Pool() as p:
@@ -469,19 +394,22 @@ def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray
         res = []
         for i in range(len(full_run_params)):
             res.append(_pipe(*full_run_params[i]))
-    contrasts, hemo = list(zip(*res))
+    contrasts, hemo, loss_hists = list(zip(*res))
     avg_contrasts = np.mean(np.stack(contrasts, axis=0), axis=0)[0]
 
     print(avg_contrasts.shape)
     affine = np.concatenate(affines, axis=0).mean(axis=0)
     for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
-        cond = _norm_4d(cond)
         contrast_nii = nib.Nifti1Image(cond, affine=affine, header=header)
         nib.save(contrast_nii, os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii'))
-    fig, axs = plt.subplots(1)
+
+    fig, axs = plt.subplots(2)
     for i, h in enumerate(hemo):
-        axs.plot(h, label=i)
-    axs.legend()
+        axs[0].plot(h, label=i)
+    axs[0].legend()
+    if None not in loss_hists:
+        avg_loss_hist = np.sum(np.array(loss_hists), axis=0)
+        axs[1].plot(avg_loss_hist)
     fig.show()
     plt.show()
     return avg_contrasts
@@ -546,22 +474,87 @@ def create_contrast_surface(anatomical_white_surface: str,
 
     os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
 
-    # if not os.path.exists('../mri/orig.mgz'):
-    #     _create_dir_if_needed('./', 'mri')
-    #     shutil.copy(orig_high_res_anatomical, '../mri/orig.mgz')
-    # if not os.path.exists('../surf/lh.white'):
-    #     _create_dir_if_needed('./', 'surf')
-    #     shutil.copy(anatomical_white_surface, '../surf/lh.white')
-    subdivide_arg = str(1 / scale)
-    subprocess.run(['mri_convert', path, '-vs', subdivide_arg, subdivide_arg, subdivide_arg, path])
-    subprocess.run(['mri_convert', path, '-iis', '1', '-ijs', '1', '-iks', '1', path])
-    path_gz = os.path.join(output, 'tmp.nii.gz')
-    subprocess.run(['fslroi', path, path_gz, '0', '256', '0', '256', '0,', '256'])
+    subdivide_arg = str(1.01 / scale)
+    # subprocess.run(['fslroi', path, path_gz, '0', '256', '0', '256', '0,', '256'])
+    subprocess.run(['mri_convert', path, '-vs', subdivide_arg, subdivide_arg, subdivide_arg, path, '--out_type', 'nii'])
+    subprocess.run(['mri_convert', path, '-iis', '1', '-ijs', '1', '-iks', '1', path, '--out_type', 'nii'])
     overlay_out_path = os.path.join(output, 'sigsurface_' + hemi + '_' + out_desc + '.mgh')
-    subprocess.run(['mri_vol2surf', '--src', path_gz,
+    subprocess.run(['mri_vol2surf', '--src', path,
                     '--out', overlay_out_path,
                     '--hemi', hemi,
                     '--regheader', subject_id])
+
+
+def create_contrast_overlay_image(contrast_data, sig_thresh, saturation):
+    """
+    Turns a single contrast volume into volume with color channels on a 4th dimmension.
+    Positive contrsat in red (channel dim 0) negative in blue (channel_dim 1)
+    :param contrast_data:
+    :param sig_thresh:
+    :param saturation:
+    :return:
+    """
+    contrast_data = _norm_4d(contrast_data)
+    contrast_data[np.abs(contrast_data) < sig_thresh] = 0
+    pos_contrast = np.zeros_like(contrast_data)
+    neg_contrast = np.zeros_like(contrast_data)
+    pos_contrast[contrast_data > 0] = contrast_data[contrast_data > 0]
+    neg_contrast[contrast_data < 0] = contrast_data[contrast_data < 0]
+    pos_contrast[pos_contrast > saturation] = saturation
+    neg_contrast[neg_contrast < -1 * saturation] = -1 * saturation
+    pos_contrast = np.abs(pos_contrast)
+    pos_contrast[pos_contrast > 0] += sig_thresh
+    neg_contrast = np.abs(neg_contrast)
+    neg_contrast[neg_contrast > 0] += sig_thresh
+    mid_contrast = np.copy(neg_contrast) / 1.5
+    contrast_img = np.stack([pos_contrast, mid_contrast, neg_contrast], axis=3)
+    return contrast_img
+
+
+def create_slice_maps(function_reg_vol, anatomical, reg_contrast, sig_thresh=4, saturation=10):
+    """
+    :param saturation:
+    :param sig_thresh:
+    :param function_reg_vol: (w, h, d)
+    :param anatomical:  (w, h d)
+    :param reg_contrast: (w, h, d)
+    :return: len d List[w, h, c]  negative contrast on chan 2 (B) positive on chan 0 (R)
+    """
+    f_arr = nib.load(function_reg_vol).get_fdata()
+    a_arr = nib.load(anatomical).get_fdata()
+    contrast_data = nib.load(reg_contrast).get_fdata()
+    contrast_img = create_contrast_overlay_image(contrast_data, sig_thresh, saturation)
+    contrast_img = _set_data_range(contrast_img, 0, 105)
+    f_arr = np.stack([f_arr, f_arr, f_arr], axis=3)
+    std_f = np.std(f_arr.flatten())
+    a_arr = np.stack([a_arr, a_arr, a_arr], axis=3)
+    f_arr[f_arr > (4 * std_f)] = 4 * std_f
+    f_arr = _set_data_range(f_arr, 0, 150)
+    a_arr = _set_data_range(a_arr, 0, 150)
+    f_arr = f_arr + contrast_img
+    a_arr = a_arr + contrast_img
+    f_arr = np.transpose(f_arr, axes=[1, 0, 2, 3])
+    a_arr = np.transpose(a_arr, axes=[1, 0, 2, 3])
+
+    # slice
+    slices = [(f_arr[:, :, i, :].squeeze().astype(int), a_arr[:, :, i, :].squeeze().astype(int))
+              for i in range(18, f_arr.shape[2] - 10)]
+    fig, axs = plt.subplots(len(slices), 2)
+    fig.set_size_inches(8, (2 * len(slices)))
+    name = os.path.basename(reg_contrast).split('.')[0]
+    fig.suptitle(name + " Overlayed On Registered Epi (Left) and DS T1 (right) \n "
+                 "Coronal Slices (Posterior to Anterior) \n"
+                 "Threshold: " + str(sig_thresh) + " std dev, Saturation: " + str(saturation) + " std dev", y=.999)
+    fig.tight_layout(pad=2)
+    for i, slice_tup in enumerate(slices):
+        f_slice = slice_tup[0]
+        a_slice = slice_tup[1]
+        axs[i, 0].set_title("slice " + str(i + 18) + ' / ' + str(len(slices) + 28))
+        axs[i, 0].imshow(f_slice)
+        axs[i, 1].imshow(a_slice)
+    out_path = os.path.join(os.path.dirname(function_reg_vol), name + '_slice_comparison.jpg')
+    fig.savefig(out_path)
+    return out_path
 
 
 def _fit_model(model: GaussianMixture, data):

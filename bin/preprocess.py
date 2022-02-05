@@ -198,7 +198,7 @@ def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
 
 
 def motion_correction(input_dirs: List[str], ref_path: str, output: Union[None, str] = None, fname='f_sphinx.nii',
-                      check_rms=True, abs_threshold=1.5, var_threshold=.6) -> Union[List[str], None]:
+                      check_rms=True, abs_threshold=3, var_threshold=1) -> Union[List[str], None]:
     """
     preform fsl motion correction. If check rms is enabled will remove data where too much motion is detected.
     :param var_threshold:
@@ -296,7 +296,7 @@ def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_l
     return good
 
 
-def get_middle_frame(SOURCE: List[str], output=None, fname='f_sphinx.nii') -> str:
+def get_middle_frame(SOURCE: List[str], output=None, fname='f.nii.gz') -> str:
     """
     Returns a frame to in the middle of a session
     :param out: output path
@@ -453,7 +453,7 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
     reg.inputs.sigma_units = ['vox'] * 2
     reg.inputs.shrink_factors = [[2, 1], [3, 2, 1]][:len(transforms)]
     reg.inputs.use_estimate_learning_rate_once = [True] * len(transforms)
-    reg.inputs.use_histogram_matching = [across_modalities == False] * len(transforms)  # This is the default
+    reg.inputs.use_histogram_matching = [across_modalities==False] * len(transforms)  # This is the default
     reg.inputs.output_warped_image = outP
     reg.inputs
     print(reg.cmdline)
@@ -777,7 +777,7 @@ def center_nifti(source_dir:str, fname:str ='orig.mgz', output=None):
     nib.save(centered, output)
 
 
-def create_low_res_anatomical(source_dir:str, fname:str ='orig.mgz', output=None, factor=3):
+def create_low_res_anatomical(source_dir:str, fname:str ='orig.mgz', output=None, factor=2):
     if not output:
         output = os.path.join(source_dir, 'low_res.nii')
     factor = str(factor)
