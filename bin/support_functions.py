@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 from typing import List, Union
 
 import json
@@ -399,3 +400,47 @@ def load_white_surfs():
         shutil.copy(cur_surf_path, surf_proj_path)
         surfs.append(surf_proj_path)
     return surfs
+
+
+def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map, paradigm_file, fname='epi_masked.nii'):
+    out_paths = []
+    with open(paradigm_file, 'r') as f:
+        para_data = json.load(f)
+    with open(ima_order_map, 'r') as f:
+        ima_data = json.load(f)
+    block_length = para_data['block_length_trs']
+    block_orders = para_data['order_number_definitions']
+    print("Cannot use all runs to generate time series because of different orderings. While we could re-arrange and "
+          "stack the sequences, this will introduce artifacts that reduce the usefulnesss of looking at the time course.")
+    imas = [None]
+    while False in [ima in ima_data and ima_data[ima] == ima_data[imas[0]] for ima in imas]:
+        imas = input_control.int_list_input("enter IMA number of run(s) to use for timeseries. Must use the same order number. ")
+        imas = [str(ima) for ima in imas]
+
+    sess_dir = os.path.dirname(functional_dirs[0])
+    if len(imas) > 1:
+        func = os.path.join(sess_dir, 'avg_func.nii')
+        analysis.average_functional_data([f for f in functional_dirs if os.path.basename(f) in imas],
+                                         fname=fname,
+                                         output=func)
+    else:
+        func = os.path.join(sess_dir, imas[0], fname)
+
+    order_def = block_orders[str(ima_data[imas[0]])]
+
+    if type(contrast_files) is not list:
+        contrast_files = [contrast_files]
+
+    all_contrast = input_control.bool_input("Create auto rois for all contrasts?")
+    if not all_contrast:
+        print('select contrast to use:')
+        names = para_data['contrast_descriptions']
+        option = input_control.select_option_input(names)
+        contrast_files = [c for c in contrast_files if names[option] in c]
+    for contrast in contrast_files:
+        out_c = analysis.segment_get_time_course(contrast, func, block_length, order_def)
+        path = os.path.join(os.path.dirname(contrast), 'cleaned_' + os.path.basename(contrast))
+        nibabel.save(out_c, path)
+        out_paths.append(path)
+    plt.show()
+    return out_paths

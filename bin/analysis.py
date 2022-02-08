@@ -51,8 +51,8 @@ def _norm_4d(arr: np.ndarray):
     :param arr: input array
     :return: normalized array
     """
-    mean = np.mean(arr.flatten())
-    arr -= mean
+    # mean = np.mean(arr.flatten())
+    # arr -= mean
     norm_factor = np.std(arr.flatten())
     arr /= norm_factor
     return arr
@@ -563,9 +563,9 @@ def _fit_model(model: GaussianMixture, data):
     return assignments, bic
 
 
-def _segment_contrast_image(contrast_data, threshold=5., negative=False, size_thresh=5):
+def _segment_contrast_image(contrast_data, threshold=5., negative=False, size_thresh=7):
     # smooth over
-    smoothed = ts_smooth(contrast_data, temporal_smoothing=True, kernel_std=1)
+    smoothed = ts_smooth(contrast_data, temporal_smoothing=True, kernel_std=.6)
     segs = np.zeros_like(smoothed)
     if negative:
         segs[smoothed < threshold] = 1
@@ -608,7 +608,7 @@ def _plot_3d_scatter(rois, label_id, brain_box, ax, color, size_tresh=0):
     return ax
 
 
-def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, size_thresh=0):
+def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, colors, size_thresh=0):
     """
 
     :param num_rois:
@@ -619,7 +619,7 @@ def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, s
     :param cluster_max: maximum number of voxels
     :return:
     """
-    colors = ['grey', 'red', 'blue', 'cyan', 'purple', 'yellow', 'green', 'orange', 'pink', 'bronze']
+
     clust_idxs = np.nonzero(rois == label_id)
     if len(clust_idxs[0]) <= size_thresh:
         return ax
@@ -633,19 +633,25 @@ def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, s
     ax.plot(mean_ts + std_ts, c='gray')
     ax.set_title("ROI # " + str(label_id))
     ax.xaxis.set_ticks(np.arange(0, trs, block_length))
+    float_map = 1 / len(np.unique(block_order))
+    color_map = [0] * len(np.unique(block_order))
     for i, tr in enumerate(range(0, trs, block_length)):
-        c = colors[block_order[i % len(block_order)]]
+        condition = int(block_order[(i % len(block_order))])
+        c_pos = float(condition) * float_map
+        c = colors(c_pos)
+        color_map[condition] = c_pos
         ax.axvspan(tr, tr + block_length, color=c, alpha=0.5)
-    return ax
+    return ax, color_map
 
 
 def segment_get_time_course(contrast_file: str, functional_file: str, block_length, block_order):
     c_nii = nib.load(contrast_file)
     c_data = np.array(c_nii.get_fdata())
     c_data = _norm_4d(c_data)
+    assert np.isclose(np.std(c_data), 1, atol=1e-8)
     f_data = np.array(nib.load(functional_file).get_fdata())
-    pos_seg, num_pos_rois = _segment_contrast_image(c_data, threshold=np.std(c_data) * 2, negative=False)
-    neg_seg, num_neg_rois = _segment_contrast_image(c_data, threshold=np.std(c_data) * -2, negative=True)
+    pos_seg, num_pos_rois = _segment_contrast_image(c_data, threshold=4, negative=False)
+    neg_seg, num_neg_rois = _segment_contrast_image(c_data, threshold=-8, negative=True)
     mask = np.zeros_like(pos_seg)
     mask[pos_seg > 0] = 1
     mask[neg_seg > 0] += 1
@@ -655,6 +661,7 @@ def segment_get_time_course(contrast_file: str, functional_file: str, block_leng
     brain_area = brain_area[:, np.random.choice(brain_area.shape[1], 2000, replace=False)]
     fig_3d = plt.figure()
     ax3d = Axes3D(fig_3d)
+    colors = plt.get_cmap('hsv')
     for is_negative in [True, False]:
         if is_negative:
             seg = neg_seg
@@ -666,17 +673,18 @@ def segment_get_time_course(contrast_file: str, functional_file: str, block_leng
             num_rois = num_pos_rois
             color = 'red'
             desc = 'positive'
-        fig_ts, axs_ts = plt.subplots(num_rois - 1)
+        fig_ts, axs_ts = plt.subplots(num_rois)
         fig_ts.suptitle(desc + ' condition time series')
         fig_ts.set_size_inches(8, 1.5 * num_rois)
         fig_ts.tight_layout()
+        color_map = None
         for label_id in range(1, num_rois):
-            _get_roi_time_course(seg, label_id, f_data, axs_ts[label_id - 1], block_length, block_order)
+            _, color_map = _get_roi_time_course(seg, label_id, f_data, axs_ts[label_id - 1], block_length, block_order, colors)
             _plot_3d_scatter(seg, label_id, brain_area, ax3d, color)
         _plot_3d_scatter(seg, -1, brain_area, ax3d, 'black')
-        fig_ts.show()
-    fig_3d.show()
-    plt.show()
+    if color_map:
+        fig_ts.legend([plt.Line2D([0], [0], color=colors(i), lw=2, alpha=.6) for i in color_map],
+                      ['condition ' + str(i) for i in range(len(color_map))])
     seg = pos_seg + neg_seg
     all_seg = np.nonzero(seg != 0)
     cleaned_contrast = np.zeros_like(c_data)

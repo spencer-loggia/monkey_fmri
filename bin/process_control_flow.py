@@ -238,6 +238,9 @@ class DefaultSessionControlNet(BaseControlNet):
 
         self.network.add_node('slice_contrast_img', data=None, type='std_image', bipartite=0, complete=False, space='')
 
+        self.network.add_node('cleaned_contrast', data=None, type='volume', bipartite=0, complete=False, space='epi_native')
+        self.network.add_node('auto_rois', data=None, type='json', bipartite=0, complete=False, space='epi_native')
+
         # Define functional data processing nodes
 
         self.network.add_node('get_epi', argv=session_id, fxn='support_functions.get_epis', bipartite=1)
@@ -259,6 +262,7 @@ class DefaultSessionControlNet(BaseControlNet):
                               fxn='support_functions.add_to_subject_contrast', bipartite=1)
         self.network.add_node('register_3d_rep', fxn='support_functions.apply_warp', bipartite=1)
         self.network.add_node('contrast_slice_overlay', fxn='support_functions.create_slice_overlays', bipartite=1)
+        self.network.add_node('auto_roi_time_series', fxn='support_functions.segment_contrast_time_course', bipartite=1)
 
         # define edges (parameter / return values)
 
@@ -330,6 +334,18 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('ds_t1_masked', 'contrast_slice_overlay', order=1)
         self.network.add_edge('reg_contrast', 'contrast_slice_overlay', order=2)
         self.network.add_edge('contrast_slice_overlay', 'slice_contrast_img', order=0)
+
+        self.network.add_edge('reg_3d_epi_rep', 'contrast_slice_overlay', order=0)
+        self.network.add_edge('ds_t1_masked', 'contrast_slice_overlay', order=1)
+        self.network.add_edge('reg_contrast', 'contrast_slice_overlay', order=2)
+        self.network.add_edge('contrast_slice_overlay', 'slice_contrast_img', order=0)
+
+        self.network.add_edge('contrasts', 'auto_roi_time_series', order=0)
+        self.network.add_edge('epi_masked', 'auto_roi_time_series', order=1)
+        self.network.add_edge('ima_order_map', 'auto_roi_time_series', order=2)
+        self.network.add_edge('paradigm', 'auto_roi_time_series', order=3)
+        self.network.add_edge('auto_roi_time_series', 'cleaned_contrast', order=0)
+        self.network.add_edge('auto_roi_time_series', 'auto_rois', order=1)
 
         connected = list(nx.connected_components(self.network.to_undirected()))
         if len(connected) > 1:
