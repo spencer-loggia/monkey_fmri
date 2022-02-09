@@ -402,6 +402,36 @@ def load_white_surfs():
     return surfs
 
 
+def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, output, fname='epi_masked') -> np.ndarray:
+    """
+    Create a averaged 4d time series where stimuli presentation order is corrected for.
+    :return:
+    """
+    conditions = paradigm_data['condition_integerizer']
+    order_def = paradigm_data['order_number_definitions']
+    block_length = paradigm_data['block_length_trs']
+    w, h, d, _ = nibabel.load(os.path.join(functional_dirs[0], fname)).get_fdata().shape
+    num_conditions = len(conditions)
+    corrected_arr = np.zeros((w, h, d, block_length, num_conditions))
+    weight = np.zeros(len(conditions))
+    for func_dir in functional_dirs:
+        ima = os.path.basename(func_dir)
+        order_num = ima_order_data[ima]
+        order = order_def[str(order_num)]
+        func_nii = nibabel.load(os.path.join(func_dir, fname))
+        func_data = func_nii.get_fdata()
+        shape = func_data.shape
+        func_data = func_data.reshape(list(shape[:3]) + [block_length, len(order)]) # so we can easily index into individual blocks
+        for block, condition in enumerate(order):
+            weight[condition] += 1
+            corrected_arr[:, :, :, :, condition] += func_data[:, :, :, :, block]
+    corrected_arr = (corrected_arr.T / weight[:, None, None, None, None]).T
+    corrected_arr = corrected_arr.reshape((w, h, d, block_length * num_conditions))
+    corrected_nii = nibabel.Nifti1Image(corrected_arr, affine=func_nii.affine, header=func_nii.header)
+    nibabel.save(corrected_nii, output)
+    return output
+
+
 def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map, paradigm_file, fname='epi_masked.nii'):
     out_paths = []
     with open(paradigm_file, 'r') as f:
@@ -410,23 +440,30 @@ def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map,
         ima_data = json.load(f)
     block_length = para_data['block_length_trs']
     block_orders = para_data['order_number_definitions']
-    print("Cannot use all runs to generate time series because of different orderings. While we could re-arrange and "
-          "stack the sequences, this will introduce artifacts that reduce the usefulnesss of looking at the time course.")
-    imas = [None]
-    while False in [ima in ima_data and ima_data[ima] == ima_data[imas[0]] for ima in imas]:
-        imas = input_control.int_list_input("enter IMA number of run(s) to use for timeseries. Must use the same order number. ")
-        imas = [str(ima) for ima in imas]
-
+    num_conditions = len(para_data['condition_integerizer'])
+    correct_order = input_control.bool_input("Cannot use all runs as is to generate time series because of different "
+                                             "orderings. Do you want to re-arrange and stack the sequences? note that "
+                                             "this may introduce artifacts, otherwise select imas with the same "
+                                             "stimuli order to use.")
     sess_dir = os.path.dirname(functional_dirs[0])
-    if len(imas) > 1:
+    if correct_order:
         func = os.path.join(sess_dir, 'avg_func.nii')
-        analysis.average_functional_data([f for f in functional_dirs if os.path.basename(f) in imas],
-                                         fname=fname,
-                                         output=func)
+        func = order_corrected_functional(functional_dirs, ima_data, para_data, func, fname=fname)
+        order_def = list(range(num_conditions))
     else:
-        func = os.path.join(sess_dir, imas[0], fname)
+        imas = [None]
+        while False in [ima in ima_data and ima_data[ima] == ima_data[imas[0]] for ima in imas]:
+            imas = input_control.int_list_input("enter IMA number of run(s) to use for timeseries. Must use the same order number. ")
+            imas = [str(ima) for ima in imas]
+        if len(imas) > 1:
+            func = os.path.join(sess_dir, 'avg_func.nii')
+            analysis.average_functional_data([f for f in functional_dirs if os.path.basename(f) in imas],
+                                             fname=fname,
+                                             output=func)
+        else:
+            func = os.path.join(sess_dir, imas[0], fname)
 
-    order_def = block_orders[str(ima_data[imas[0]])]
+        order_def = block_orders[str(ima_data[imas[0]])]
 
     if type(contrast_files) is not list:
         contrast_files = [contrast_files]
