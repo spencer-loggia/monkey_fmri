@@ -192,8 +192,11 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
                                           epochs=30, pid=0, mion=False, auto_conv=True, tr=3):
     og_shape = gt.shape
     conv1d = torch.nn.Conv1d(kernel_size=conv_size, in_channels=1, out_channels=1, padding=conv_pad, bias=False)
+    deconv1d = torch.nn.Conv1d(kernel_size=conv_size, in_channels=1, out_channels=1, padding=conv_pad, bias=False)
+    deconv_weight = torch.ones((1, 1, conv_size)) / conv_size
     if mion:
         def_hrf = mion_response_function(tr, conv_size * tr)
+        deconv_weight = -1 * deconv_weight
     else:
         def_hrf = bold_response_function(tr, time_length=conv_size * tr)
     if auto_conv:
@@ -202,27 +205,34 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
         weight = def_hrf.clone()
         epochs = 1
 
-    # weight[math.ceil(conv1d.weight.shape[0] / 2):] = 0 # maintain causality
     conv1d.weight = torch.nn.Parameter(weight, requires_grad=True)
-    design_matrix = torch.from_numpy(design_matrix)[:, None,
-                    :].float()  # design matrix should be (k, t) so that k conditions is treated as batch by torch convention
+    deconv1d.weight = torch.nn.Parameter(deconv_weight, requires_grad=True)
+    design_matrix = torch.from_numpy(design_matrix)[:, None, :].float()  # design matrix should be (k, t) so that k conditions is treated as batch by torch convention
     if np.ndim(gt) > 1:
         gt = gt.reshape(-1, design_matrix.shape[0]).T  # reshape to all time, LL VOXELS
     gt = torch.from_numpy(gt).float()
     # linear = torch.nn.Linear(in_features=design_matrix.shape[-1], out_features=gt.shape[1], bias=False)
     beta = torch.normal(mean=.5, std=.2, size=[design_matrix.shape[-1], gt.shape[1]], requires_grad=False).float()
     optim = torch.optim.SGD(lr=.0001, params=list(conv1d.parameters()))
+    optim_deconv = torch.optim.SGD(lr=.01, params=list(deconv1d.parameters()))
     sched = torch.optim.lr_scheduler.StepLR(optimizer=optim, step_size=15, gamma=.1)
+    deconv_sched = torch.optim.lr_scheduler.StepLR(optimizer=optim, step_size=7, gamma=.1)
     mseloss = torch.nn.MSELoss()
+    loss_deconv = torch.nn.MSELoss()
     # mseloss = _ssqrt_lfxn
     print('Starting optimization routine... (pid=', pid, ')')
 
     def pred_seq(dmat):
+        # optim_deconv.zero_grad()
         xexp = conv1d(dmat.T).T
         if xexp.shape != dmat.shape:
             raise ValueError("Convolution result must have same dimension as design matrix (" +
                              str(dmat.shape) + ") , not " + str(xexp.shape) +
                              ". Adjust conv size and padding size.")
+        # deconv_loss = mse_loss_deconv(dmat_exp, dmat)
+        # deconv_loss.backward()
+        # optim_deconv.step()
+        # deconv_sched.step()
         xexp = xexp.squeeze()  # remove channel dim for conv
         y_hat = xexp @ beta  # time is now treated as the batch, we do (t x k) * (k x v) -> (t x v) where v is all voxels
         return xexp, y_hat
@@ -231,6 +241,7 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     for i in range(epochs):
         # expectation
         optim.zero_grad()
+        optim_deconv.zero_grad()
         x_expect, y_hat = pred_seq(design_matrix)
         # analytical maximization
         with torch.no_grad():
@@ -239,16 +250,27 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
         flex_loss = mseloss(gt.T, y_hat.T)
         loss = flex_loss
         loss_hist.append(torch.log2(loss).detach().clone())
-        print("optim epoch #", i, "(pid=", pid, ")", ' loss=', flex_loss.detach().item())
         if auto_conv:
             loss.backward()
             optim.step()
             sched.step()
+        optim.zero_grad()
+        optim_deconv.zero_grad()
+        # deconvolution estimate update
+        with torch.no_grad():
+            xexp = conv1d(design_matrix.T).T
+        dmat_exp = deconv1d(xexp.T).T
+        d_loss = loss_deconv(dmat_exp, design_matrix)
+        d_loss.backward()
+        optim_deconv.step()
+        deconv_sched.step()
+        print("optim epoch #", i, "(pid=", pid, ")", ' loss=', flex_loss.detach().item(), 'deconvolve loss=', d_loss.detach().item())
 
     beta = np.array(beta).T
     beta = beta.reshape(list(og_shape[:-1]) + [design_matrix.shape[-1]])
     hemodynamic_est = np.array(conv1d.weight.clone().detach()).reshape(np.prod(conv1d.weight.shape))
-    return beta, hemodynamic_est, loss_hist
+    deconv = np.array(deconv1d.weight.clone().detach()).reshape(np.prod(deconv1d.weight.shape))
+    return beta, hemodynamic_est, loss_hist, deconv
 
 
 def contrast(beta_coef: np.ndarray, contrast_matrix: np.ndarray, pid=0) -> np.ndarray:
@@ -272,10 +294,10 @@ def _pipe(d_mat, run, c_mat, mode, mion, auto_conv, tr, pid):
     :param c_mat: contrast test definition matrix
     :return:
     """
-    beta, res, loss_hist = maximal_dynamic_convolution_regressor(d_mat, run, pid=pid, mion=mion, auto_conv=auto_conv,
+    beta, res, loss_hist, deconv = maximal_dynamic_convolution_regressor(d_mat, run, pid=pid, mion=mion, auto_conv=auto_conv,
                                                                  tr=tr)
     contrasts = contrast(beta, c_mat, pid=pid)
-    return contrasts, res, loss_hist
+    return contrasts, res, loss_hist, deconv
 
 
 def _create_SNR_volume_wrapper(input_dir, noise_path, out_path, type='tSNR'):
@@ -343,7 +365,7 @@ def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray
     Compute each desired contrast on the functional data in parallel.
     :param mion:
     :param design_matrix: list of array of size conditions x num trs. length 1 if stim order same for all imas,
-                          len equal to number of runs otherwise. order corresonds to ima order in run dirs.
+                          len equal to number of runs otherwise. order corresponds to ima order in run dirs.
     :param mode:
     :param run_dirs: locations of the functional runs
     :param contrast_matrix: The contrast test definitions.
@@ -394,8 +416,8 @@ def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray
         res = []
         for i in range(len(full_run_params)):
             res.append(_pipe(*full_run_params[i]))
-    contrasts, hemo, loss_hists = list(zip(*res))
-    avg_contrasts = np.mean(np.stack(contrasts, axis=0), axis=0)[0]
+    contrasts, hemo, loss_hists, deconvs = list(zip(*res))
+    avg_contrasts = np.sum(np.stack(contrasts, axis=0), axis=0)[0]
 
     print(avg_contrasts.shape)
     affine = np.concatenate(affines, axis=0).mean(axis=0)
@@ -403,16 +425,23 @@ def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray
         contrast_nii = nib.Nifti1Image(cond, affine=affine, header=header)
         nib.save(contrast_nii, os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii'))
 
-    fig, axs = plt.subplots(2)
+    fig, axs = plt.subplots(3)
     for i, h in enumerate(hemo):
         axs[0].plot(h, label=i)
     axs[0].legend()
+    avg_hemo = np.stack(hemo, axis=0).mean(axis=0)
+    avg_deconv = np.stack(deconvs, axis=0).mean(axis=0)
+    axs[1].plot(avg_deconv)
+    hemo_path = os.path.join(output_dir, 'hrf_est.npz')
+    deconv_path = os.path.join(output_dir, 'deconvolution_est.npz')
+    np.save(hemo_path, avg_hemo)
+    np.save(deconv_path, avg_deconv)
     if None not in loss_hists:
         avg_loss_hist = np.sum(np.array(loss_hists), axis=0)
-        axs[1].plot(avg_loss_hist)
+        axs[2].plot(avg_loss_hist)
     fig.show()
     plt.show()
-    return avg_contrasts
+    return avg_contrasts, hemo_path, deconv_path
 
 
 def _find_scale_factor(high_res: np.ndarray, low_res: np.ndarray):
@@ -429,6 +458,13 @@ def _find_scale_factor(high_res: np.ndarray, low_res: np.ndarray):
         return prod[0]
     else:
         raise ValueError('dimension should have been scaled evenly here')
+
+
+def _scale_and_standardize(scale, path):
+    subdivide_arg = str(1 / scale)
+    subprocess.run(['mri_convert', path, '-vs', subdivide_arg, subdivide_arg, subdivide_arg, path, '--out_type', 'nii'])
+    subprocess.run(['mri_convert', path, '-iis', '1', '-ijs', '1', '-iks', '1', path, '--out_type', 'nii'])
+    return path
 
 
 def create_contrast_surface(anatomical_white_surface: str,
@@ -474,15 +510,39 @@ def create_contrast_surface(anatomical_white_surface: str,
 
     os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
 
-    subdivide_arg = str(1.01 / scale)
     # subprocess.run(['fslroi', path, path_gz, '0', '256', '0', '256', '0,', '256'])
-    subprocess.run(['mri_convert', path, '-vs', subdivide_arg, subdivide_arg, subdivide_arg, path, '--out_type', 'nii'])
-    subprocess.run(['mri_convert', path, '-iis', '1', '-ijs', '1', '-iks', '1', path, '--out_type', 'nii'])
+    path = _scale_and_standardize(scale, path)
     overlay_out_path = os.path.join(output, 'sigsurface_' + hemi + '_' + out_desc + '.mgh')
     subprocess.run(['mri_vol2surf', '--src', path,
                     '--out', overlay_out_path,
                     '--hemi', hemi,
                     '--regheader', subject_id])
+
+
+def labels_to_roi_mask(label_dir, hemi, out_dir, t1, subject_id) -> Tuple[str, list]:
+    """
+    creates a binary mask in volume space for each label.
+    :param label_dir:
+    :param hemi:
+    :param out_dir:
+    :param subject_id:
+    :return:
+    """
+    os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
+    if hemi not in ['rh', 'lh']:
+        raise ValueError('Hemi must be one of rh or lh.')
+    for f in os.listdir(label_dir):
+        output = os.path.join(out_dir, f.split('.')[0] + '.nii')
+        if '.label' in f and hemi in f:
+            subprocess.run(['mri_label2vol',
+                            '--label', os.path.join(label_dir, f),
+                            '--regheader', t1,
+                            '--temp', t1,
+                            '--proj', 'frac', '0', '1', '.1',
+                            '--hemi', hemi,
+                            '--subject', subject_id,
+                            '--o', output])
+    return out_dir
 
 
 def create_contrast_overlay_image(contrast_data, sig_thresh, saturation):
@@ -511,7 +571,7 @@ def create_contrast_overlay_image(contrast_data, sig_thresh, saturation):
     return contrast_img
 
 
-def create_slice_maps(function_reg_vol, anatomical, reg_contrast, sig_thresh=4, saturation=10):
+def create_slice_maps(function_reg_vol, anatomical, reg_contrast, sig_thresh=10, saturation=15):
     """
     :param saturation:
     :param sig_thresh:
@@ -524,15 +584,16 @@ def create_slice_maps(function_reg_vol, anatomical, reg_contrast, sig_thresh=4, 
     a_arr = nib.load(anatomical).get_fdata()
     contrast_data = nib.load(reg_contrast).get_fdata()
     contrast_img = create_contrast_overlay_image(contrast_data, sig_thresh, saturation)
-    contrast_img = _set_data_range(contrast_img, 0, 105)
+    contrast_img = _set_data_range(contrast_img, 0, 255)
     f_arr = np.stack([f_arr, f_arr, f_arr], axis=3)
     std_f = np.std(f_arr.flatten())
     a_arr = np.stack([a_arr, a_arr, a_arr], axis=3)
     f_arr[f_arr > (4 * std_f)] = 4 * std_f
-    f_arr = _set_data_range(f_arr, 0, 150)
-    a_arr = _set_data_range(a_arr, 0, 150)
-    f_arr = f_arr + contrast_img
-    a_arr = a_arr + contrast_img
+    f_arr = _set_data_range(f_arr, 0, 255)
+    a_arr = _set_data_range(a_arr, 0, 255)
+    con_idxs = contrast_img != 0
+    f_arr[con_idxs] = contrast_img[con_idxs]
+    a_arr[con_idxs] = contrast_img[con_idxs]
     f_arr = np.transpose(f_arr, axes=[1, 0, 2, 3])
     a_arr = np.transpose(a_arr, axes=[1, 0, 2, 3])
 
@@ -608,7 +669,7 @@ def _plot_3d_scatter(rois, label_id, brain_box, ax, color, size_tresh=0):
     return ax
 
 
-def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, colors, size_thresh=0):
+def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, colors, size_thresh=0, roi_name=None, ts_name=''):
     """
 
     :param num_rois:
@@ -627,11 +688,10 @@ def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, c
     spatial_flattened = clust_ts_vox.reshape(-1, clust_ts_vox.shape[-1])
     mean_ts = np.mean(spatial_flattened, axis=0)
     trs = mean_ts.shape[0]
-    std_ts = np.std(spatial_flattened, axis=0)
-    ax.plot(mean_ts, c='blue')
-    ax.plot(mean_ts - std_ts, c='gray')
-    ax.plot(mean_ts + std_ts, c='gray')
-    ax.set_title("ROI # " + str(label_id))
+    ax.plot(mean_ts, label=ts_name)
+    if roi_name is None:
+        name = str(label_id)
+    ax.set_title("ROI " + roi_name)
     ax.xaxis.set_ticks(np.arange(0, trs, block_length))
     float_map = 1 / len(np.unique(block_order))
     color_map = [0] * len(np.unique(block_order))
@@ -640,8 +700,54 @@ def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, c
         c_pos = float(condition) * float_map
         c = colors(c_pos)
         color_map[condition] = c_pos
-        ax.axvspan(tr, tr + block_length, color=c, alpha=0.5)
-    return ax, color_map
+        ax.axvspan(tr, tr + block_length, color=c, alpha=0.3)
+    return mean_ts, ax, color_map
+
+
+def get_condition_time_series_comparision(functional_dirs, block_length, ima_order_num_map,
+                                          order_num_defs, target_condition, output,
+                                          fname='epi_masked.nii', pre_onset_trs=6, post_offset_trs=18):
+    """
+    Goal is to take a set of epis that were recorded with different stimuli presentation order (needs to be a block
+    cesign) and create a new functional file that compares the waveform of the functional blog with an average over
+    other activity, while still capturing some of the temporal dynamics.
+    :param functional_dirs:
+    :param block_length:
+    :param ima_order_num_map:
+    :param order_num_defs:
+    :param target_condition:
+    :param output:
+    :param fname:
+    :param pre_onset_trs:
+    :param post_offset_trs:
+    :return:
+    """
+    total_length = pre_onset_trs + block_length + post_offset_trs
+    w, h, d, _ = nib.load(os.path.join(functional_dirs[0], fname)).get_fdata().shape
+    corrected_arr = np.zeros((w, h, d, total_length))
+    avg_count = 0
+    for func_dir in functional_dirs:
+        ima = os.path.basename(func_dir)
+        order_num = ima_order_num_map[ima]
+        cond_seq = order_num_defs[str(order_num)]
+        cond_idxs = np.array([i for i in range(len(cond_seq)) if cond_seq[i] == target_condition])
+        onset_trs = cond_idxs * block_length
+        data_nii = nib.load(os.path.join(func_dir, fname))
+        data = data_nii.get_fdata()
+        padded_data = np.pad(data, pad_width=((0, 0), (0, 0), (0, 0), (pre_onset_trs, post_offset_trs)), mode='mean')
+        # start ad stop below are adjusted to account for padding
+        start_trs = onset_trs
+        stop_trs = pre_onset_trs + onset_trs + block_length + post_offset_trs
+        for i in range(start_trs.shape[0]):
+            avg_count += 1
+            start = start_trs[i]
+            stop = stop_trs[i]
+            local_data = padded_data[:, :, :, start:stop]
+            corrected_arr += local_data
+    corrected_arr /= avg_count
+    order_compare_nifti = nib.Nifti1Image(corrected_arr, affine=data_nii.affine, header=data_nii.header)
+    nib.save(order_compare_nifti, output)
+    return output
 
 
 def segment_get_time_course(contrast_file: str, functional_file: str, block_length, block_order):
@@ -679,7 +785,7 @@ def segment_get_time_course(contrast_file: str, functional_file: str, block_leng
         fig_ts.tight_layout()
         color_map = None
         for label_id in range(1, num_rois):
-            _, color_map = _get_roi_time_course(seg, label_id, f_data, axs_ts[label_id - 1], block_length, block_order, colors)
+            _, _, color_map = _get_roi_time_course(seg, label_id, f_data, axs_ts[label_id - 1], block_length, block_order, colors)
             _plot_3d_scatter(seg, label_id, brain_area, ax3d, color)
         _plot_3d_scatter(seg, -1, brain_area, ax3d, 'black')
     if color_map:

@@ -25,7 +25,7 @@ class Project:
             self.project_config['project_name'] = project_name
             self.project_config['paradigms'] = {}
             self.project_config['subjects'] = []
-            self.project_config['data_map'] = {}  # subjects -> paradigms -> session_ids / run nums
+            self.project_config['data_map'] = {}  # paradigms -> subjects ->  session_ids / run nums
             self.save_project_config()
 
     def add_subject_interactive(self):
@@ -34,7 +34,8 @@ class Project:
         if choice == len(self.project_config['subjects']):
             name = input("Enter subject name: ")
             self.project_config['subjects'].append(name)
-            self.project_config['data_map'][name] = {}
+            for para in self.project_config['data_map']:
+                self.project_config['data_map'][para][name] = {}
         else:
             name = self.project_config['subjects'][choice]
         subject_dir = _create_dir_if_needed(os.path.join(self.project_config['project_root'], 'subjects'), name)
@@ -51,6 +52,17 @@ class Project:
         subject_pipe.control_loop(subj_config_path)
         os.chdir(self.project_config['project_root'])
         self.save_project_config()
+
+    def _sync_paradigms_to_data_map(self):
+        """
+        Utility function to assist with the v3 addition of data map extra project state tracker
+        :return:
+        """
+        for paradigm in self.project_config['paradigms']:
+            if paradigm not in self.project_config['data_map']:
+                self.project_config['data_map'][paradigm] = {subj: {}
+                                                             for subj in self.project_config['subjects']}
+
 
     def save_project_config(self):
         out_path = os.path.join(self.project_config['project_root'], 'config.json')

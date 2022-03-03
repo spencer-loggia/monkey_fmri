@@ -1,5 +1,6 @@
-import matplotlib.pyplot as plt
-from typing import List, Union
+
+import torch
+from typing import List, Union, Tuple
 
 import json
 import nibabel
@@ -12,6 +13,11 @@ import analysis
 import unpack
 import fnmatch
 import numpy as np
+
+import matplotlib
+import matplotlib.pyplot as plt
+from cycler import cycler
+matplotlib.rcParams['axes.prop_cycle'] = cycler(color='brgcmyk')
 
 # subject support function must be operating with working directory appropriately set
 
@@ -84,19 +90,58 @@ def get_epis(*argv):
     return SOURCE
 
 
-def downsample_anatomical(inpath):
+def downsample_anatomical(inpath, factor=2, out_dir=None, affine_scale=1, resample='interpolate'):
+    """
+    Resample should be either 'interpolate' or 'nearest'
+    :param inpath:
+    :param factor:
+    :param out_dir:
+    :param change_affine_scale:
+    :param resample:
+    :return:
+    """
     subj_root = os.environ.get('FMRI_WORK_DIR')
     source_dir = os.path.dirname(inpath)
     name = os.path.basename(inpath)
-    factor = float(input("enter factor to downsample by (e.g. '2' will create a half sized anatomical on all dimmensions)"))
     out_name = 'ds_' + name.split('.')[0] + '.nii'
-    output_dir = preprocess._create_dir_if_needed(subj_root, 'mri')
+    if out_dir is None:
+        output_dir = preprocess._create_dir_if_needed(subj_root, 'mri')
+    else:
+        output_dir = out_dir
     output = os.path.join(output_dir, out_name)
-    preprocess.create_low_res_anatomical(source_dir, name, output, factor=factor)
+    preprocess.create_low_res_anatomical(source_dir, name, output, factor=factor, affine_scale=affine_scale, resample=resample)
     return output
 
 
+def downsample_vol_rois(roi_dict, ds_roi_dict, factor=2, affine_scale=1, resample='nearest', output_dir=None):
+    options = list(roi_dict)
+    choice = input_control.select_option_input(options)
+    roi_set_name = options[choice]
+    roi_set_path = roi_dict[roi_set_name]
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    if output_dir is None:
+        output_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set_name), 'ds_roi_vols')
+    for roi_file in os.listdir(roi_set_path):
+        if '.nii' in roi_file:
+            out = os.path.join(output_dir, roi_file)
+            preprocess.create_low_res_anatomical(roi_set_path, roi_file, out, factor=factor, affine_scale=affine_scale, resample=resample)
+    ds_roi_dict[roi_set_name] = output_dir
+    return ds_roi_dict
+
+
+def downsample_vol_rois_cmdline_wrap(dir, factor=2, affine_scale=1, resample='nearest', output_dir=None):
+    roi_dict = {os.path.basename(dir): dir}
+    out_dict = {}
+    return downsample_vol_rois(roi_dict, out_dict, factor=factor, affine_scale=affine_scale, resample=resample, output_dir=output_dir)
+
+
 def coreg_wrapper(source_space_vol_path, target_space_vol_path):
+    """
+
+    :param source_space_vol_path:
+    :param target_space_vol_path:
+    :return: forward_transform_path, inverse_transform_path
+    """
     out = os.path.join(os.path.dirname(source_space_vol_path), 'coreg_3df.nii')
     return preprocess.antsCoReg(target_space_vol_path,
                                 source_space_vol_path,
@@ -105,30 +150,60 @@ def coreg_wrapper(source_space_vol_path, target_space_vol_path):
                                 n_jobs=2)
 
 
-def apply_warp(source, vol_in_target_space, forward_gross_transform_path, fine_transform_path):
+def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None, type_code=0, dim=3):
     if type(source) is not list:
         source = [source]
-    transforms = [forward_gross_transform_path, fine_transform_path]
-    to_invert = [False, False]
+    transforms = [fine_transform_path, forward_gross_transform_path]
+    transforms = [t for t in transforms if t is not None]
+    to_invert = [False] * len(transforms)
     out_paths = []
     for s in source:
         out = os.path.join(os.path.dirname(s), 'reg_' + os.path.basename(s))
         preprocess.antsApplyTransforms(s, vol_in_target_space, out, transforms, 'Linear',
-                                       img_type_code=0, invertTrans=to_invert)
+                                       img_type_code=type_code, dim=dim, invertTrans=to_invert)
         out_paths.append(out)
     if len(out_paths) == 1:
         out_paths = out_paths[0]
     return out_paths
 
 
-def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path):
-    out = os.path.join(os.path.dirname(vol_in_target_space), 'inverse_trans_' + os.path.basename(source))
+def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, out=None):
+    """
+    TODO: TEST TRANSFORM ORDRING!!
+    :param source:
+    :param vol_in_target_space:
+    :param forward_gross_transform_path:
+    :param reverse_fine_transform_path:
+    :param out:
+    :return:
+    """
+    if out is None:
+        out = os.path.join(os.path.dirname(vol_in_target_space), 'inverse_trans_' + os.path.basename(source))
     inverse_transforms = [reverse_fine_transform_path, forward_gross_transform_path]
     to_invert = [False, True]
     preprocess.antsApplyTransforms(source, vol_in_target_space, out, inverse_transforms, 'Linear',
                                    img_type_code=0, invertTrans=to_invert)
     return out
 
+
+def apply_warp_inverse_vol_roi_dir(ds_vol_roi_dict, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, func_space_rois_dict):
+    """
+    Slated for removal
+    :return:
+    """
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    options = list(ds_vol_roi_dict)
+    choice = input_control.select_option_input(options)
+    roi_set_name = options[choice]
+    roi_set_path = ds_vol_roi_dict[roi_set_name]
+    output_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois'), 'func_space_rois')
+    for roi_file in os.listdir(roi_set_path):
+        if '.nii' in roi_file:
+            f = os.path.join(roi_set_path, roi_file)
+            out = os.path.join(output_dir, roi_file)
+            apply_warp_inverse(f, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, out=out)
+    func_space_rois_dict[roi_set_name] = output_dir
+    return func_space_rois_dict
 
 def apply_binary_mask_functional(source, mask, fname='moco.nii.gz'):
     for run_dir in source:
@@ -150,10 +225,15 @@ def apply_binary_mask_vol(src_vol, mask):
 
 def create_slice_overlays(function_reg_vol, anatomical, reg_contrasts):
     out_paths = []
+    sig_thresh = float(input("enter significance threshold (std. dev.): "))
+    sig_sat = float(input("enter significance saturation point (std. dev.): "))
+    if sig_sat < sig_thresh or sig_thresh < 0:
+        raise ValueError("Saturation point must be greater than threshold, threshold must be positive")
     if type(reg_contrasts) is not list:
         reg_contrasts = [reg_contrasts]
     for contrast in reg_contrasts:
-        out_paths.append(analysis.create_slice_maps(function_reg_vol, anatomical, contrast))
+        out_paths.append(analysis.create_slice_maps(function_reg_vol, anatomical, contrast,
+                                                    sig_thresh=sig_thresh, saturation=sig_sat))
     return out_paths
 
 
@@ -173,9 +253,15 @@ def convert_to_sphinx_vol_wrap(src):
     return out_path
 
 
-def itk_manual(epi_rep, template):
-    out_dir = os.path.dirname(epi_rep)
-    return preprocess._itkSnapManual(template, epi_rep, out_dir)
+def itk_manual(source_vol, template):
+    """
+
+    :param source_vol: source vol
+    :param template: target vol
+    :return: tuple(transform_path, transformed_nii_path)
+    """
+    out_dir = os.path.dirname(source_vol)
+    return preprocess._itkSnapManual(template, source_vol, out_dir)
 
 
 def _define_contrasts(condition_integerizer, num_conditions):
@@ -200,6 +286,9 @@ def _define_contrasts(condition_integerizer, num_conditions):
 
 def _create_paradigm():
     subj_root = os.environ.get('FMRI_WORK_DIR')
+    proj_config = os.path.join(subj_root, '..', 'config.json')
+    with open(proj_config, 'r') as f:
+        proj_data = json.load(f)
     para_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, '../..'), 'paradigms')
     print('Constructing new paradigm definition json')
     para_def_dict = {}
@@ -233,6 +322,9 @@ def _create_paradigm():
     config_file_path = os.path.join(para_dir, name + '_experiment_config.json')
     with open(config_file_path, 'w') as f:
         json.dump(para_def_dict, f, indent=4)
+    proj_data['data_map'][name] = {subj: {} for subj in proj_data['subjects']}
+    with open(proj_config, 'w') as f:
+        json.dump(proj_data, f, indent=4)
     print("Successfully saved experiment / paradigm configuration json at", config_file_path)
     return para_def_dict, config_file_path
 
@@ -312,7 +404,7 @@ def create_contrast(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     return contrast_paths
 
 
-def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, *argv):
+def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, functional, ima_order_path, *argv):
     subj_root = os.environ.get('FMRI_WORK_DIR')
     session_id = str(argv[0])
     with open(paradigm_path, 'r') as f:
@@ -336,8 +428,15 @@ def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, *argv):
     subject = os.path.basename(subj_root)
     with open(proj_config_path, 'r') as f:
         proj_config = json.load(f)
-    if paradigm_data['name'] in proj_config['data_map'][subject]:
-        proj_config['data_map'][subject][paradigm_data['name']]['sessions_included'].append(session_id)
+    session_net_path = os.path.join(subj_root, 'sessions', session_id, 'session_net.json')
+
+    session_info = {'imas_used': [os.path.basename(f) for f in functional],
+                    'session_net': session_net_path,
+                    'ima_order_map': ima_order_path}
+    proj_config['data_map'][paradigm_data['name']][subject][session_id] = session_info
+    with open(proj_config_path, 'w') as f:
+        json.dump(proj_config, f, indent=4)
+
 
 
 def generate_subject_overlays(source, white_surfs, t1_path, ds_t1_path):
@@ -377,6 +476,51 @@ def generate_subject_overlays(source, white_surfs, t1_path, ds_t1_path):
                                              hemi=hemi, subject_id='.')
 
 
+def define_surface_rois(surface_overlays: list, surf_labels: dict):
+    """
+    expects surface labels to be an roi_set -> surf_label_dir dict
+    :param surface_overlays:
+    :param surf_labels:
+    :return:
+    """
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    preprocess._create_dir_if_needed(subj_root, 'rois')
+    roi_set = input("Name the roi set you are creating. e.g. face-areas: ")
+    preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois'), roi_set)
+    preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set), 'surf_labels')
+    print("ROI labeling on surface must be done graphically in freeview. \n"
+          "1. Open freeview and load this subjects rh.inflated surface and lh.infalated surface. \n"
+          "2. Load surface overlays to guide roi creation"
+          "3. create labels for each roi and give an informative name."
+          "4. save the rois in \'" + subj_root + "/rois/" + roi_set + "/surf_labels\'")
+    surf_labels[roi_set] = os.path.join(subj_root, 'rois', roi_set, 'surf_labels')
+    input('done? ')
+    return surf_labels
+
+
+def surf_labels_to_vol_mask(surf_labels: dict, white_surface, t1, ds_t1, vol_rois: dict) -> dict:
+    """
+    Takes dictionary keyed on roi set names and returns the vol roi set dict amended to include new vol generated from surface labels.
+    :param vol_rois:
+    :param surf_labels:
+    :param white_surface:
+    :param t1:
+    :param ds_t1:
+    :return:
+    """
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    roi_options = list(surf_labels.keys())
+    choice = input_control.select_option_input(roi_options)
+    roi_set_name = roi_options[choice]
+    roi_surf_dir = surf_labels[roi_set_name]
+    hemis = ['lh', 'rh']
+    out_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set_name), 'vol_rois')
+    for hemi in hemis:
+        analysis.labels_to_roi_mask(roi_surf_dir, hemi, out_dir, t1, subject_id='.')
+    vol_rois[roi_set_name] = out_dir
+    return vol_rois
+
+
 def load_t1_data():
     subj_root = os.environ.get('FMRI_WORK_DIR')
     cur_t1_path = input_control.dir_input("enter path to t1: ")
@@ -402,9 +546,10 @@ def load_white_surfs():
     return surfs
 
 
-def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, output, fname='epi_masked') -> np.ndarray:
+def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, output, deconv_weight, fname='epi_masked') -> np.ndarray:
     """
-    Create a averaged 4d time series where stimuli presentation order is corrected for.
+    Create a averaged 4d time series where stimuli presentation order is corrected for,
+    by de-convolving, rearranging, stacking, then re-convolving.
     :return:
     """
     conditions = paradigm_data['condition_integerizer']
@@ -412,8 +557,11 @@ def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, o
     block_length = paradigm_data['block_length_trs']
     w, h, d, _ = nibabel.load(os.path.join(functional_dirs[0], fname)).get_fdata().shape
     num_conditions = len(conditions)
-    corrected_arr = np.zeros((w, h, d, block_length, num_conditions))
-    weight = np.zeros(len(conditions))
+    corrected_arr = torch.zeros((w, h, d, block_length, num_conditions))
+    weight = torch.zeros(len(conditions))
+    deconv_weight = torch.from_numpy(deconv_weight)
+    deconv = torch.nn.Conv1d(kernel_size=deconv_weight.shape[0], padding=torch.floor(deconv_weight.shape[0] / 2), in_channels=1, out_channels=1, bias=False)
+    deconv.weight = torch.nn.Parameter(deconv_weight, requires_grad=False)
     for func_dir in functional_dirs:
         ima = os.path.basename(func_dir)
         order_num = ima_order_data[ima]
@@ -421,18 +569,178 @@ def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, o
         func_nii = nibabel.load(os.path.join(func_dir, fname))
         func_data = func_nii.get_fdata()
         shape = func_data.shape
+        func_data = torch.from_numpy(func_data.reshape(w * h * d, 1, -1))  # reshape to voxels (batch), channels, time for use with torch conv operator
+        func_data = deconv(func_data)
         func_data = func_data.reshape(list(shape[:3]) + [block_length, len(order)]) # so we can easily index into individual blocks
         for block, condition in enumerate(order):
             weight[condition] += 1
             corrected_arr[:, :, :, :, condition] += func_data[:, :, :, :, block]
     corrected_arr = (corrected_arr.T / weight[:, None, None, None, None]).T
-    corrected_arr = corrected_arr.reshape((w, h, d, block_length * num_conditions))
+    corrected_arr = corrected_arr.reshape((w, h, d, block_length * num_conditions)) # reshape to real functional
+    corrected_arr = corrected_arr.numpy()
     corrected_nii = nibabel.Nifti1Image(corrected_arr, affine=func_nii.affine, header=func_nii.header)
     nibabel.save(corrected_nii, output)
     return output
 
 
-def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map, paradigm_file, fname='epi_masked.nii'):
+def time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, target_condition, output_dir,
+                                        fname='epi_masked', pre_onset_blocks=1, post_offset_blocks=3):
+    conditions = paradigm_data['condition_integerizer']
+    order_def = paradigm_data['order_number_definitions']
+    block_length = paradigm_data['block_length_trs']
+    pre_onset_trs = pre_onset_blocks * block_length
+    post_offset_trs = post_offset_blocks * block_length
+    para_name = paradigm_data['name']
+    output = os.path.join(output_dir, para_name + '_condition_' + conditions[str(target_condition)] + '_timecourse_comparison.nii')
+    return analysis.get_condition_time_series_comparision(functional_dirs, block_length, ima_order_data, order_def,
+                                                          target_condition, output, fname=fname,
+                                                          pre_onset_trs=pre_onset_trs, post_offset_trs=post_offset_trs)
+
+
+def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
+    """
+    Takes path to directory containing in volume roi niis (as binary masks), then creates a template functional file
+    for a desrired target condition(s), extracts the ts for the roi, and plots.
+    :param ds_t1:
+    :param fine_transform:
+    :param manual_transform:
+    :param ts_dict:
+    :param vol_rois:
+    :param functional_dirs:
+    :param ima_order_file:
+    :param paradigm_file:
+    :return:
+    """
+    options = list(vol_rois.keys())
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    subj = os.path.basename(subj_root)
+    config_path = os.path.join(subj_root, '..', '..', 'config.json')
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    print("which paradigm was used to define this roi set? ")
+    para_options = list(config['paradigms'].keys())
+    para_id = input_control.select_option_input(para_options)
+    paradigm = para_options[para_id]
+    paradigm_file = config['paradigms'][paradigm]
+    with open(paradigm_file, 'r') as f:
+        paradigm_data = json.load(f)
+    sessions_dict = config['data_map'][paradigm_data['name']][subj]
+
+    print('choose which roi set to generate time series comparisons for:')
+    choice_idx = input_control.select_option_input(options)
+    roi_set_name = options[choice_idx]
+    roi_dir = vol_rois[roi_set_name]
+    conditions = paradigm_data['condition_integerizer']
+    print('select condition(s) of interest for time series comparison (i.e. conditions where divergence from noise is expected)')
+    coi = []
+    cond_opt = list(conditions.values())
+    idxs = list(conditions.keys())
+
+    pre_block = 1
+    post_block = 3
+
+    ts_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set_name), 'time_series')
+
+    while True:
+        choice_idx = input_control.select_option_input(cond_opt)
+        coi.append(int(idxs[choice_idx]))
+        if not input_control.bool_input("add another condition of interest?"):
+            break
+    roi_paths = [os.path.join(roi_dir, f) for f in os.listdir(roi_dir) if '.nii' in f]
+
+    #plt init
+    fig, axs = plt.subplots(len(roi_paths))
+
+    cond_descs = [conditions[str(i)] for i in coi]
+    roi_total_ts = [None for i in range(len(roi_paths))]
+
+    for condition in coi:
+        for session_id in sessions_dict:
+            ima_order_file = sessions_dict[session_id]['ima_order_map']
+            with open(ima_order_file, 'r') as f:
+                ima_order_data = json.load(f)
+            sess_dir = os.path.dirname(sessions_dict[session_id]['session_net'])
+            manual_transform = os.path.join(sess_dir, 'itkManual.txt')
+            fine_forward_transform = os.path.join(sess_dir, 'antsRegComposite.h5')
+            functional_dirs = [os.path.join(sess_dir, str(ima)) for ima in sessions_dict[session_id]['imas_used']]
+            ts_func_path = time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, condition, sess_dir,
+                                                               fname='epi_masked.nii', pre_onset_blocks=pre_block, post_offset_blocks=post_block)
+            ts_func_path = apply_warp(ts_func_path, ds_t1_path, manual_transform, fine_forward_transform, type_code=3, dim=3)
+            ts_data = nibabel.load(ts_func_path).get_fdata()
+            ts_data = ts_data - np.mean(ts_data, axis=3)[:, :, :, None]
+
+            for i, roi_path in enumerate(roi_paths):
+                roi_nii = nibabel.load(roi_path)
+                roi_name = os.path.basename(roi_path).split('.')[0]
+                roi_data = roi_nii.get_fdata()
+                # block order here is to ensure proper plotting, 1 indicates target condition present
+                ts, _, colors = analysis._get_roi_time_course(roi_data, 1, ts_data, axs[i],
+                                                              block_length=paradigm_data['block_length_trs'],
+                                                              block_order=[0] * pre_block + [1] + [0] * post_block,
+                                                              colors=plt.get_cmap('ocean'),
+                                                              roi_name=roi_name,
+                                                              ts_name=conditions[str(condition)])
+                if roi_total_ts[i] is None:
+                    roi_total_ts[i] = ts
+                else:
+                    roi_total_ts[i] += ts
+        for i, roi_path in enumerate(roi_paths):
+            roi_name = os.path.basename(roi_path).split('.')[0]
+            ts_path = os.path.join(ts_dir,  roi_name + '_'.join(cond_descs) + '_condition_ts.npy')
+            ts = roi_total_ts[i] / len(sessions_dict)
+            np.save(ts_path, ts)
+    fig.suptitle(' '.join(cond_descs) + ' condition vs all time series')
+    fig.set_size_inches(8, 1.5 * len(roi_paths))
+    fig.tight_layout()
+    fig.savefig(os.path.join(subj_root, 'rois', roi_set_name, 'ts_plot.png'))
+    ts_dict[roi_set_name] = ts_dir
+    plt.legend(loc='upper right')
+    plt.show()
+    return ts_dict
+
+
+def binary_masks_from_int_atlas(atlas: str,
+                                desired_indices:Union[None, List[Union[int, Tuple[int]]]] = None, index_names = None, out_dir = None):
+    """
+    takes a integer indexed atlas nifti path and converts it into seperate binary masks. Creates mask for each index in
+    desired_indices, or for all indices in the atlas if desired_indices is None. If a desired index is a tuple these will
+    be combined into a singular maskOptional index names allows user to define outut names for each roi
+    :param out_dir:
+    :param index_names:
+    :param indexed_mask:
+    :param desired_indices:
+    :return:
+    """
+    atlas_nii = nibabel.load(atlas)
+    atlas_data = np.array(atlas_nii.get_fdata())
+    out_paths = []
+    if out_dir is None:
+        out_dir = os.path.dirname(atlas)
+    elif not os.path.isdir(out_dir):
+        raise ValueError
+    if desired_indices is None:
+        desired_indices = list(np.unique(atlas_data))
+    if index_names is not None and len(index_names) != len(desired_indices):
+        raise ValueError("if names are provided must be same length as desired index list")
+    for i, idx in enumerate(desired_indices):
+        if type(idx) is tuple:
+            mask = np.zeros_like(atlas_data)
+            for lidx in idx:
+                mask += (atlas_data == lidx).astype(int)
+        else:
+            mask = (atlas_data == idx).astype(int)
+        if index_names is None:
+            name = str(idx)
+        else:
+            name = index_names[i]
+        mask_nii = nibabel.Nifti1Image(mask, header=atlas_nii.header, affine=atlas_nii.affine)
+        out_path = os.path.join(out_dir, name + '.nii')
+        nibabel.save(mask_nii, out_path)
+        out_paths.append(out_path)
+    return out_paths
+
+
+def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map, hrf_file, deconvolution_file,  paradigm_file, fname='epi_masked.nii'):
     out_paths = []
     with open(paradigm_file, 'r') as f:
         para_data = json.load(f)
@@ -441,14 +749,15 @@ def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map,
     block_length = para_data['block_length_trs']
     block_orders = para_data['order_number_definitions']
     num_conditions = len(para_data['condition_integerizer'])
-    correct_order = input_control.bool_input("Cannot use all runs as is to generate time series because of different "
-                                             "orderings. Do you want to re-arrange and stack the sequences? note that "
-                                             "this may introduce artifacts, otherwise select imas with the same "
-                                             "stimuli order to use.")
+    hrf = np.load(hrf_file)
+    deconv = np.load(deconvolution_file)
+    correct_order = False
+    if len(para_data['order_number_definitions']) > 1:
+        correct_order = True
     sess_dir = os.path.dirname(functional_dirs[0])
     if correct_order:
         func = os.path.join(sess_dir, 'avg_func.nii')
-        func = order_corrected_functional(functional_dirs, ima_data, para_data, func, fname=fname)
+        func = order_corrected_functional(functional_dirs, ima_data, para_data, func, deconv, fname=fname)
         order_def = list(range(num_conditions))
     else:
         imas = [None]

@@ -498,7 +498,7 @@ def _itkSnapManual(anatP, funcP, outF):
     s+='\n\nand transform as: \n%s'%(step1TxtP)
     print(s)
     done = 'y' in input('done? (y/n): ')
-    return step1TxtP,step1NiiP
+    return step1TxtP, step1NiiP
 
 
 def manual_itksnap_registration(functional_input_dirs: List[str], template_file: str, fname='moco.nii.gz'):
@@ -777,13 +777,15 @@ def center_nifti(source_dir:str, fname:str ='orig.mgz', output=None):
     nib.save(centered, output)
 
 
-def create_low_res_anatomical(source_dir:str, fname:str ='orig.mgz', output=None, factor=2):
+def create_low_res_anatomical(source_dir:str, fname:str ='orig.mgz', output=None, factor=2, affine_scale=1, resample='interpolate'):
     if not output:
         output = os.path.join(source_dir, 'low_res.nii')
     factor = str(factor)
+    affine_scale = str(affine_scale)
     in_path = os.path.join(source_dir, fname)
-    subprocess.run(['mri_convert', in_path, '-vs', factor, factor, factor, output, '--out_type', 'nii'])
-    subprocess.run(['mri_convert', output, '-iis', '1', '-ijs', '1', '-iks', '1', output, '--out_type', 'nii'])
+    subprocess.run(['mri_convert', in_path, '-vs', factor, factor, factor, '-rt', resample, output, '--out_type', 'nii'])
+    subprocess.run(['mri_convert', output, '-iis', affine_scale, '-ijs', affine_scale, '-iks', affine_scale,
+                    '-rt', resample, output, '--out_type', 'nii'])
     return output
 
 

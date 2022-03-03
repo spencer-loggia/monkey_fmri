@@ -16,6 +16,11 @@ class BaseControlNet:
 
     def init_head_states(self):
         self.head = []
+        connected = list(nx.connected_components(self.network.to_undirected()))
+        if len(connected) > 1:
+            print("Error: graph is diconnected. Print non-main components")
+            for comp in connected[1:]:
+                print(comp)
         data_node, process_node = nx.bipartite.sets(self.network)
         for n in process_node:
             pred = list(self.network.predecessors(n))
@@ -141,6 +146,12 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         self.network.add_node('subject_surface_overlays', data=[], complete=None, type='overlay', bipartite=0)
 
+        # three below data is expected to be dict('roi_set_name' : tuple(condition_of_interest_intID, data_path))
+        self.network.add_node('surface_defined_rois', data={}, complete=None, type='label', bipartite=0)
+        self.network.add_node('volume_rois', data={}, complete=None, type='volume', space='t1_native', bipartite=0)
+        self.network.add_node('ds_volume_rois', data={}, complete=None, type='volume', space='ds_t1_native', bipartite=0)
+        self.network.add_node('roi_time_courses', data={}, complete=None, type='array', bipartite=0)
+
         self.network.add_node('load_t1_data', fxn='support_functions.load_t1_data', bipartite=1)
         self.network.add_node('load_white_surfaces', fxn='support_functions.load_white_surfs', bipartite=1)
         self.network.add_node('downsample_t1', fxn='support_functions.downsample_anatomical', bipartite=1)
@@ -148,18 +159,22 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_node('mask_downsampled_t1', fxn='support_functions.apply_binary_mask_vol', bipartite=1)
         self.network.add_node('create_load_session', fxn='self.create_load_session', bipartite=1)
         self.network.add_node('generate_sigsurface_overlays', fxn='support_functions.generate_subject_overlays', bipartite=1)
+        self.network.add_node('manual_surface_rois', fxn='support_functions.define_surface_rois', bipartite=1)
+        self.network.add_node('volume_rois_from_surface_rois', fxn='support_functions.surf_labels_to_vol_mask', bipartite=1)
+        self.network.add_node('get_vol_rois_time_series', fxn='support_functions.get_vol_rois_time_series', bipartite=1)
+        self.network.add_node('downsample_vol_rois', fxn='support_functions.downsample_vol_rois', bipartite=1)
 
 
-        self.network.add_edge('load_t1_data', 't1', order=0) #10
-        self.network.add_edge('load_t1_data', 't1_mask', order=1) #10
+        self.network.add_edge('load_t1_data', 't1', order=0)  # 10
+        self.network.add_edge('load_t1_data', 't1_mask', order=1)  # 10
 
-        self.network.add_edge('load_white_surfaces', 'white_surfs', order=0) #10
+        self.network.add_edge('load_white_surfaces', 'white_surfs', order=0) # 10
 
-        self.network.add_edge('t1', 'downsample_t1', order=0) #01
-        self.network.add_edge('downsample_t1', 'ds_t1', order=0) #10
+        self.network.add_edge('t1', 'downsample_t1', order=0)  # 01
+        self.network.add_edge('downsample_t1', 'ds_t1', order=0)  # 10
 
-        self.network.add_edge('t1_mask', 'downsample_t1_mask', order=0) #01
-        self.network.add_edge('downsample_t1_mask', 'ds_t1_mask', order=0) #10
+        self.network.add_edge('t1_mask', 'downsample_t1_mask', order=0)  # 01
+        self.network.add_edge('downsample_t1_mask', 'ds_t1_mask', order=0)  # 10
 
         self.network.add_edge('ds_t1', 'mask_downsampled_t1', order=0)
         self.network.add_edge('ds_t1_mask', 'mask_downsampled_t1', order=1)
@@ -176,6 +191,26 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_edge('t1', 'generate_sigsurface_overlays', order=2)
         self.network.add_edge('ds_t1', 'generate_sigsurface_overlays', order=3)
         self.network.add_edge('generate_sigsurface_overlays', 'subject_surface_overlays', order=0)
+
+        self.network.add_edge('subject_surface_overlays', 'manual_surface_rois', order=0)
+        self.network.add_edge('surface_defined_rois', 'manual_surface_rois', order=1)
+        self.network.add_edge('manual_surface_rois', 'surface_defined_rois', order=0)
+        #
+        self.network.add_edge('surface_defined_rois', 'volume_rois_from_surface_rois', order=0)
+        self.network.add_edge('white_surfs', 'volume_rois_from_surface_rois', order=1)
+        self.network.add_edge('t1', 'volume_rois_from_surface_rois', order=2)
+        self.network.add_edge('ds_t1', 'volume_rois_from_surface_rois', order=3)
+        self.network.add_edge('volume_rois', 'volume_rois_from_surface_rois', order=4)
+        self.network.add_edge('volume_rois_from_surface_rois', 'volume_rois', order=0)
+
+        self.network.add_edge('volume_rois', 'downsample_vol_rois', order=0)
+        self.network.add_edge('ds_volume_rois', 'downsample_vol_rois', order=1)
+        self.network.add_edge('downsample_vol_rois', 'ds_volume_rois', order=0)
+
+        self.network.add_edge('ds_volume_rois', 'get_vol_rois_time_series', order=0)
+        self.network.add_edge('roi_time_courses', 'get_vol_rois_time_series', order=1)
+        self.network.add_edge('ds_t1', 'get_vol_rois_time_series', order=2)
+        self.network.add_edge('get_vol_rois_time_series', 'roi_time_courses', order=0)
 
 
 class DefaultSessionControlNet(BaseControlNet):
@@ -240,6 +275,9 @@ class DefaultSessionControlNet(BaseControlNet):
 
         self.network.add_node('cleaned_contrast', data=None, type='volume', bipartite=0, complete=False, space='epi_native')
         self.network.add_node('auto_rois', data=None, type='json', bipartite=0, complete=False, space='epi_native')
+
+        self.network.add_node('hrf_estimate', data=None, type='ndarray', bipartite=0, complete=False, space='')
+        self.network.add_node('deconvolution', data=None, type='ndarray', bipartite=0, complete=False, space='')
 
         # Define functional data processing nodes
 
@@ -314,6 +352,8 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('paradigm', 'create_contrast', order=1)  # 01
         self.network.add_edge('ima_order_map', 'create_contrast', order=2)  # 01
         self.network.add_edge('create_contrast', 'contrasts', order=0)  # 10
+        self.network.add_edge('create_contrast', 'hrf_estimate', order=1)  # 10
+        self.network.add_edge('create_contrast', 'deconvolution', order=2)  # 10
 
         self.network.add_edge('contrasts', 'register_contrast', order=0)  # 01
         self.network.add_edge('ds_t1_masked', 'register_contrast', order=1)
@@ -321,8 +361,10 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('auto_composite_transform', 'register_contrast', order=3)  # 01
         self.network.add_edge('register_contrast', 'reg_contrast', order=0)  # 10
 
-        self.network.add_edge('reg_contrast', 'add_to_subject_average_contrast', order=0) # 01
-        self.network.add_edge('paradigm', 'add_to_subject_average_contrast', order=1) # 01
+        self.network.add_edge('reg_contrast', 'add_to_subject_average_contrast', order=0)  # 01
+        self.network.add_edge('paradigm', 'add_to_subject_average_contrast', order=1)  # 01
+        self.network.add_edge('epi_masked', 'add_to_subject_average_contrast', order=2)  # 01
+        self.network.add_edge('ima_order_map', 'add_to_subject_average_contrast', order=3)  # 01
 
         self.network.add_edge('3d_epi_rep_sphinx', 'register_3d_rep', order=0)
         self.network.add_edge('ds_t1_masked', 'register_3d_rep', order=1)
@@ -344,14 +386,10 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('epi_masked', 'auto_roi_time_series', order=1)
         self.network.add_edge('ima_order_map', 'auto_roi_time_series', order=2)
         self.network.add_edge('paradigm', 'auto_roi_time_series', order=3)
+        self.network.add_edge('hrf_estimate', 'auto_roi_time_series', order=4)
+        self.network.add_edge('deconvolution', 'auto_roi_time_series', order=5)
         self.network.add_edge('auto_roi_time_series', 'cleaned_contrast', order=0)
         self.network.add_edge('auto_roi_time_series', 'auto_rois', order=1)
-
-        connected = list(nx.connected_components(self.network.to_undirected()))
-        if len(connected) > 1:
-            print("Error: graph is diconnected. Print non-main components")
-            for comp in connected[1:]:
-                print(comp)
 
 
 
