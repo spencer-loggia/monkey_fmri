@@ -59,6 +59,13 @@ def _norm_4d(arr: np.ndarray):
 
 
 def _set_data_range(arr, min_range, max_range):
+    """
+    expands a data set to encompass the given range from min to max.
+    :param arr:
+    :param min_range:
+    :param max_range:
+    :return:
+    """
     arr += min(arr.flatten())  # min 0
     arr /= max(arr.flatten())  # 0 - 1
     range_size = max_range - min_range
@@ -105,6 +112,15 @@ def hyperalign():
 
 
 def average_functional_data(run_dirs, output, fname='normalized.nii', through_time=False):
+    """
+    Averages a set of epis producing a single 4D time series. If through_time is True, also averages through the time
+    dimmensiong, producing a single 3D volume.
+    :param run_dirs:
+    :param output:
+    :param fname:
+    :param through_time:
+    :return:
+    """
     avg_func = None
     count = 0
     for source_dir in run_dirs:
@@ -185,11 +201,42 @@ def mion_response_function(tr, time_length, oversampling=16.0):
 
 
 def bold_response_function(tr=3, time_length=30):
+    """
+    Just gives an inverted mion function, this is fine because response function optimization will discover the true
+    bold function. Should put a real bold function here though in case someone runs max_dynamic with autoconv off
+    :param tr:
+    :param time_length:
+    :return:
+    """
     return -1 * mion_response_function(tr, time_length, oversampling=16.0)
 
 
 def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndarray, conv_size=11, conv_pad=5,
-                                          epochs=30, pid=0, mion=False, auto_conv=True, tr=3):
+                                          epochs=30, pid=0, mion=True, auto_conv=True, tr=3):
+    """
+    Hi so this is the meat of the algorithm for finding beta coeficients, e.g. first level MRI analysis.
+    The beta coefficients can be thought of as our best guess at the magnitude of the response of a given voxel
+    to a specific stimulus condition.
+    esentially, we use a standard glm model to solve the equation :math:`[D \ast H] \Beta = V` where D is the
+    design matrix (i.e. a onehot encoding of blocks presented over time, and k (conditions) x time (t) matrix)
+    and V is the epi image (time x voxels) and H is a discrete convolution over Ds time axis.
+    The purpose of H is to adjust for the temporal delay in mri signal by adjusting the design matirx D, allowing
+    for a simple linear mapping to V via :math: `\Beta`.
+    The MLE solution for beta can be found trivially via :math: `(D' D)^{-1} D' V`
+    We start with an empirical definition of H, and then refine it via gradient decent. (if auto_conv is True)
+    The overall optimal solution is found by alternating between fixing Beta and optimizing over H, and fixing H and
+    optimizing Beta for a set number of iterations. (a case of the EM algorithm)
+    :param design_matrix:
+    :param gt:
+    :param conv_size:
+    :param conv_pad:
+    :param epochs:
+    :param pid:
+    :param mion:
+    :param auto_conv:
+    :param tr:
+    :return:
+    """
     og_shape = gt.shape
     conv1d = torch.nn.Conv1d(kernel_size=conv_size, in_channels=1, out_channels=1, padding=conv_pad, bias=False)
     deconv1d = torch.nn.Conv1d(kernel_size=conv_size, in_channels=1, out_channels=1, padding=conv_pad, bias=False)
@@ -346,8 +393,17 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
         res = p.starmap(_create_SNR_volume_wrapper, args)
 
 
-def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int],
-                                 convolve=False, aq_mode='bold'):
+def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int]):
+    """
+    Creates as num_conditions x time onehot encoded matrix from an order number definition
+    :param block_length:
+    :param num_blocks:
+    :param num_conditions:
+    :param order:
+    :param convolve:
+    :param aq_mode:
+    :return:
+    """
     k = len(order)
     design_matrix = np.zeros((0, num_conditions))
     for i in range(num_blocks):
@@ -655,6 +711,9 @@ def _segment_contrast_image(contrast_data, threshold=5., negative=False, size_th
 
 
 def _plot_3d_scatter(rois, label_id, brain_box, ax, color, size_tresh=0):
+    """
+    plot a brain in 3d with colored rois in pyplot
+    """
     clust_idx_tuples = np.array(np.nonzero(rois == label_id))
     if clust_idx_tuples.shape[1] <= size_tresh:
         return ax
@@ -704,22 +763,22 @@ def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, c
     return mean_ts, ax, color_map
 
 
-def get_condition_time_series_comparision(functional_dirs, block_length, ima_order_num_map,
-                                          order_num_defs, target_condition, output,
+def get_condition_time_series_comparision(functional_dirs, block_length, ima_order_num_map: Dict[str, int],
+                                          order_num_defs: Dict[str, List[int]], target_condition, output,
                                           fname='epi_masked.nii', pre_onset_trs=6, post_offset_trs=18):
     """
     Goal is to take a set of epis that were recorded with different stimuli presentation order (needs to be a block
     cesign) and create a new functional file that compares the waveform of the functional blog with an average over
     other activity, while still capturing some of the temporal dynamics.
-    :param functional_dirs:
-    :param block_length:
-    :param ima_order_num_map:
-    :param order_num_defs:
-    :param target_condition:
-    :param output:
-    :param fname:
-    :param pre_onset_trs:
-    :param post_offset_trs:
+    :param functional_dirs: list of paths to ima dirs, each containing the corresponding epi
+    :param block_length: length of target condition block
+    :param ima_order_num_map: A dictionary mapping from ima numbers (as strings) to order numbers (as int)
+    :param order_num_defs: A dictionary mapping from order numbers (as strings) to block orders (lists of condition integers)
+    :param target_condition: The condition integer identifier who's blocks will be aligned and stacked
+    :param output: path to save new time series nifti
+    :param fname: the name of epi files to read in the ima directories
+    :param pre_onset_trs: number of trs to include before block onset
+    :param post_offset_trs: number of trs to include after block offset
     :return:
     """
     total_length = pre_onset_trs + block_length + post_offset_trs

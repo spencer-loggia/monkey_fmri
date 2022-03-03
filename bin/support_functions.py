@@ -548,6 +548,10 @@ def load_white_surfs():
 
 def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, output, deconv_weight, fname='epi_masked') -> np.ndarray:
     """
+    This method is not used by current control flow module, but kept cause it kinda cool.
+    The defualt maximal dynamic regressor does produce a deconv npy file to be used with this
+    By order correcting the batch averaged function via deconvolution, we can compare all block simultaneously,
+    giving a better sense of the true nature of the data.
     Create a averaged 4d time series where stimuli presentation order is corrected for,
     by de-convolving, rearranging, stacking, then re-convolving.
     :return:
@@ -585,6 +589,19 @@ def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, o
 
 def time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, target_condition, output_dir,
                                         fname='epi_masked', pre_onset_blocks=1, post_offset_blocks=3):
+    """
+    Wrapper for analysis.get_condition_time_series_comparison that grabs needed input parameters
+    from a paradigm json file.
+    :param functional_dirs:
+    :param ima_order_data:
+    :param paradigm_data:
+    :param target_condition:
+    :param output_dir:
+    :param fname:
+    :param pre_onset_blocks:
+    :param post_offset_blocks:
+    :return:
+    """
     conditions = paradigm_data['condition_integerizer']
     order_def = paradigm_data['order_number_definitions']
     block_length = paradigm_data['block_length_trs']
@@ -599,6 +616,7 @@ def time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradig
 
 def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
     """
+    designed to work in context of control flow infrastructure
     Takes path to directory containing in volume roi niis (as binary masks), then creates a template functional file
     for a desrired target condition(s), extracts the ts for the roi, and plots.
     :param ds_t1:
