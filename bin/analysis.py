@@ -19,10 +19,7 @@ from multiprocessing import Pool
 import preprocess
 from preprocess import _pad_to_cube
 
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.mixture import GaussianMixture
-from skimage.filters import sobel
-from skimage.segmentation import watershed
 from skimage.measure import regionprops
 
 try:
@@ -31,7 +28,7 @@ try:
 
     patch_sklearn()
 except ModuleNotFoundError:
-    print("Intel(R) Hardware Acceleration is not enabled. ")
+    print("Intel Hardware Acceleration is not enabled. ")
     from sklearn.linear_model import LinearRegression
 
 import pandas as pd
@@ -239,11 +236,8 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     """
     og_shape = gt.shape
     conv1d = torch.nn.Conv1d(kernel_size=conv_size, in_channels=1, out_channels=1, padding=conv_pad, bias=False)
-    deconv1d = torch.nn.Conv1d(kernel_size=conv_size, in_channels=1, out_channels=1, padding=conv_pad, bias=False)
-    deconv_weight = torch.ones((1, 1, conv_size)) / conv_size
     if mion:
         def_hrf = mion_response_function(tr, conv_size * tr)
-        deconv_weight = -1 * deconv_weight
     else:
         def_hrf = bold_response_function(tr, time_length=conv_size * tr)
     if auto_conv:
@@ -253,7 +247,6 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
         epochs = 1
 
     conv1d.weight = torch.nn.Parameter(weight, requires_grad=True)
-    deconv1d.weight = torch.nn.Parameter(deconv_weight, requires_grad=True)
     design_matrix = torch.from_numpy(design_matrix)[:, None, :].float()  # design matrix should be (k, t) so that k conditions is treated as batch by torch convention
     if np.ndim(gt) > 1:
         gt = gt.reshape(-1, design_matrix.shape[0]).T  # reshape to all time, LL VOXELS
@@ -261,9 +254,7 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     # linear = torch.nn.Linear(in_features=design_matrix.shape[-1], out_features=gt.shape[1], bias=False)
     beta = torch.normal(mean=.5, std=.2, size=[design_matrix.shape[-1], gt.shape[1]], requires_grad=False).float()
     optim = torch.optim.SGD(lr=.0001, params=list(conv1d.parameters()))
-    optim_deconv = torch.optim.SGD(lr=.01, params=list(deconv1d.parameters()))
     sched = torch.optim.lr_scheduler.StepLR(optimizer=optim, step_size=15, gamma=.1)
-    deconv_sched = torch.optim.lr_scheduler.StepLR(optimizer=optim, step_size=7, gamma=.1)
     mseloss = torch.nn.MSELoss()
     loss_deconv = torch.nn.MSELoss()
     # mseloss = _ssqrt_lfxn
@@ -288,7 +279,6 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     for i in range(epochs):
         # expectation
         optim.zero_grad()
-        optim_deconv.zero_grad()
         x_expect, y_hat = pred_seq(design_matrix)
         # analytical maximization
         with torch.no_grad():
@@ -302,22 +292,15 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
             optim.step()
             sched.step()
         optim.zero_grad()
-        optim_deconv.zero_grad()
         # deconvolution estimate update
         with torch.no_grad():
             xexp = conv1d(design_matrix.T).T
-        dmat_exp = deconv1d(xexp.T).T
-        d_loss = loss_deconv(dmat_exp, design_matrix)
-        d_loss.backward()
-        optim_deconv.step()
-        deconv_sched.step()
-        print("optim epoch #", i, "(pid=", pid, ")", ' loss=', flex_loss.detach().item(), 'deconvolve loss=', d_loss.detach().item())
+        print("optim epoch #", i, "(pid=", pid, ")", ' loss=', flex_loss.detach().item())
 
     beta = np.array(beta).T
     beta = beta.reshape(list(og_shape[:-1]) + [design_matrix.shape[-1]])
     hemodynamic_est = np.array(conv1d.weight.clone().detach()).reshape(np.prod(conv1d.weight.shape))
-    deconv = np.array(deconv1d.weight.clone().detach()).reshape(np.prod(deconv1d.weight.shape))
-    return beta, hemodynamic_est, loss_hist, deconv
+    return beta, hemodynamic_est, loss_hist
 
 
 def contrast(beta_coef: np.ndarray, contrast_matrix: np.ndarray, pid=0) -> np.ndarray:
@@ -331,20 +314,6 @@ def contrast(beta_coef: np.ndarray, contrast_matrix: np.ndarray, pid=0) -> np.nd
     contrasts = beta_coef @ contrast_matrix
     print('=', contrasts.shape, "(pid=", pid, ")")
     return contrasts
-
-
-def _pipe(d_mat, run, c_mat, mode, mion, auto_conv, tr, pid):
-    """
-    Single thread worker dispatch function.
-    :param d_mat: design matrix from fsfast or local
-    :param run: preprocessed functional data
-    :param c_mat: contrast test definition matrix
-    :return:
-    """
-    beta, res, loss_hist, deconv = maximal_dynamic_convolution_regressor(d_mat, run, pid=pid, mion=mion, auto_conv=auto_conv,
-                                                                 tr=tr)
-    contrasts = contrast(beta, c_mat, pid=pid)
-    return contrasts, res, loss_hist, deconv
 
 
 def _create_SNR_volume_wrapper(input_dir, noise_path, out_path, type='tSNR'):
@@ -414,30 +383,24 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
     return design_matrix
 
 
-def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray], contrast_matrix: np.ndarray,
-                           contrast_descriptors: List[str], output_dir: str, fname: str = 'registered.nii.gz',
-                           mode='standard', mion=False, use_python_mp=False, auto_conv=False, tr=3):
+def _pipe(d_mat, run, mion, auto_conv, tr, pid):
     """
-    Compute each desired contrast on the functional data in parallel.
-    :param mion:
-    :param design_matrix: list of array of size conditions x num trs. length 1 if stim order same for all imas,
-                          len equal to number of runs otherwise. order corresponds to ima order in run dirs.
-    :param mode:
-    :param run_dirs: locations of the functional runs
-    :param contrast_matrix: The contrast test definitions.
-    :param contrast_descriptors: Description of the contrast test specified by each row of the matrix.
-    :param output_dir: where to save
-    :param fname: name of the preprocessed functional file to use (must exist in each of the run dirs)
+    Single thread worker dispatch function.
+    :param d_mat: design matrix from fsfast or local
+    :param run: preprocessed functional data
+    :param c_mat: contrast test definition matrix
     :return:
     """
+    beta, res, loss_hist = maximal_dynamic_convolution_regressor(d_mat, run, pid=pid, mion=mion, auto_conv=auto_conv,
+                                                                 tr=tr)
+    return beta, res, loss_hist
+
+
+def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.ndarray], output_dir: str, fname: str,
+                               mion=False, use_python_mp=False, auto_conv=False, tr=3):
     run_stack = []
     affines = []
     header = None
-    for design_matrix in design_matrices:
-        if contrast_matrix.shape[0] != design_matrix.shape[1]:
-            raise ValueError("Contrast matrix must have number of rows equal to the number of stimulus conditions.")
-        if len(contrast_descriptors) != contrast_matrix.shape[1]:
-            raise ValueError("Number of Contrast Descriptors must match number of cols in contrast matrix")
 
     for i, source_dir in enumerate(run_dirs):
         req_path = os.path.join(source_dir, fname)
@@ -458,8 +421,6 @@ def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray
             raise FileNotFoundError("Couldn't find " + fname + " in specified source dir " + source_dir)
     full_run_params = list(zip(design_matrices,
                                run_stack,
-                               [contrast_matrix] * len(run_stack),
-                               [mode] * len(run_stack),
                                [mion] * len(run_stack),
                                [auto_conv] * len(run_stack),
                                [tr] * len(run_stack),
@@ -472,32 +433,40 @@ def intra_subject_contrast(run_dirs: List[str], design_matrices: List[np.ndarray
         res = []
         for i in range(len(full_run_params)):
             res.append(_pipe(*full_run_params[i]))
-    contrasts, hemo, loss_hists, deconvs = list(zip(*res))
-    avg_contrasts = np.sum(np.stack(contrasts, axis=0), axis=0)[0]
-
-    print(avg_contrasts.shape)
-    affine = np.concatenate(affines, axis=0).mean(axis=0)
-    for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
-        contrast_nii = nib.Nifti1Image(cond, affine=affine, header=header)
-        nib.save(contrast_nii, os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii'))
-
-    fig, axs = plt.subplots(3)
+    betas, hemo, loss_hists = list(zip(*res))
+    avg_betas = np.mean(np.stack(betas, axis=0), axis=0)[0]
+    affine = np.mean(np.concatenate(affines, axis=0))
+    beta_nii = nib.Nifti1Image(avg_betas, affine=affine, header=header)
+    out_path = os.path.join(output_dir, 'beta_coef.nii')
+    nib.save(beta_nii, out_path)
+    fig, axs = plt.subplots(2)
     for i, h in enumerate(hemo):
         axs[0].plot(h, label=i)
     axs[0].legend()
     avg_hemo = np.stack(hemo, axis=0).mean(axis=0)
-    avg_deconv = np.stack(deconvs, axis=0).mean(axis=0)
-    axs[1].plot(avg_deconv)
-    hemo_path = os.path.join(output_dir, 'hrf_est.npz')
-    deconv_path = os.path.join(output_dir, 'deconvolution_est.npz')
-    np.save(hemo_path, avg_hemo)
-    np.save(deconv_path, avg_deconv)
     if None not in loss_hists:
         avg_loss_hist = np.sum(np.array(loss_hists), axis=0)
         axs[2].plot(avg_loss_hist)
+    print(avg_betas.shape)
     fig.show()
     plt.show()
-    return avg_contrasts, hemo_path, deconv_path
+    return avg_betas, out_path, avg_hemo
+
+
+def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_descriptors: List[str], output_dir: str):
+    """
+    """
+    beta_nii = nib.load(beta_matrix)
+    avg_contrasts = contrast(np.array(beta_nii.get_fdata()), contrast_matrix)
+
+    out_paths = []
+    for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
+        contrast_nii = nib.Nifti1Image(cond, affine=beta_nii.affine, header=beta_nii.header)
+        out = os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii')
+        nib.save(contrast_nii, out)
+        out_paths.append(out)
+
+    return avg_contrasts, out_paths
 
 
 def _find_scale_factor(high_res: np.ndarray, low_res: np.ndarray):
@@ -726,6 +695,52 @@ def _plot_3d_scatter(rois, label_id, brain_box, ax, color, size_tresh=0):
     ax.text(label_point[0], label_point[1], label_point[2], '%s' % (str(label_id)), size=20, zorder=0,
             color=color)
     return ax
+
+
+def get_roi_betas(roi_mask_paths, betas_path):
+    """
+    takes a list of roi mask nifti paths and beta path, and returns corresponding  list of beta coeeficients np arryas
+    :param roi_mask_paths: a list of (w, h, d) niftis
+    :param betas_path: a (w, h, d, k) nifti
+    :return:
+    """
+    betas_nii = nib.load(betas_path)
+    betas = np.array(betas_nii.get_fdata())
+    _, _, _, k = betas.shape
+    print('loaded shape: ', betas.shape, 'beta matrix')
+    roi_betas = []
+    roi_names = []
+    for roi_mask_path in roi_mask_paths:
+        roi_mask_nii = nib.load(roi_mask_path)
+        roi_names.append(os.path.basename(roi_mask_path).split('.')[0])
+        roi_mask = np.array(roi_mask_nii.get_fdata())
+        clust_idxs = np.nonzero(roi_mask >= 1)
+        roi_beta = betas[clust_idxs[0], clust_idxs[1], clust_idxs[2]].reshape(-1, k)
+        roi_betas.append(roi_beta)
+    return roi_betas, roi_names
+
+
+def plot_roi_activation_histogram(roi_mask_paths: List[str], betas_path, num_conditions, condition_desc):
+    assert len(condition_desc) == num_conditions
+    plot_size = int(np.ceil(np.sqrt(num_conditions)))
+    fig, axs = plt.subplots(plot_size, plot_size)
+    roi_betas, roi_names = get_roi_betas(roi_mask_paths, betas_path)
+    colors = plt.get_cmap('hsv')
+    num_rois = len(roi_betas)
+    fig.set_size_inches(h=plot_size*1.5, w=plot_size*2)
+    fig.tight_layout()
+    for j, roi in enumerate(roi_betas):
+        _, k = roi.shape
+        assert k == num_conditions
+        for i in range(num_conditions):
+            condition = roi[:, i]
+            print('roi', j, 'cond', i, 'mean', np.mean(condition), 'dev', np.std(condition), 'max mag', np.max(np.abs(condition)))
+            axs[int(np.floor(i / plot_size)), i % plot_size].hist(condition, bins='auto', color=colors(j / num_rois), alpha=.3, label=roi_names[j])
+            axs[int(np.floor(i / plot_size)), i % plot_size].set_title(condition_desc[i])
+            axs[int(np.floor(i / plot_size)), i % plot_size].set_xlim(left=-10, right=10)
+    fig.show()
+    plt.legend(loc='lower left')
+    plt.show()
 
 
 def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, colors, size_thresh=0, roi_name=None, ts_name=''):

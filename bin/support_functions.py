@@ -96,7 +96,6 @@ def downsample_anatomical(inpath, factor=2, out_dir=None, affine_scale=1, resamp
     :param inpath:
     :param factor:
     :param out_dir:
-    :param change_affine_scale:
     :param resample:
     :return:
     """
@@ -165,6 +164,11 @@ def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, f
     if len(out_paths) == 1:
         out_paths = out_paths[0]
     return out_paths
+
+
+def apply_warp_4d(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None):
+    return apply_warp(source, vol_in_target_space, forward_gross_transform_path=forward_gross_transform_path,
+                      fine_transform_path=fine_transform_path, type_code=3, dim=3)
 
 
 def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, out=None):
@@ -371,7 +375,7 @@ def create_load_ima_order_map(source):
     return omap_path
 
 
-def create_contrast(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii'):
+def create_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii'):
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
     with open(ima_order_map_path, 'r') as f:
@@ -379,9 +383,6 @@ def create_contrast(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     if mion is None:
         mion = False
     assert type(mion) is bool
-    contrast_def = np.array(paradigm_data['desired_contrasts'], dtype=float).T
-    contrast_descriptions = paradigm_data['contrast_descriptions']
-    num_runs = len(source)
     sess_dir = os.path.dirname(source[0])
     design_matrices = []
     for run_dir in source:
@@ -396,35 +397,78 @@ def create_contrast(source, paradigm_path, ima_order_map_path, mion, fname='epi_
         design_matrices.append(design_matrix)
     print("using mion: ", mion)
     print('source fname: ', fname)
-    contrast_imgs = analysis.intra_subject_contrast(source, design_matrices, contrast_def, contrast_descriptions,
-                                                    output_dir=sess_dir, fname=fname,
-                                                    mode='maximal_dynamic', mion=mion, use_python_mp=True, auto_conv=True, tr=3)
-    contrast_paths = [os.path.join(sess_dir, s + '_contrast.nii') for s in contrast_descriptions]
+    _, beta_path = analysis.get_beta_coefficent_matrix(source, design_matrices, output_dir=sess_dir, fname=fname,
+                                                       mion=mion, use_python_mp=True, auto_conv=True, tr=3)
+    print("Beta Coefficient Matrix created at: " + str(beta_path))
+    return beta_path
+
+
+def create_contrast(beta_path, paradigm_path):
+    sess_dir = os.path.dirname(beta_path)
+    with open(paradigm_path, 'r') as f:
+        paradigm_data = json.load(f)
+        contrast_def = np.array(paradigm_data['desired_contrasts'], dtype=float).T
+    contrast_descriptions = paradigm_data['contrast_descriptions']
+
+    _, contrast_paths = analysis.create_contrasts(beta_path, contrast_def, contrast_descriptions, output_dir=sess_dir)
     print("contrasts created at: " + str(contrast_paths))
     return contrast_paths
 
 
-def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, functional, ima_order_path, *argv):
+def construct_complete_beta_file():
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    para = create_load_paradigm(add_new_option=False)
+    with open(para, 'r') as f:
+        paradigm_data = json.load(f)
+    proj_config_path = os.path.join(subj_root, '../..', 'config.json')
+    subject = os.path.basename(subj_root)
+    with open(proj_config_path, 'r') as f:
+        proj_config = json.load(f)
+    para_name = paradigm_data['name']
+    sessions_dict = proj_config['data_map'][paradigm_data['name']][subject]
+    total_runs = 0
+    total_affine = None
+    total_beta = None
+    header = None
+    for key in sessions_dict:
+        session_betas = sessions_dict[key]['beta_file']
+        num_runs = len(sessions_dict[key]['imas_used'])
+        total_runs += num_runs
+        beta = nibabel.load(session_betas)
+        if total_beta is None:
+            total_beta = np.array(beta.get_fdata())
+            total_affine = beta.affine
+            header = beta.header
+        else:
+            total_beta += np.array(beta.get_fdata())
+            total_affine += beta.affine
+
+    total_path = os.path.join(subj_root, 'analysis', para_name + '_subject_betas.nii')
+    subject_betas = total_beta / total_runs
+    subject_affine = total_affine / total_runs
+    total_nii = nibabel.Nifti1Image(subject_betas, affine=subject_affine, header=header)
+    nibabel.save(total_nii, total_path)
+    print('Constructed subject beta matrix for paradigm', para_name, 'using ', total_runs, ' individual runs')
+    return total_nii, total_path
+
+
+def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *argv):
+    """
+    This session is marked as complete-ish and will be included by future subject level analysis, and for construction of
+    the subject level beta matrix. Basically it's added to the subject config data index.
+    :param reg_sontrasts:
+    :param paradigm_path:
+    :param functional:
+    :param ima_order_path:
+    :param argv:
+    :return:
+    """
     subj_root = os.environ.get('FMRI_WORK_DIR')
     session_id = str(argv[0])
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
     para_name = paradigm_data['name']
-    if type(reg_sontrasts) not in [list, tuple]:
-        reg_sontrasts = [reg_sontrasts]
-    for con_path in reg_sontrasts:
-        contrast_file_name = os.path.basename(con_path)
-        total_path = os.path.join(subj_root, 'analysis', para_name + '_' + contrast_file_name)
-        local_nii = nibabel.load(con_path)
-        l_data = np.array(local_nii.get_fdata())
-        if os.path.exists(total_path):
-            total_nii = nibabel.load(total_path)
-            t_data = np.array(total_nii.get_fdata())
-            new_total = nibabel.Nifti1Image(t_data + l_data, affine=total_nii.affine, header=total_nii.header)
-            nibabel.save(new_total, total_path)
-        else:
-            nibabel.save(local_nii, total_path)
-    proj_config_path = os.path.join(subj_root, '../..', 'config.json')
+    proj_config_path = os.path.join(subj_root, '..', '..', 'config.json')
     subject = os.path.basename(subj_root)
     with open(proj_config_path, 'r') as f:
         proj_config = json.load(f)
@@ -432,11 +476,29 @@ def add_to_subject_contrast(reg_sontrasts: List[str], paradigm_path, functional,
 
     session_info = {'imas_used': [os.path.basename(f) for f in functional],
                     'session_net': session_net_path,
-                    'ima_order_map': ima_order_path}
-    proj_config['data_map'][paradigm_data['name']][subject][session_id] = session_info
+                    'ima_order_map': ima_order_path,
+                    'beta_file': reg_beta}
+    proj_config['data_map'][para_name][subject][session_id] = session_info
     with open(proj_config_path, 'w') as f:
         json.dump(proj_config, f, indent=4)
 
+
+def demote_session(paradigm_path, *argv):
+    """
+    Removes this session from subject config data index. It will no longer be included in future subject level analysis.
+    :param paradigm_path:
+    :return:
+    """
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    subject = os.path.basename(subj_root)
+    with open(paradigm_path, 'r') as f:
+        paradigm_data = json.load(f)
+    session_id = str(argv[0])
+    para_name = paradigm_data['name']
+    proj_config_path = os.path.join(subj_root, '..', '..', 'config.json')
+    with open(proj_config_path, 'r') as f:
+        proj_config = json.load(f)
+    proj_config['data_map'][para_name][subject].pop(session_id)
 
 
 def generate_subject_overlays(source, white_surfs, t1_path, ds_t1_path):

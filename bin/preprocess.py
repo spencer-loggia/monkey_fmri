@@ -395,6 +395,7 @@ def antsApplyTransforms(inP, refP, outP, lTrns, interp, img_type_code=3, dim=3, 
 
     from nipype.interfaces.ants import ApplyTransforms
     at = ApplyTransforms()
+    at.inputs.transforms = lTrns
     at.inputs.dimension = dim
     at.inputs.input_image = inP
     at.inputs.input_image_type = img_type_code
@@ -403,11 +404,19 @@ def antsApplyTransforms(inP, refP, outP, lTrns, interp, img_type_code=3, dim=3, 
     at.inputs.reference_image = refP
     at.inputs.output_image = outP
     at.inputs.interpolation = interp
-    at.inputs.transforms = lTrns
     at.inputs.invert_transform_flags = invertTrans
     #    at.inputs.verbose = 1
     print(at.cmdline)
     at.run()
+
+
+def ResampleImageToTarget(in_vol, target_vol, out_path, interp='interpolate'):
+    """
+    takes a nifti and transforms the true data matrix such that the affine is scaled identity.
+    :return:
+    """
+    antsApplyTransforms(in_vol, target_vol, out_path, lTrns=['identity'], interp=interp)
+    return out_path
 
 
 def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
