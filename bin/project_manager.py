@@ -19,8 +19,8 @@ class Project:
         _create_dir_if_needed(project_root, 'analysis')
         _create_dir_if_needed(project_root, 'subjects')
         os.chdir(project_root)
+        self.abs_base = project_root
         self.project_config = {}
-        self.project_config['project_root'] = project_root
         if not self.load_project_config():
             self.project_config['project_name'] = project_name
             self.project_config['paradigms'] = {}
@@ -38,7 +38,7 @@ class Project:
                 self.project_config['data_map'][para][name] = {}
         else:
             name = self.project_config['subjects'][choice]
-        subject_dir = _create_dir_if_needed(os.path.join(self.project_config['project_root'], 'subjects'), name)
+        subject_dir = _create_dir_if_needed(os.path.join(self.abs_base, 'subjects'), name)
         self.save_project_config()
         _create_dir_if_needed(subject_dir, 'mri')
         _create_dir_if_needed(subject_dir, 'analysis')
@@ -50,7 +50,7 @@ class Project:
         if os.path.exists(subj_config_path):
             subject_pipe.load_net(subj_config_path)
         subject_pipe.control_loop(subj_config_path)
-        os.chdir(self.project_config['project_root'])
+        os.chdir(self.abs_base)
         self.save_project_config()
 
     def _sync_paradigms_to_data_map(self):
@@ -65,13 +65,13 @@ class Project:
 
 
     def save_project_config(self):
-        out_path = os.path.join(self.project_config['project_root'], 'config.json')
+        out_path = os.path.join(self.abs_base, 'config.json')
         with open(out_path, 'w') as f:
             json.dump(self.project_config, f, indent=4)
         return out_path
 
     def load_project_config(self):
-        in_path = os.path.join(self.project_config['project_root'], 'config.json')
+        in_path = os.path.join(self.abs_base, 'config.json')
         if os.path.exists(in_path):
             with open(in_path, 'r') as f:
                 self.project_config = json.load(f)
@@ -92,5 +92,5 @@ if __name__=='__main__':
     else:
         base_dir = input_control.dir_input("Enter directory to create project in... ")
         proj_name = input("Enter name for project... ")
-    proj = Project(base_dir, proj_name)
+    proj = Project(os.path.abspath(base_dir), proj_name)
     proj.add_subject_interactive()

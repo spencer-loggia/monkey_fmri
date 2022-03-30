@@ -499,12 +499,12 @@ def _itkSnapManual(anatP, funcP, outF):
     '''manually register to anat
        author: kurt'''
     print('-'*30)
-    s = 'do manual reg with ITK SNAP: \n\nmain image: \n%s'%(anatP)
-    s+='\n\nsecondaryimage: \n%s'%(funcP)
+    s = 'do manual reg with ITK SNAP: \n\nmain image: \n%s'%(os.path.abspath(anatP))
+    s+='\n\nsecondaryimage: \n%s'%(os.path.abspath(funcP))
     step1NiiP = outF+'/itkManual.nii.gz'
     step1TxtP = outF+'/itkManual.txt'
-    s+='\n\nsave nii as: \n%s'%(step1NiiP)
-    s+='\n\nand transform as: \n%s'%(step1TxtP)
+    s+='\n\nsave nii as: \n%s'%(os.path.abspath(step1NiiP))
+    s+='\n\nand transform as: \n%s'%(os.path.abspath(step1TxtP))
     print(s)
     done = 'y' in input('done? (y/n): ')
     return step1TxtP, step1NiiP

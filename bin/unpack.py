@@ -58,6 +58,8 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id,
             print(tkns)
             tkn_idx = int(input("enter 0 indexed index of token denoting run number "
                                 "(usually is 0 but seems to unexpectedly change sometimes.)"))
+        if len(tkns) < tkn_idx:
+            continue
         this_run_num = int(tkns[tkn_idx])
         if this_run_num in run_numbers:
             if 't2' in run:

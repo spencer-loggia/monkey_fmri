@@ -45,10 +45,18 @@ def select_option_input(option_desc: List[str]):
     for i, option in enumerate(option_desc):
         print(i + 1, ':', option_desc[i])
     good_select = False
+    help_req = False
     while not good_select:
         try:
-            choice = int(input('Enter the number for the desired operation: '))
+            choice = input('Enter the number for the desired operation: ')
+            if '-h' in choice:
+                choice = int(choice.split()[0])
+                help_req = True
+            else:
+                choice = int(choice)
         except ValueError:
             continue
         if 0 < choice <= len(option_desc):
+            if help_req:
+                return choice - 1, True
             return choice - 1

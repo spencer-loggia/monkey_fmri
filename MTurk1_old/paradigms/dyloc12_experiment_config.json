@@ -1,8 +1,8 @@
 {
-    "name": "dyloc",
-    "trs_per_run": 150,
+    "name": "dyloc12",
+    "trs_per_run": 300,
     "is_block": true,
-    "block_length_trs": 6,
+    "block_length_trs": 12,
     "num_orders": 10,
     "num_conditions": 11,
     "condition_integerizer": {

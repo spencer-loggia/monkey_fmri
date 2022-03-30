@@ -435,7 +435,7 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
             res.append(_pipe(*full_run_params[i]))
     betas, hemo, loss_hists = list(zip(*res))
     avg_betas = np.mean(np.stack(betas, axis=0), axis=0)[0]
-    affine = np.mean(np.concatenate(affines, axis=0))
+    affine = np.mean(np.concatenate(affines, axis=0), axis=0)
     beta_nii = nib.Nifti1Image(avg_betas, affine=affine, header=header)
     out_path = os.path.join(output_dir, 'beta_coef.nii')
     nib.save(beta_nii, out_path)
@@ -446,7 +446,7 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
     avg_hemo = np.stack(hemo, axis=0).mean(axis=0)
     if None not in loss_hists:
         avg_loss_hist = np.sum(np.array(loss_hists), axis=0)
-        axs[2].plot(avg_loss_hist)
+        axs[1].plot(avg_loss_hist)
     print(avg_betas.shape)
     fig.show()
     plt.show()
@@ -542,6 +542,7 @@ def create_contrast_surface(anatomical_white_surface: str,
                     '--out', overlay_out_path,
                     '--hemi', hemi,
                     '--regheader', subject_id])
+    return overlay_out_path
 
 
 def labels_to_roi_mask(label_dir, hemi, out_dir, t1, subject_id) -> Tuple[str, list]:
@@ -649,12 +650,19 @@ def _fit_model(model: GaussianMixture, data):
     return assignments, bic
 
 
-def _segment_contrast_image(contrast_data, threshold=5., negative=False, size_thresh=7):
+def _segment_contrast_image(contrast_data, kernel=.6, threshold=5., negative=False, size_thresh=4):
+    """
+    :param contrast_data: sig_val: <contrast_types, w, h, d>
+    :param threshold:
+    :param negative:
+    :param size_thresh:
+    :return:
+    """
     # smooth over
-    smoothed = ts_smooth(contrast_data, temporal_smoothing=True, kernel_std=.6)
+    smoothed = ts_smooth(contrast_data, temporal_smoothing=True, kernel_std=kernel)
     segs = np.zeros_like(smoothed)
     if negative:
-        segs[smoothed < threshold] = 1
+        segs[smoothed < (-1 * threshold)] = 1
         desc = 'negative'
     else:
         segs[smoothed > threshold] = 1
@@ -667,7 +675,7 @@ def _segment_contrast_image(contrast_data, threshold=5., negative=False, size_th
     valid_labels = set(range(1, num_rois)) - invalid_labels
     for label_id in invalid_labels:
         labels[labels == label_id] = 0
-
+    num_rois = len(valid_labels) + 1
     # reindex labels
     id = 1
     for label_id in sorted(list(valid_labels)):
@@ -677,6 +685,54 @@ def _segment_contrast_image(contrast_data, threshold=5., negative=False, size_th
 
     print(num_rois, "potential", desc, "rois detected")
     return labels, len(valid_labels) + 1
+
+
+def get_auto_roi_masks(contrast_paths: List[str], out_dir='./', max_rois=10, min_rois=1, sig_threshold=6):
+    all_c = None
+    for contrast_path in contrast_paths:
+        cnii = nib.load(contrast_path)
+        c = cnii.get_fdata()
+        if all_c is None:
+            all_c = c
+        else:
+            all_c += c
+    all_c /= len(contrast_paths)
+    std = np.std(all_c.flatten())
+    all_c /= std
+    h_num_labels = 99999999
+    l_num_labels = 0
+    count = 0
+    max_iter = 150
+    kernel = .1
+    while (min_rois > l_num_labels or h_num_labels > max_rois) and count < max_iter:
+        pos_labels, num_pos_rois = _segment_contrast_image(all_c, threshold=sig_threshold, kernel=kernel)
+        neg_labels, num_neg_rois = _segment_contrast_image(all_c, threshold=sig_threshold, kernel=kernel, negative=True)
+        h_num_labels = max(num_pos_rois, num_neg_rois)
+        l_num_labels = min(num_pos_rois, num_neg_rois)
+        if h_num_labels > max_rois:
+            kernel += .01
+            sig_threshold += .5
+        elif l_num_labels < min_rois:
+            kernel -= .02
+            sig_threshold -= .25
+        count += 1
+    out_dir = _create_dir_if_needed(os.path.dirname(out_dir), os.path.basename(out_dir))
+    for pos in (True, False):
+        if pos:
+            labels = pos_labels
+            n = "pos"
+        else:
+            labels = neg_labels
+            n = "neg"
+        for roi_idx in np.unique(labels):
+            mask = (labels == roi_idx).astype(float)
+            out_path = os.path.join(out_dir, n + "_autoroi_" + str(int(roi_idx)))
+            mask_nii = nib.Nifti1Image(mask, header=cnii.header, affine=cnii.affine)
+            nib.save(mask_nii, out_path)
+        clean_data = (labels > 0).astype(float)
+        cleaned_nii = nib.Nifti1Image(clean_data, header=cnii.header, affine=cnii.affine)
+        nib.save(cleaned_nii, os.path.join(out_dir, "all_" + n + "_rois.nii"))
+    return out_dir
 
 
 def _plot_3d_scatter(rois, label_id, brain_box, ax, color, size_tresh=0):
