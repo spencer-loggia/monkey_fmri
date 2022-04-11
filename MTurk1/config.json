@@ -1,0 +1,75 @@
+{
+    "project_name": "MTurk1",
+    "paradigms": {
+        "shape_color_basic": "paradigms/shape_color_basic_experiment_config.json"
+    },
+    "subjects": [
+        "wooster"
+    ],
+    "data_map": {
+        "shape_color_basic": {
+            "wooster": {
+                "20220307": {
+                    "imas_used": [
+                        "13",
+                        "17",
+                        "19",
+                        "16",
+                        "14",
+                        "21",
+                        "20",
+                        "15",
+                        "18",
+                        "7",
+                        "8",
+                        "6"
+                    ],
+                    "session_net": "subjects/wooster/sessions/20220307/session_net.json",
+                    "ima_order_map": "subjects/wooster/sessions/20220307/ima_order_map.json",
+                    "beta_file": "subjects/wooster/sessions/20220307/reg_beta_coef.nii"
+                },
+                "20220311": {
+                    "imas_used": [
+                        "13",
+                        "12",
+                        "11",
+                        "9",
+                        "4",
+                        "7",
+                        "10",
+                        "5",
+                        "8",
+                        "6"
+                    ],
+                    "session_net": "subjects/wooster/sessions/20220311/session_net.json",
+                    "ima_order_map": "subjects/wooster/sessions/20220311/ima_order_map.json",
+                    "beta_file": "subjects/wooster/sessions/20220311/reg_beta_coef.nii"
+                },
+                "20220304": {
+                    "imas_used": [
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8",
+                        "9",
+                        "10",
+                        "11",
+                        "12",
+                        "13",
+                        "14",
+                        "15",
+                        "16",
+                        "17",
+                        "18"
+                    ],
+                    "session_net": "subjects/wooster/sessions/20220304/session_net.json",
+                    "ima_order_map": "subjects/wooster/sessions/20220304/ima_order_map.json",
+                    "beta_file": "subjects/wooster/sessions/20220304/reg_beta_coef.nii"
+                }
+            }
+        }
+    }
+}

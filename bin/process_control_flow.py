@@ -16,15 +16,6 @@ class BaseControlNet:
         self.network = nx.DiGraph()
         self.head = []
 
-    def add_bipartite_cell(self, in_data_nodes: list, in_dtypes: list, process_fxn: str,  out_data_nodes: str, fxn_argv=None):
-        # TODO: use this for graph construction instead of manually adding stuff
-        if fxn_argv is None:
-            self.network.add_node(process_fxn, bipartite=1)
-        else:
-            self.network.add_node(process_fxn, bipartite=1, argv=fxn_argv)
-        for in_node in in_data_nodes:
-            self.network.add_node(in_data_nodes)
-
     def init_head_states(self):
         self.head = []
         connected = list(nx.connected_components(self.network.to_undirected()))
@@ -43,12 +34,13 @@ class BaseControlNet:
                     if 'complete' not in self.network.nodes[d]:
                         raise ValueError
                     if self.network.nodes[d]['complete'] or self.network.nodes[d]['complete'] is None:
-                        if 'modified' in self.network.nodes[n] and 'modified' in self.network.nodes[d] and self.network.nodes[d]['complete'] is not None:
-                            if datetime.datetime.fromisoformat(self.network.nodes[d]['modified']) > \
-                               datetime.datetime.fromisoformat(self.network.nodes[n]['modified']) \
-                                    and 'always_show' not in self.network.nodes[n]:
-                                good_head = False
-                                break
+                        # TODO: Needs fixin'
+                        # if 'modified' in self.network.nodes[n] and 'modified' in self.network.nodes[d] and self.network.nodes[d]['complete'] is not None:
+                        #     if datetime.datetime.fromisoformat(self.network.nodes[d]['modified']) > \
+                        #        datetime.datetime.fromisoformat(self.network.nodes[n]['modified']) \
+                        #             and 'always_show' not in self.network.nodes[n]:
+                        #         good_head = False
+                        #         break
                         good_head = True
                     else:
                         good_head = False
@@ -191,9 +183,8 @@ class DefaultSubjectControlNet(BaseControlNet):
         return list(set(sessions + [session.control_loop(path)]))
 
     def add_paradigm_control_set(self):
-        para_path = support_functions.create_load_paradigm(add_new_option=False)
-        with open(para_path, 'r') as f:
-            para_def_dict = json.load(f)
+        para_def_dict, para_path = support_functions._create_paradigm()
+
         para_name = para_def_dict['name']
         subj_root = os.environ.get('FMRI_WORK_DIR')
         self.network.add_node('paradigm_' + para_name, data=None, complete=True, bipartite=0, type='json')
@@ -533,7 +524,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('beta_matrix', 'register_beta_matrix', order=0)  # 01
         self.network.add_edge('ds_t1_masked', 'register_beta_matrix', order=1)
         self.network.add_edge('manual_transform', 'register_beta_matrix', order=2)  # 01
-        self.network.add_edge('auto_composite_transform', 'register_contrast', order=3)  # 01
+        self.network.add_edge('auto_composite_transform', 'register_beta_matrix', order=3)  # 01
         self.network.add_edge('register_beta_matrix', 'reg_beta_matrix', order=0)  # 10
 
         self.network.add_edge('reg_beta_matrix', 'promote_session', order=0)  # 01

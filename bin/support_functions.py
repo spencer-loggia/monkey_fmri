@@ -80,8 +80,8 @@ def get_epis(*argv):
             shutil.copytree(nifti_source, sess_target_dir, ignore=include_patterns(nifti_name))
         else:
             preprocess._create_dir_if_needed(f_dir, str(session_id))
-        SOURCE = tuple([os.path.relpath(os.path.join(sess_target_dir, f), project_root) for f in os.listdir(sess_target_dir)
-                  if f.isnumeric()])
+        SOURCE = [os.path.relpath(os.path.join(sess_target_dir, f), project_root) for f in os.listdir(sess_target_dir)
+                  if f.isnumeric()]
         if nifti_name != 'f.nii.gz':
             for run_dir in SOURCE:
                 raw_nifti = os.path.join(run_dir, nifti_name)
@@ -366,14 +366,14 @@ def _create_paradigm():
     contrasts_id, contrast_desc = _define_contrasts(condition_map, num_conditions)
     para_def_dict['desired_contrasts'] = contrasts_id
     para_def_dict['contrast_descriptions'] = contrast_desc
+    print("select condition that is base case: ")
+    para_def_dict['base_case_condition'] = int(input_control.select_option_input(list(condition_map.keys())))
     para_def_dict['num_runs_included_in_contrast'] = 0
     config_file_path = os.path.relpath(os.path.join(para_dir, name + '_experiment_config.json'), project_root)
     with open(config_file_path, 'w') as f:
         json.dump(para_def_dict, f, indent=4)
-    proj_data['data_map'][name] = {subj: {} for subj in proj_data['subjects']}
-    with open(proj_config, 'w') as f:
-        json.dump(proj_data, f, indent=4)
     print("Successfully saved experiment / paradigm configuration json at", config_file_path)
+    proj_data['data_map'][name] = {subj: {} for subj in proj_data['subjects']}
     proj_data['paradigms'][para_def_dict['name']] = config_file_path
     with open(proj_config, 'w') as f:
         json.dump(proj_data, f, indent=4)
@@ -440,19 +440,21 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     assert type(mion) is bool
     sess_dir = os.path.dirname(source[0])
     design_matrices = []
+    base_conditions = [paradigm_data['base_case_condition']]
+    block_length = int(paradigm_data['block_length_trs'])
+    num_blocks = int(paradigm_data['trs_per_run'] / block_length)
+    num_conditions = int(paradigm_data['num_conditions'])
     for run_dir in source:
         ima = os.path.basename(run_dir).strip()
         order_num = ima_order_map[ima]
-        block_length = int(paradigm_data['block_length_trs'])
-        num_blocks = int(paradigm_data['trs_per_run'] / block_length)
-        num_conditions = int(paradigm_data['num_conditions'])
         order = list(paradigm_data['order_number_definitions'][str(order_num)])
-        design_matrix = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order)
+        design_matrix = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
+                                                              base_conditions)
         design_matrices.append(design_matrix)
     print("using mion: ", mion)
     print('source fname: ', fname)
-    _, beta_path, _ = analysis.get_beta_coefficent_matrix(source[:1], design_matrices[:1], output_dir=sess_dir, fname=fname,
-                                                       mion=mion, use_python_mp=True, auto_conv=False, tr=3)
+    _, beta_path, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir, fname=fname,
+                                                       mion=mion, use_python_mp=False, auto_conv=False, tr=3)
     print("Beta Coefficient Matrix created at: " + str(beta_path))
     return os.path.relpath(beta_path, project_root)
 

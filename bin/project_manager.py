@@ -63,7 +63,6 @@ class Project:
                 self.project_config['data_map'][paradigm] = {subj: {}
                                                              for subj in self.project_config['subjects']}
 
-
     def save_project_config(self):
         out_path = os.path.join(self.abs_base, 'config.json')
         with open(out_path, 'w') as f:

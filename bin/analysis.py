@@ -208,8 +208,9 @@ def bold_response_function(tr=3, time_length=30):
     return -1 * mion_response_function(tr, time_length, oversampling=16.0)
 
 
-def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndarray, conv_size=11, conv_pad=5,
-                                          epochs=30, pid=0, mion=True, auto_conv=True, tr=3):
+def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndarray, base_conditions_idxs,
+                                          num_nuisance=1, conv_size=11, conv_pad=5, epochs=30, pid=0,
+                                          mion=True, auto_conv=True, tr=3, bp_filter=True):
     """
     Hi so this is the meat of the algorithm for finding beta coeficients, e.g. first level MRI analysis.
     The beta coefficients can be thought of as our best guess at the magnitude of the response of a given voxel
@@ -223,6 +224,8 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     We start with an empirical definition of H, and then refine it via gradient decent. (if auto_conv is True)
     The overall optimal solution is found by alternating between fixing Beta and optimizing over H, and fixing H and
     optimizing Beta for a set number of iterations. (a case of the EM algorithm)
+    :param num_nuisance: number of nuisance regressor cols at end of axis 1 of design matrix
+    :param base_conditions_idxs: the indices in design matrix of base case conditions
     :param design_matrix:
     :param gt:
     :param conv_size:
@@ -247,7 +250,10 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
         epochs = 1
 
     conv1d.weight = torch.nn.Parameter(weight, requires_grad=True)
-    design_matrix = torch.from_numpy(design_matrix)[:, None, :].float()  # design matrix should be (k, t) so that k conditions is treated as batch by torch convention
+    features_to_conv = tuple(set(range(design_matrix.shape[-1])[:(-1 * num_nuisance)]) - set(base_conditions_idxs))
+    design_matrix = torch.from_numpy(design_matrix)[:, None, :].float()  # design matrix should be (k, t) so that k
+                                                                         # conditions is treated as batch by torch
+                                                                         # convention
     if np.ndim(gt) > 1:
         gt = gt.reshape(-1, design_matrix.shape[0]).T  # reshape to all time, LL VOXELS
     gt = torch.from_numpy(gt).float()
@@ -259,10 +265,23 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     loss_deconv = torch.nn.MSELoss()
     # mseloss = _ssqrt_lfxn
     print('Starting optimization routine... (pid=', pid, ')')
+    no_conv_mask = torch.zeros_like(design_matrix)
+    print(design_matrix.shape)
+    no_conv_mask[:, :, features_to_conv] += 1 # masks (with zero) things that shouldn't be convolved
+    conv_mask = (no_conv_mask * -1) + 1
 
     def pred_seq(dmat):
-        # optim_deconv.zero_grad()
-        xexp = conv1d(dmat.T).T
+        """
+        Convolves design matrix in differentiable way
+        :param dmat:
+        :return:
+        """
+        # sequence to only convolve the stimulous features (not constants or nuisance) while maintainging
+        # differentiability
+        conv_dmat = dmat * no_conv_mask
+        noconv_dmat = dmat * conv_mask
+        xexp = conv1d(conv_dmat.T).T
+        xexp = xexp + noconv_dmat
         if xexp.shape != dmat.shape:
             raise ValueError("Convolution result must have same dimension as design matrix (" +
                              str(dmat.shape) + ") , not " + str(xexp.shape) +
@@ -310,8 +329,12 @@ def contrast(beta_coef: np.ndarray, contrast_matrix: np.ndarray, pid=0) -> np.nd
     :param contrast_matrix: a (k, m) matrix, where m is the number of contrasts to preform
     :return: resulting contrast, a (w, h, d, m) matrix
     """
-    print(beta_coef.shape, 'x', contrast_matrix.shape, "(pid=", pid, ")")
-    contrasts = beta_coef @ contrast_matrix
+    beta_features = beta_coef.shape[-1]
+    contrast_features = contrast_matrix.shape[0]
+    aug_contrast_mat = np.zeros((beta_features, contrast_matrix.shape[1]))
+    aug_contrast_mat[:contrast_features, :] = contrast_matrix
+    print(beta_coef.shape, 'x', aug_contrast_mat.shape, "(pid=", pid, ")")
+    contrasts = beta_coef @ aug_contrast_mat
     print('=', contrasts.shape, "(pid=", pid, ")")
     return contrasts
 
@@ -362,16 +385,15 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
         res = p.starmap(_create_SNR_volume_wrapper, args)
 
 
-def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int]):
+def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int], base_conditions_idxs: List[int]):
     """
     Creates as num_conditions x time onehot encoded matrix from an order number definition
     :param block_length:
     :param num_blocks:
     :param num_conditions:
     :param order:
-    :param convolve:
-    :param aq_mode:
-    :return:
+    :param base_conditions_idxs: the integers corresponding to base case (usually gray) conditions
+    :return: design matrix with constant one on base conditions and linear drift nuisance regressors on cols -1 and -2
     """
     k = len(order)
     design_matrix = np.zeros((0, num_conditions))
@@ -379,11 +401,16 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         block = np.zeros((block_length, num_conditions), dtype=float)
         active_condition = order[i % k]
         block[:, active_condition] = 1
+        block[:, base_conditions_idxs] = 1
         design_matrix = np.concatenate([design_matrix, block], axis=0)
+    pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix), None]
+    print(pos_linear_drift.shape)
+    print(design_matrix.shape)
+    design_matrix = np.concatenate([design_matrix, pos_linear_drift], axis=1)
     return design_matrix
 
 
-def _pipe(d_mat, run, mion, auto_conv, tr, pid):
+def _pipe(d_mat, run, base_condition_idxs, mion, auto_conv, tr, pid):
     """
     Single thread worker dispatch function.
     :param d_mat: design matrix from fsfast or local
@@ -391,13 +418,13 @@ def _pipe(d_mat, run, mion, auto_conv, tr, pid):
     :param c_mat: contrast test definition matrix
     :return:
     """
-    beta, res, loss_hist = maximal_dynamic_convolution_regressor(d_mat, run, pid=pid, mion=mion, auto_conv=auto_conv,
+    beta, res, loss_hist = maximal_dynamic_convolution_regressor(d_mat, run, base_condition_idxs, pid=pid, mion=mion, auto_conv=auto_conv,
                                                                  tr=tr)
     return beta, res, loss_hist
 
 
-def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.ndarray], output_dir: str, fname: str,
-                               mion=False, use_python_mp=False, auto_conv=False, tr=3):
+def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.ndarray], base_condition_idxs: List[int],
+                               output_dir: str, fname: str, mion=False, use_python_mp=False, auto_conv=False, tr=3):
     run_stack = []
     affines = []
     header = None
@@ -421,6 +448,7 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
             raise FileNotFoundError("Couldn't find " + fname + " in specified source dir " + source_dir)
     full_run_params = list(zip(design_matrices,
                                run_stack,
+                               [base_condition_idxs] * len(run_stack),
                                [mion] * len(run_stack),
                                [auto_conv] * len(run_stack),
                                [tr] * len(run_stack),
@@ -455,12 +483,14 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
 
 def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_descriptors: List[str], output_dir: str):
     """
+    We want voxels in A that are greater than
     """
     beta_nii = nib.load(beta_matrix)
     avg_contrasts = contrast(np.array(beta_nii.get_fdata()), contrast_matrix)
 
     out_paths = []
     for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
+        cond /= np.std(cond.flatten())
         contrast_nii = nib.Nifti1Image(cond, affine=beta_nii.affine, header=beta_nii.header)
         out = os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii')
         nib.save(contrast_nii, out)
@@ -762,6 +792,8 @@ def get_roi_betas(roi_mask_paths, betas_path):
     """
     betas_nii = nib.load(betas_path)
     betas = np.array(betas_nii.get_fdata())
+    if len(betas.shape) == 3:
+        betas = betas[:, :, :, None]
     _, _, _, k = betas.shape
     print('loaded shape: ', betas.shape, 'beta matrix')
     roi_betas = []
@@ -770,7 +802,7 @@ def get_roi_betas(roi_mask_paths, betas_path):
         roi_mask_nii = nib.load(roi_mask_path)
         roi_names.append(os.path.basename(roi_mask_path).split('.')[0])
         roi_mask = np.array(roi_mask_nii.get_fdata())
-        clust_idxs = np.nonzero(roi_mask >= 1)
+        clust_idxs = np.nonzero(roi_mask >= .5)
         roi_beta = betas[clust_idxs[0], clust_idxs[1], clust_idxs[2]].reshape(-1, k)
         roi_betas.append(roi_beta)
     return roi_betas, roi_names
