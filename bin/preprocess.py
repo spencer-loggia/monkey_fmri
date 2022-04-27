@@ -197,7 +197,7 @@ def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
     return mcflt.run()
 
 
-def motion_correction(input_dirs: List[str], ref_path: str, output: Union[None, str] = None, fname='f_sphinx.nii',
+def motion_correction(input_dirs: List[str], ref_path: str, outname='moco.nii.gz', output: Union[None, str] = None, fname='f_sphinx.nii',
                       check_rms=True, abs_threshold=3, var_threshold=1) -> Union[List[str], None]:
     """
     preform fsl motion correction. If check rms is enabled will remove data where too much motion is detected.
@@ -209,6 +209,7 @@ def motion_correction(input_dirs: List[str], ref_path: str, output: Union[None, 
     :param fname:
     :param check_rms:
     :return:
+    saves rms correction displacement at moco.nii.gz_abs.rms
     """
     args = []
     out_dirs = []
@@ -218,10 +219,10 @@ def motion_correction(input_dirs: List[str], ref_path: str, output: Union[None, 
             mcflt = fsl.MCFLIRT()
             if not output:
                 out_dir = source_dir
-                local_out = os.path.join(source_dir, 'moco.nii.gz')
+                local_out = os.path.join(source_dir, outname)
             else:
                 out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                local_out = os.path.join(out_dir, 'moco.nii.gz')
+                local_out = os.path.join(out_dir, outname)
             path = os.path.join(source_dir, fname)
             args.append((path, local_out, ref_path, mcflt))
             out_dirs.append(out_dir)
@@ -296,7 +297,7 @@ def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_l
     return good
 
 
-def get_middle_frame(SOURCE: List[str], output=None, fname='f.nii.gz') -> str:
+def sample_frames(SOURCE: List[str], num_samples, output=None, fname='f.nii.gz') -> str:
     """
     Returns a frame to in the middle of a session
     :param out: output path
@@ -304,22 +305,26 @@ def get_middle_frame(SOURCE: List[str], output=None, fname='f.nii.gz') -> str:
     :param fname: name of nifti in run dirs
     :return: path to output 3d image
     """
-    run_dir = SOURCE[math.floor(len(SOURCE) / 2)]
-    in_file = os.path.join(run_dir, fname)
-    if not output:
-        output = os.path.join(os.path.dirname(run_dir), '3d_epi_rep.nii')
-    if os.path.exists(in_file) and '.nii' in fname:
-        nifti = nib.load(in_file)
-        data = nifti.get_fdata()
-        dims = data.shape
-        if len(dims) != 4:
-            raise ValueError("must pass 4D timeseries inputs")
-        target_idx = math.floor(dims[3] / 2)
-        frame = data[:, :, :, target_idx]
-        frame = np.squeeze(frame)
-        rep_img = nib.Nifti1Image(frame, affine=nifti.affine, header=nifti.header)
-        nib.save(rep_img, output)
-    return output
+    run_dir_idxs = np.random.choice(len(SOURCE), num_samples)
+    out_paths = []
+    for i, run_dir_idx in enumerate(run_dir_idxs):
+        run_dir = SOURCE[run_dir_idx]
+        in_file = os.path.join(run_dir, fname)
+
+        if os.path.exists(in_file) and '.nii' in fname:
+            nifti = nib.load(in_file)
+            data = nifti.get_fdata()
+            dims = data.shape
+            if len(dims) != 4:
+                raise ValueError("must pass 4D timeseries inputs")
+            target_idx = np.random.choice(dims[3])
+            frame = data[:, :, :, target_idx]
+            output = os.path.join(os.path.dirname(run_dir), '3d_epi_rep' + str(run_dir_idx) + '_' + str(target_idx) + '.nii')
+            frame = np.squeeze(frame)
+            rep_img = nib.Nifti1Image(frame, affine=nifti.affine, header=nifti.header)
+            nib.save(rep_img, output)
+            out_paths.append(output)
+    return out_paths
 
 
 def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, abs_threshold, var_threshold) -> List[str]:
@@ -343,6 +348,7 @@ def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, ab
     fig.show()
     fig.savefig(save_loc + '/moco_rms_displacement.eps', format='eps')
     return good_moco
+
 
 
 def _flirt_wrapper(in_file, out_file, mat_out_file, temp_file, flt, dof=12):

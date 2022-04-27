@@ -194,7 +194,6 @@ def apply_warp_4d(source, vol_in_target_space, forward_gross_transform_path=None
 
 def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, out=None):
     """
-    TODO: TEST TRANSFORM ORDRING!!
     :param source:
     :param vol_in_target_space:
     :param forward_gross_transform_path:
@@ -275,25 +274,30 @@ def create_slice_overlays(function_reg_vol, anatomical, reg_contrasts):
 
 
 def get_3d_rep(src: Union[List[str], str]):
+    """
+    :param src:
+    :return:
+    """
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
-    from_epi = input_control.bool_input("Select 3d rep as frame from epis? Otherwise select volume file (in epi space)")
-    if from_epi:
-        return os.path.relpath(preprocess.get_middle_frame(src), project_root)
-    else:
-        return os.path.relpath(input_control.dir_input("Select volume file in epi space (probably called t2.nii.gz)"), project_root)
+    return [os.path.relpath(f, project_root) for f in preprocess.sample_frames(src, 5)]
 
 
 def convert_to_sphinx_vol_wrap(src):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
-    dirname = os.path.dirname(src)
-    fname = os.path.basename(src)
-    out = preprocess.convert_to_sphinx(input_dirs=[dirname], fname=fname)[0]
-    out_path = os.path.join(out, fname.split('.')[0] + '_sphinx.nii')
-    return os.path.relpath(out_path, project_root)
+    if type(src) is str:
+        src = [src]
+    paths = []
+    for path in src:
+        subj_root = os.environ.get('FMRI_WORK_DIR')
+        project_root = os.path.join(subj_root, '..', '..')
+        os.chdir(project_root)
+        dirname = os.path.dirname(path)
+        fname = os.path.basename(path)
+        out = preprocess.convert_to_sphinx(input_dirs=[dirname], fname=fname)[0]
+        out_path = os.path.join(out, fname.split('.')[0] + '_sphinx.nii')
+        paths.append(os.path.relpath(out_path, project_root))
+    return paths
 
 
 def itk_manual(source_vol, template):
@@ -767,6 +771,40 @@ def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, o
     corrected_nii = nibabel.Nifti1Image(corrected_arr, affine=func_nii.affine, header=func_nii.header)
     nibabel.save(corrected_nii, output)
     return output
+
+
+def motion_correction_wrapper(source, targets, fname='f_sphinx.nii'):
+    """
+    :param source:
+    :param targets:
+    :param fname:
+    :return:
+    """
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    project_root = os.path.join(subj_root, '..', '..')
+    os.chdir(project_root)
+    best_disp = 9999999
+    besp_disp_idx = -1
+    for i, t in enumerate(targets):
+        preprocess.motion_correction(source, t, check_rms=False, fname='f_sphinx.nii', outname='temp_moco.nii.gz')
+        sess_dir = os.path.dirname(source[0])
+        disp = 0
+        for run_dir in source:
+            disp_file = os.path.join(run_dir, 'temp_moco.nii.gz_abs.rms')
+            disp_vec = np.loadtxt(disp_file)
+            run_disp = np.mean(disp_vec.flatten())
+            disp += run_disp
+        disp /= len(source)
+        if disp < best_disp:
+            best_disp = disp
+            besp_disp_idx = i
+            for s in source:
+                moco_file = os.path.join(s, 'temp_moco.nii.gz')
+                rename_moco = os.path.join(s, 'moco.nii.gz')
+                os.rename(moco_file, rename_moco)
+    print("Best average displacement: ", str(best_disp))
+    print("Target chosen: " + targets[besp_disp_idx])
+    return source, targets[besp_disp_idx]
 
 
 def time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, target_condition, output_dir,

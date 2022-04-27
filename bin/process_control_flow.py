@@ -410,11 +410,12 @@ class DefaultSessionControlNet(BaseControlNet):
                                    ' a nifti, and load the data into project format (freesurfer convention)')
         self.network.add_node('sphinx_correct', fxn='preprocess.convert_to_sphinx', bipartite=1,
                               desc='Preform Sphinx orientation correction on the 4d raw epi data')
-        self.network.add_node('motion_correction', fxn='preprocess.motion_correction', bipartite=1,
+        self.network.add_node('motion_correction', fxn='support_functions.motion_correction_wrapper', bipartite=1,
                               desc='Linear motion correction to target 3D rep image. All frames in whole session are '
                                    'affine aligned to this target, using mutual information cost. Uses either FSL MCFLIRT '
                                    'or ANTs motion correction under the hood depending on package availability. FSL is '
-                                   'preferred do to faster runtimes with similar results ')
+                                   'preferred due to faster runtimes with similar results. If multiple targets are provided,'
+                                   'returns motion correction that resulted in lowest displacement')
         self.network.add_node('select_3d_rep', fxn='support_functions.get_3d_rep', bipartite=1,
                               desc='Selects a frame from the middle of the run to use as the functional 3d '
                                    'representative volume. This volume defines the functional space. '
@@ -485,6 +486,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('sphinx_epi', 'motion_correction', order=0)  # 01
         self.network.add_edge('3d_epi_rep_sphinx', 'motion_correction', order=1)  # 01
         self.network.add_edge('motion_correction', 'moco_epi', order=0)  # 10
+        self.network.add_edge('motion_correction', '3d_epi_rep_sphinx', order=1)  # 10
 
         self.network.add_edge('3d_epi_rep_sphinx', 'manual_registration', order=0)  # 01
         self.network.add_edge('ds_t1', 'manual_registration', order=1)  # 01
