@@ -34,6 +34,32 @@ def int_list_input(msg: str):
     return nums
 
 
+def tuple_list_input(msg: str, cast=int):
+    grammatical = False
+    tuples = []
+    while not grammatical:
+        sent = input(msg + ' <format: (item_11, ..., item_1n), ..., (item_n1, ..., item_nn)> : ')
+        sent = ''.join(sent.split()) # remove whitespace
+        sent = sent[1:-1]
+        tkns = sent.split('),(')
+        for tkn in tkns:
+            try:
+                tup = eval('[' + tkn + ']')
+                if type(tup) is not list:
+                    raise ValueError
+            except (ValueError, SyntaxError):
+                print("Failed to evaluate term token " + tkn + " to list.")
+                continue
+            try:
+                tup = [cast(t) for t in tup]
+            except ValueError:
+                print('failed to cast some values to ' + str(cast))
+                continue
+            tuples.append(tuple(tup))
+        break
+    return tuples
+
+
 def str_list_input(msg: str):
     sent = input(msg)
     tkns = sent.split()

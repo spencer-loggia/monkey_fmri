@@ -9,15 +9,17 @@ import subprocess
 import numpy as np
 import nibabel as nib
 
-from scipy.stats import gamma
+from scipy.stats import gamma, spearmanr
+from scipy.spatial.distance import pdist
+from scipy.stats import norm
 from scipy.stats import norm
 
 from scipy.ndimage import gaussian_filter, binary_fill_holes, label
 
 from multiprocessing import Pool
 
-import preprocess
-from preprocess import _pad_to_cube
+from . import preprocess
+from .preprocess import _pad_to_cube
 
 from sklearn.mixture import GaussianMixture
 from skimage.measure import regionprops
@@ -98,10 +100,6 @@ def ts_smooth(input_ts: np.ndarray, kernel_std=1., temporal_smoothing=True):
     else:
         smoothed = np.apply_along_axis(lambda m: _smooth(m, kernel_std), axis=3, arr=input_ts)
     return smoothed
-
-
-def rsa():
-    raise NotImplementedError
 
 
 def hyperalign():

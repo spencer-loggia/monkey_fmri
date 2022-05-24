@@ -314,22 +314,34 @@ def itk_manual(source_vol, template):
     return tuple([os.path.relpath(p, project_root) for p in preprocess._itkSnapManual(template, source_vol, out_dir)])
 
 
-def _define_contrasts(condition_integerizer, num_conditions):
+def _define_contrasts(condition_integerizers, base_index):
     print(
-        "Need to define contrasts to preform to continue with analysis. Enter length number conditions vector defining "
-        "contribution for each condition. For example [0, 1, 0, -1] defines a direct comparison between a positive "
-        "condition number 2 and negative condition number 4")
-    print("Recall: conditions are mapped as follows ", condition_integerizer)
+        "Need to define contrasts to preform to continue with analysis. Enter indexes of positive and negative conditions"
+        "for each contrast. If multidexed conditions are being used, may enter tuples of indexes. ")
+    print("Recall: conditions are mapped as follows ", ['condition set ' + str(i) + ' : ' + str(cond_int) for i, cond_int in enumerate(condition_integerizers)])
     add_contrast = True
     contrasts = []
     contrast_descriptions = []
     while add_contrast:
-        contrast = input_control.int_list_input("Enter vector defining constrast: ")
-        if len(contrast) != num_conditions:
-            print('contrast vector must have length equal to the number of conditions.')
-            continue
+        contrast_matrix = np.zeros([len(cond_int) for cond_int in condition_integerizers])
+        pos_conds = input_control.tuple_list_input("Enter positive contrast indexes (-1 will fill axis): ")
+        neg_conds = input_control.tuple_list_input("Enter negative contrast indexes (-1 will fill axis): ")
+        for pos_cond in pos_conds:
+            pos_cond = str(pos_cond)[1:-1]
+            pos_cond = pos_cond.replace("-1", ":")
+            idx = eval("np.index_exp[" + pos_cond + "]")
+            contrast_matrix[idx] = 1
+        for neg_cond in neg_conds:
+            neg_cond = str(neg_cond)[1:-1]
+            neg_cond = neg_cond.replace("-1", ":")
+            idx = eval("np.index_exp[" + neg_cond + "]")
+            contrast_matrix[idx] = -1
+        contrast_matrix[base_index] = 0  # the base case should not be considered in contrasts generally
+        contrast_matrix[contrast_matrix == 1] /= np.count_nonzero(contrast_matrix == 1)
+        contrast_matrix[contrast_matrix == -1] /= np.count_nonzero(contrast_matrix == -1)
+        contrast_matrix = contrast_matrix.tolist()
         contrast_descriptions.append(input("Name this contrast: "))
-        contrasts.append(contrast)
+        contrasts.append(contrast_matrix)
         add_contrast = input_control.bool_input("Add another contrast? ")
     return contrasts, contrast_descriptions
 
@@ -350,28 +362,59 @@ def _create_paradigm():
     para_def_dict['trs_per_run'] = num_trs
     block_design = input_control.bool_input('is this paradigm a block design? ')
     para_def_dict['is_block'] = block_design
-    num_orders = int(input('how many unique orders are there? '))
+    num_order_sets = int(input("How many order sets are there: (i.e. how many indexes are needed to specify a specific order?)"))
+    num_orders = []
+    for order_set in range(num_order_sets):
+        num_orders.append(int(input('how many unique orders are there for condition set ' + str(order_set) + '? ')))
     if block_design:
         para_def_dict['block_length_trs'] = int(input('TRs per block? '))
     else:
         para_def_dict['block_length_trs'] = 1
-    para_def_dict['num_orders'] = num_orders
-    num_conditions = int(input('how many uniques conditions are there? '))
-    para_def_dict['num_conditions'] = num_conditions
-    condition_map = {}
-    for i in range(num_conditions):
-        condition_map[str(i)] = input('description for condition #' + str(i))
-    para_def_dict['condition_integerizer'] = condition_map
-    order_def_map = {}
-    for i in range(num_orders):
-        order_def_map[str(i)] = input_control.int_list_input(
-            'enter the block order if block design, or event sequence if event related for order number ' + str(i))
-    para_def_dict['order_number_definitions'] = order_def_map
-    contrasts_id, contrast_desc = _define_contrasts(condition_map, num_conditions)
+    if len(num_orders) == 1:
+        para_def_dict['num_orders'] = num_orders[0]
+    else:
+        para_def_dict['num_orders'] = num_orders
+    para_def_dict['condition_integerizer'] = []
+    para_def_dict['num_conditions'] = []
+    for order_set in range(num_order_sets):
+        num_conditions = int(input('how many uniques conditions are there in condition set ' + str(order_set) + '? '))
+        temp_cond_map = {}
+        para_def_dict['num_conditions'].append(num_conditions)
+        for i in range(num_conditions):
+            temp_cond_map[str(i)] = input('description for condition set' + str(i) + ' condition #' + str(i))
+        para_def_dict['condition_integerizer'].append(temp_cond_map)
+    if num_order_sets == 1:
+        para_def_dict['num_conditions'] = para_def_dict['num_conditions'][0]
+        para_def_dict['condition_integerizer'] = para_def_dict['condition_integerizer'][0]
+    else:
+        print("WARNING: When filling in order numbeer maps with multiple order sets - if order definition lengths are not equal, "
+              "the two sets will be overlayed by repeating provided sequence, ignoring specified base case conditions. ")
+    if len(num_orders) >= 1:
+        condition_map = para_def_dict['condition_integerizer'][0]
+    else:
+        condition_map = para_def_dict['condition_integerizer']
+    print("Select the base case condition from from primary condition set (condition set 0)")
+    para_def_dict['base_case_condition'] = int(input_control.select_option_input(list(condition_map.keys())))
+    para_def_dict['order_number_definitions'] = []
+    for order_set_idx, num_order in enumerate(num_orders):
+        order_def_map = {}
+        print("Defining order numbers for order set " + str(order_set_idx))
+        for i in range(num_order):
+            order_def_map[str(i)] = input_control.int_list_input(
+                'enter the block order if block design, or event sequence if event related for order number ' + str(i))
+        para_def_dict['order_number_definitions'].append(order_def_map)
+    if len(num_orders) == 1:
+        para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
+    good = False
+    while not good:
+        try:
+            contrasts_id, contrast_desc = _define_contrasts(para_def_dict['condition_integerizer'], para_def_dict['base_case_condition'])
+        except Exception:
+            continue
+        good = True
     para_def_dict['desired_contrasts'] = contrasts_id
     para_def_dict['contrast_descriptions'] = contrast_desc
-    print("select condition that is base case: ")
-    para_def_dict['base_case_condition'] = int(input_control.select_option_input(list(condition_map.keys())))
+
     para_def_dict['num_runs_included_in_contrast'] = 0
     config_file_path = os.path.relpath(os.path.join(para_dir, name + '_experiment_config.json'), project_root)
     with open(config_file_path, 'w') as f:

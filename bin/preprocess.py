@@ -185,6 +185,7 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fn
             res2 = p.starmap(_mri_convert_wrapper, args_flip)
     return input_dirs
 
+
 def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
     mcflt.inputs.in_file = in_file
     mcflt.inputs.cost = 'normcorr'
@@ -315,8 +316,11 @@ def sample_frames(SOURCE: List[str], num_samples, output=None, fname='f.nii.gz')
             nifti = nib.load(in_file)
             data = nifti.get_fdata()
             dims = data.shape
-            if len(dims) != 4:
-                raise ValueError("must pass 4D timeseries inputs")
+            if len(dims) == 3:
+                data = data[:, :, :, None]
+                dims = data.shape
+            elif len(dims) < 3:
+                raise ValueError("must pass 4D timeseries or Volume inputs")
             target_idx = np.random.choice(dims[3])
             frame = data[:, :, :, target_idx]
             output = os.path.join(os.path.dirname(run_dir), '3d_epi_rep' + str(run_dir_idx) + '_' + str(target_idx) + '.nii')
