@@ -208,7 +208,7 @@ def bold_response_function(tr=3, time_length=30):
 
 def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndarray, base_conditions_idxs,
                                           num_nuisance=1, conv_size=11, conv_pad=5, epochs=30, pid=0,
-                                          mion=True, auto_conv=True, tr=3, bp_filter=True):
+                                          mion=True, auto_conv=True, tr=3):
     """
     Hi so this is the meat of the algorithm for finding beta coeficients, e.g. first level MRI analysis.
     The beta coefficients can be thought of as our best guess at the magnitude of the response of a given voxel
@@ -402,9 +402,29 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         block[:, base_conditions_idxs] = 1
         design_matrix = np.concatenate([design_matrix, block], axis=0)
     pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix), None]
-    print(pos_linear_drift.shape)
-    print(design_matrix.shape)
     design_matrix = np.concatenate([design_matrix, pos_linear_drift], axis=1)
+    return design_matrix
+
+
+def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_condition_idxs: List[int]):
+    """
+    Creates a design matrix from a list of lengths number of trs, holding the stimulus condition at each tr.
+    Basically just onehot encodes the run_list, except base case conditions are given a constant value and a
+    Linear Drift regresssor is added.
+    :param run_list:
+    :param num_conditions:
+    :param base_condition_idxs:
+    :return:
+    """
+    num_trs = len(run_list)
+    design_matrix = np.zeros((num_trs, num_conditions + 1))
+    for i in range(num_conditions):
+        if i in base_condition_idxs:
+            design_matrix[:, i] = 1
+        else:
+            design_matrix[run_list==i, i] = 1
+    pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix), None]
+    design_matrix[:, -1] = pos_linear_drift
     return design_matrix
 
 

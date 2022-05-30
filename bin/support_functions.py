@@ -1,4 +1,4 @@
-
+import pandas
 import torch
 from typing import List, Union, Tuple
 
@@ -360,7 +360,9 @@ def _create_paradigm():
     para_def_dict['name'] = name
     num_trs = int(input('how many trs are in each run ? '))
     para_def_dict['trs_per_run'] = num_trs
-    block_design = input_control.bool_input('is this paradigm a block design? ')
+    block_design = input_control.bool_input('Define stimuli order using standar block definitions? Otherwise must '
+                                            'provide a length number of trs list of condition indexes for each '
+                                            'order number. ')
     para_def_dict['is_block'] = block_design
     num_order_sets = int(input("How many order sets are there: (i.e. how many indexes are needed to specify a specific order?)"))
     num_orders = []
@@ -393,18 +395,37 @@ def _create_paradigm():
         condition_map = para_def_dict['condition_integerizer'][0]
     else:
         condition_map = para_def_dict['condition_integerizer']
-    print("Select the base case condition from from primary condition set (condition set 0)")
+    print("Choose the base case condition from from primary condition set (condition set 0)")
     para_def_dict['base_case_condition'] = int(input_control.select_option_input(list(condition_map.keys())))
     para_def_dict['order_number_definitions'] = []
-    for order_set_idx, num_order in enumerate(num_orders):
-        order_def_map = {}
-        print("Defining order numbers for order set " + str(order_set_idx))
-        for i in range(num_order):
-            order_def_map[str(i)] = input_control.int_list_input(
-                'enter the block order if block design, or event sequence if event related for order number ' + str(i))
-        para_def_dict['order_number_definitions'].append(order_def_map)
-    if len(num_orders) == 1:
-        para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
+
+    load_orders_from_file = False
+    if not block_design:
+        print("Since you're not generating order defs automatically, recommend loading from file")
+        load_orders_from_file = input_control.bool_input("Do you want to do that? ")
+    if load_orders_from_file:
+        print("Please choose a tsv / csv file with order numbers as columns and a row for each tr, filled with "
+              "condition index values, or tuples of condition index values. If multiple condition sets are being used, "
+              "load an order def file for each.")
+        for order_set_idx, num_order in enumerate(num_orders):
+            print("Defining order numbers for condition set " + str(order_set_idx))
+            file = input_control.dir_input("Path to file: ")
+            df = pandas.read_csv(file)
+            df.columns = [int(c) for c in df.columns]
+            order_def_map = df.reset_index().to_dict(orient='list')
+            para_def_dict['order_number_definitions'].append(order_def_map)
+        if len(num_orders) == 1:
+            para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
+    else:
+        for order_set_idx, num_order in enumerate(num_orders):
+            order_def_map = {}
+            print("Defining order numbers for condition set " + str(order_set_idx))
+            for i in range(num_order):
+                order_def_map[str(i)] = input_control.int_list_input(
+                    'enter the block order if block design, or event sequence if event related for order number ' + str(i))
+            para_def_dict['order_number_definitions'].append(order_def_map)
+        if len(num_orders) == 1:
+            para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
     good = False
     while not good:
         try:
@@ -475,6 +496,15 @@ def create_load_ima_order_map(source):
 
 
 def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii'):
+    """
+    TODO: Still needs some work with regards to nd design matrices.
+    :param source:
+    :param paradigm_path:
+    :param ima_order_map_path:
+    :param mion:
+    :param fname:
+    :return:
+    """
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)

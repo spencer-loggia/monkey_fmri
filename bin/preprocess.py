@@ -33,10 +33,7 @@ from nilearn import image as nimg
 from matplotlib import pyplot as plt
 from multiprocessing import Pool
 
-'''
-TODO:
-Slice timing correction
-'''
+
 def _create_dir_if_needed(base: str, name: str):
     out_dir = os.path.join(base, name)
     if not os.path.exists(out_dir):
