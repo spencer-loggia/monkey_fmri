@@ -1,8 +1,10 @@
+import matplotlib.pyplot as plt
 import numpy as np
 from typing import List
 
 import torch
 import math
+import random
 from torch.utils.data import DataLoader
 import networkx as nx
 
@@ -39,11 +41,12 @@ def _compute_convolutional_sequence(in_spatial, out_spatial, in_channels, out_ch
     """
     stride = 1
     pad = .1
-    kernel = min(4, in_spatial)
-    while int(pad) != pad:
+    kernel = min(6, in_spatial)
+    while round(pad) != pad or pad >= kernel:
         # compute padding that will maintain spatial dims during actual conv
-        pad = (((out_spatial - 1) * stride) - in_spatial + kernel) / 2
         kernel = max(kernel - 1, 1)
+        pad = (((in_spatial - 1) * stride) - in_spatial + kernel) / 2
+
     # now compute pool size needed to match spatial dims
     if in_spatial >= out_spatial:
         rescale_kernel = int(in_spatial / out_spatial)
@@ -75,7 +78,7 @@ class BrainMimic:
             self.brain.add_node(n,
                                 roi_name=data['roi_name'],
                                 shape=roi_shape,
-                                neurons=torch.zeros(roi_shape),
+                                neurons=torch.normal(0, .25, roi_shape),
                                 rdm=None,
                                 computed=False)
             print('added computational node', n, data['roi_name'], 'with size', roi_shape)
@@ -104,8 +107,13 @@ class BrainMimic:
         self.brain.add_edge(-1, self.head_node,
                             sequence=initial_sequence)
         self.optimizer = torch.optim.SGD(lr=.01, params=self.params)
+        self.schedule = torch.optim.lr_scheduler.StepLR(self.optimizer, 10, .25)
 
-    def fit_rdms(self, stimuli: List[List[torch.Tensor]], epochs=1000):
+    def _detach(self):
+        for n in self.brain.nodes():
+            self.brain.nodes[n]['neurons'] = self.brain.nodes[n]['neurons'].detach()
+
+    def fit_rdms(self, stimuli: List[List[torch.Tensor]], epochs=1000, stimulus_frames = 5, verbose=True):
         """
         Attempt to find  structure for the brain network that matches observed geometry.
 
@@ -116,51 +124,70 @@ class BrainMimic:
         :return: None
         """
         # optimize over all incoming edges with source node thats been computed.
+        loss_history = []
         for epoch in range(epochs):
             batch_stim = [stim_cond[np.random.randint(0, len(stim_cond))] for stim_cond in stimuli]
             batch_stim = torch.stack(batch_stim, dim=0)
             cond_presentation_order = torch.randperm(len(batch_stim))
-            stimulus_frames = 50  # dts to present stimulus
             run_list = []
             # show the network the stimuli from head
             self.optimizer.zero_grad()  # this actually isn't theoretically necessary here :o but it will free up ram.
+            self._detach()  # discard backward hooks to last epoch
             activation_states = {n: [] for n in self.brain.nodes if n != -1}
             for cond in cond_presentation_order:
                 stim = batch_stim[cond]
+                if len(stim.shape) < 4:
+                    stim = stim[None, :, :, :]
                 self.brain.nodes[-1]['neurons'][:] = stim
                 for i in range(stimulus_frames):
+                    if verbose:
+                        print("presenting cond ", cond, "frame", i)
                     run_list.append(cond)
+                    nodes = list(self.brain.nodes())
+                    random.shuffle(nodes)
                     # find inputs (i.e. the set of edges from predecessor nodes marked as computed)
-                    for node in self.brain.nodes():
+                    for node in nodes:
+                        if verbose:
+                            print("computing inputs to node", self.brain.nodes[node]['roi_name'], " on epoch", epoch)
                         if node == -1:
                             # if initial stimulus node continue
                             continue
                         for pred in self.brain.predecessors(node):
                             state = self.brain.nodes[pred]['neurons']
+                            if len(state.shape) == 3:
+                                state = state[None, :, :, :]
                             connection_sequence = self.brain.edges[(pred, node)]['sequence']
                             for step in connection_sequence:
-                                state = step(state)
-                            try:
-                                self.brain.nodes[node]['neurons'] += state
-                            except Exception:
-                                print('bad')
-                        activation_states[node].append(self.brain.nodes['neurons'])
-            design_matrix = analysis.design_matrix_from_run_list(run_list, len(cond_presentation_order),
-                                                                 base_condition_idxs=[])  # t x k
+                                state = step(state.clone())
+                            self.brain.nodes[node]['neurons'] = self.brain.nodes[node]['neurons'] + state
+                        activation_states[node].append(self.brain.nodes[node]['neurons'].flatten().clone())
+            design_matrix = torch.from_numpy(analysis.design_matrix_from_run_list(run_list, len(cond_presentation_order),
+                                                                                  base_condition_idxs=[])).float() # t x k
             loss = torch.Tensor([0.])
             for node in activation_states.keys():
-                time_course = torch.stack(activation_states[node].flatten(), dim=0)  # n x t
-                betas = torch.inverse(design_matrix.T @ design_matrix) @ design_matrix.T @ time_course
-                rdm = representation_geometry.dissimilarity(betas, metric='dot')
+                time_course = torch.stack(activation_states[node], dim=0)  # n x t
+                betas = (torch.inverse(design_matrix.T @ design_matrix) @ design_matrix.T @ time_course).T
+                rdm = representation_geometry.dissimilarity(betas[:, :-1], metric='dot')
                 self.brain.nodes[node]['rdm'] = rdm
-                target_brain_rdm = self.structure[node]['rdm']
+                target_brain_rdm = torch.Tensor(self.structure.nodes[node]['rdm'])
                 local_loss = self.rdm_loss_fxn(rdm, target_brain_rdm)
                 loss = loss + local_loss
+            if verbose:
+                print("computed beta coefficients")
             # finalize loss term
-            l1_reg = sum([torch.abs(w).sum() for w in self.params])  # enforce sparsity & keep weights smallish
-            loss = loss + .1 * l1_reg
-            loss.backward()
+            l1_reg = sum([torch.abs(w).sum() for w in self.params]) / len(self.params) # enforce sparsity & keep weights smallish
+            reg_weight = .001
+            reg_loss = loss + reg_weight * l1_reg
+            # save states
+            nx.write_gpickle(self.brain, '../MTurk1/misc_testing_files/brain_mimic_epoch_' + str(epoch))
+            reg_loss.backward()
             self.optimizer.step()
+            self.schedule.step()
+            loss_history.append(reg_loss.detach().item())
+            if verbose:
+                print("completed optimization subroutine: LOSS = ", loss.detach().item(), "REGULARIZATION = ", reg_weight * l1_reg)
+        plt.plot(np.arange(epochs), np.array(loss_history))
+        return loss_history
 
     def fit_task(self):
         # A method that should optimize our brain to actually preform the task
