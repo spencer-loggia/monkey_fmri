@@ -82,7 +82,8 @@ def pairwise_rsa(beta: torch.Tensor, atlas: torch.Tensor, min_roi_dim=5):
         for j, target in enumerate(unique_filtered[i + 1:]):
             j_t = j + i + 1
             print("Computed Correlation ", src, ", ", target)
-            spear_corr = spearman_correlation(roi_dissimilarity[i], roi_dissimilarity[j_t])
+            #spear_corr = spearman_correlation(roi_dissimilarity[i], roi_dissimilarity[j_t])
+            spear_corr = torch.cosine_similarity(roi_dissimilarity[i], roi_dissimilarity[j_t], dim=0)
             adjacency[i, j_t] = spear_corr
             adjacency[j_t, i] = spear_corr
     return adjacency, unique_filtered, roi_dissimilarity
