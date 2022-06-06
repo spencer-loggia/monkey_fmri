@@ -319,7 +319,7 @@ def _define_contrasts(condition_integerizers, base_index):
     print(
         "Need to define contrasts to preform to continue with analysis. Enter indexes of positive and negative conditions"
         "for each contrast. If multidexed conditions are being used, may enter tuples of indexes. ")
-    print("Recall: conditions are mapped as follows ", ['condition set ' + str(i) + ' : ' + str(cond_int) for i, cond_int in enumerate(condition_integerizers)])
+    print("Recall: conditions are mapped as follows ", ['condition set ' + str(i) + ' : ' + condition_integerizers[cond_int] for i, cond_int in enumerate(condition_integerizers)])
     add_contrast = True
     contrasts = []
     contrast_descriptions = []
@@ -329,22 +329,12 @@ def _define_contrasts(condition_integerizers, base_index):
         contrast_matrix_shape = [len(condition_integerizers)]
     while add_contrast:
         contrast_matrix = np.zeros(contrast_matrix_shape)
-        if len(contrast_matrix_shape) > 1:
-            pos_conds = input_control.tuple_list_input("Enter positive contrast indexes (-1 will fill axis): ")
-            neg_conds = input_control.tuple_list_input("Enter negative contrast indexes (-1 will fill axis): ")
-        else:
-            pos_conds = [tuple([num]) for num in input_control.int_list_input("Enter positive contrast indexes: ")]
-            neg_conds = [tuple([num]) for num in input_control.int_list_input("Enter negative contrast indexes: ")]
+        pos_conds = input_control.int_list_input("Enter positive contrast indexes: ")
+        neg_conds = input_control.int_list_input("Enter negative contrast indexes: ")
         for pos_cond in pos_conds:
-            pos_cond = str(pos_cond)[1:-1]
-            pos_cond = pos_cond.replace("-1", ":")
-            idx = eval("np.index_exp[" + pos_cond + "]")
-            contrast_matrix[idx] = 1
+            contrast_matrix[pos_cond] = 1
         for neg_cond in neg_conds:
-            neg_cond = str(neg_cond)[1:-1]
-            neg_cond = neg_cond.replace("-1", ":")
-            idx = eval("np.index_exp[" + neg_cond + "]")
-            contrast_matrix[idx] = -1
+            contrast_matrix[neg_cond] = -1
         contrast_matrix[base_index] = 0  # the base case should not be considered in contrasts generally
         contrast_matrix[contrast_matrix == 1] /= np.count_nonzero(contrast_matrix == 1)
         contrast_matrix[contrast_matrix == -1] /= np.count_nonzero(contrast_matrix == -1)
@@ -373,16 +363,21 @@ def _create_paradigm():
                                                 "future convenience and reproducibility, unless your orders are in "
                                                 "someway stochastic)")
     para_def_dict['is_runtime_defined'] = not predefine_orders
-    block_design = input_control.bool_input('Define stimuli order using standard block definitions? Otherwise must '
-                                            'provide a length number of trs list of condition indexes for each '
-                                            'order number. ')
+
+    if predefine_orders:
+        block_design = input_control.bool_input('Define stimuli order using standard block definitions? Otherwise must '
+                                                'provide a length number of trs list of condition indexes for each '
+                                                'order number. ')
+    else:
+        block_design = False
     para_def_dict['is_block'] = block_design
     # BELOW IS LOCKED TO ONE UNTIL IMPLEMENTATION IS DONE
     # num_order_sets = int(input("How many stimuli condition sets are there: (i.e. how many indexes are needed to specify a specific condition?)"))
     num_order_sets = 1
     num_orders = []
-    for order_set in range(num_order_sets):
-        num_orders.append(int(input('how many unique orders are there for condition set ' + str(order_set) + '? ')))
+    if predefine_orders:
+        for order_set in range(num_order_sets):
+            num_orders.append(int(input('how many unique orders are there for condition set ' + str(order_set) + '? ')))
     if block_design:
         para_def_dict['block_length_trs'] = int(input('TRs per block? '))
     else:
@@ -400,7 +395,7 @@ def _create_paradigm():
         temp_cond_map = {}
         para_def_dict['num_conditions'].append(num_conditions)
         for i in range(num_conditions):
-            temp_cond_map[str(i)] = input('description for condition set' + str(i) + ' condition #' + str(i))
+            temp_cond_map[str(i)] = input('description for condition set' + str(order_set) + ' condition #' + str(i))
         para_def_dict['condition_integerizer'].append(temp_cond_map)
 
     if num_order_sets == 1:
@@ -544,6 +539,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     sess_dir = os.path.dirname(source[0])
     design_matrices = []
     base_conditions = [paradigm_data['base_case_condition']]
+    condition_names = paradigm_data['condition_integerizer']
     block_length = int(paradigm_data['block_length_trs'])
     num_blocks = int(paradigm_data['trs_per_run'] / block_length)
     num_conditions = int(paradigm_data['num_conditions'])
@@ -556,6 +552,10 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
         ima_order = pd.read_csv(input_control.dir_input("Path to csv file: "))
         for c_name, c in ima_order.iteritems():
             clist = c.tolist()
+            # check if integers
+            if False in [str(item).isnumeric() for item in clist]:
+                cond_int = {v: k for k, v in condition_names.items()}
+                clist = [int(cond_int[cond_name]) for cond_name in clist]
             design_matrices.append(analysis.design_matrix_from_run_list(clist,
                                                                         num_conditions,
                                                                         base_conditions))
