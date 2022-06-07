@@ -3,11 +3,12 @@ import numpy as np
 import nibabel as nib
 import graspologic as gr
 import sklearn as sk
+from scipy.stats import spearmanr
 
 _distance_metrics_ = ['euclidian', 'pearson', 'spearman', 'dot', 'cosine']
 
 
-def _dot_pdist(arr: torch.Tensor, normalize=True):
+def _dot_pdist(arr: torch.Tensor, normalize=False):
     """
     arr should be 2D < observations(v) x conditions (k) >
     if normalixe is true, equivilant to pairwise cosine similarity
@@ -28,7 +29,7 @@ def dissimilarity(beta: torch.Tensor, metric='dot'):
     if metric not in _distance_metrics_:
         raise ValueError('metric must be one of ' + str(_distance_metrics_))
     elif metric == 'dot':
-        rdm = _dot_pdist(beta)
+        rdm = _dot_pdist(beta, normalize=False)
     elif metric == 'cosine':
         rdm = _dot_pdist(beta, normalize=True)
     else:
@@ -75,16 +76,20 @@ def pairwise_rsa(beta: torch.Tensor, atlas: torch.Tensor, min_roi_dim=5):
         roi_betas = beta[atlas == roi_id]
         if len(roi_betas) > min_roi_dim:
             unique_filtered.append(roi_id)
-            rdm = dissimilarity(roi_betas, metric='cosine')
-            roi_dissimilarity.append(rdm / torch.sum(rdm))
+            rdm = dissimilarity(roi_betas, metric='dot')
+            roi_dissimilarity.append(rdm)
     adjacency = torch.zeros([len(unique_filtered), len(unique_filtered)])
+    pvals = torch.zeros([len(unique_filtered), len(unique_filtered)])
     for i, src in enumerate(unique_filtered):
         for j, target in enumerate(unique_filtered[i + 1:]):
             j_t = j + i + 1
             print("Computed Correlation ", src, ", ", target)
-            #spear_corr = spearman_correlation(roi_dissimilarity[i], roi_dissimilarity[j_t])
-            spear_corr = torch.cosine_similarity(roi_dissimilarity[i], roi_dissimilarity[j_t], dim=0)
+            spear_corr, pval = spearmanr(roi_dissimilarity[i], roi_dissimilarity[j_t])
+            # dis_i = torch.log_softmax(roi_dissimilarity[j_t], dim=0)[None, :]
+            # dis_j = torch.log_softmax(roi_dissimilarity[i], dim=0)[None, :]
             adjacency[i, j_t] = spear_corr
             adjacency[j_t, i] = spear_corr
-    return adjacency, unique_filtered, roi_dissimilarity
+            pvals[i, j_t] = pval
+            pvals[j_t, i] = pval
+    return adjacency, unique_filtered, roi_dissimilarity, pvals
 
