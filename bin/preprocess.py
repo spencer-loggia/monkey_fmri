@@ -512,8 +512,8 @@ def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2):
         across_modalities=True,
         outPref='antsReg',
         run=True,n_jobs=n_jobs)
-    frwdTrnsP = os.path.join(outF, '/Composite.h5')
-    invTrnsP = os.path.join(outF, './InverseComposite.h5')
+    frwdTrnsP = os.path.join(outF, 'Composite.h5')
+    invTrnsP = os.path.join(outF, 'InverseComposite.h5')
     return frwdTrnsP, invTrnsP
 
 

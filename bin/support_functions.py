@@ -1066,7 +1066,7 @@ def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
                 ima_order_data = json.load(f)
             sess_dir = os.path.dirname(sessions_dict[session_id]['session_net'])
             manual_transform = os.path.join(sess_dir, 'itkManual.txt')
-            fine_forward_transform = os.path.join(sess_dir, 'antsRegComposite.h5')
+            fine_forward_transform = os.path.join(sess_dir, 'Composite.h5')
             functional_dirs = [os.path.join(sess_dir, str(ima)) for ima in sessions_dict[session_id]['imas_used']]
             ts_func_path = time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, condition, sess_dir,
                                                                fname='epi_masked.nii', pre_onset_blocks=pre_block, post_offset_blocks=post_block)
