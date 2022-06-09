@@ -416,14 +416,16 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     :param base_condition_idxs:
     :return:
     """
+    if type(run_list) is list:
+        run_list = np.array(run_list)
     num_trs = len(run_list)
     design_matrix = np.zeros((num_trs, num_conditions + 1))
     for i in range(num_conditions):
         if i in base_condition_idxs:
             design_matrix[:, i] = 1
         else:
-            design_matrix[run_list==i, i] = 1
-    pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix), None]
+            design_matrix[run_list == i, i] = 1
+    pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix)]
     design_matrix[:, -1] = pos_linear_drift
     return design_matrix
 

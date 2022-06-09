@@ -180,7 +180,7 @@ class DefaultSubjectControlNet(BaseControlNet):
             mion = bool_input("Is this session using MION?")
             session.network.graph['is_mion'] = mion
         session.network.nodes['create_beta_matrix']['argv'] = session.network.graph['is_mion']
-        return list(set(sessions + [session.control_loop(path)]))
+        return list(set(sessions + [os.path.relpath(session.control_loop(path), subj_root)]))
 
     def add_paradigm_control_set(self):
         para_def_dict, para_path = support_functions._create_paradigm()
@@ -191,6 +191,7 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_node('beta_' + para_name, data=None, complete=False, bipartite=0, type='4d_volume', space='ds_t1_native')
         self.network.add_node('contrasts_' + para_name, data=[], complete=False, bipartite=0, type='volume', space='ds_t1_native')
         self.network.add_node('sigsurfaces_' + para_name, data=[], complete=False, bipartite=0, type='overlay', space='t1_native')
+
 
         self.network.add_node('create_' + para_name + '_betas', bipartite=1, fxn='support_functions.construct_complete_beta_file',
                                desc="Gets the beta coefficient matrix files from sessions that use the " + para_name +
@@ -210,11 +211,14 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         self.network.add_node('automatic_' + para_name + '_volume_rois', bipartite=1,
                               fxn='support_functions.automatic_volume_rois')
+        self.network.add_node('delete_paradigm_' + para_name, bipartite=1, fxn='self.remove_paradigm_control_set')
 
         self.network.add_edge('add_new_paradigm', 'paradigm_' + para_name, order=0)  # 10
 
         self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + '_betas', order=0)  # 01
         self.network.add_edge('create_' + para_name + '_betas', 'beta_' + para_name, order=0)  # 10
+
+        self.network.add_edge('paradigm_' + para_name, 'delete_paradigm_' + para_name, order=0) #01
 
         self.network.add_edge('beta_' + para_name, 'create_' + para_name + '_contrasts', order=0)  # 01
         self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + '_contrasts', order=1)  # 01
@@ -235,6 +239,20 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         self.serialize(os.path.join(subj_root, 'subject_net.json'))
         return para_path
+
+    def remove_paradigm_control_set(self, paradigm_path):
+        para_name, remove = support_functions.delete_paradigm(paradigm_path)
+        if remove:
+            self.network.remove_node('paradigm_' + para_name)
+            self.network.remove_node('beta_' + para_name)
+            self.network.remove_node('contrasts_' + para_name)
+            self.network.remove_node('sigsurfaces_' + para_name)
+
+            self.network.remove_node('create_' + para_name + '_betas')
+            self.network.remove_node('create_' + para_name + '_contrasts')
+            self.network.remove_node('create_' + para_name + '_sigsurface_overlays')
+
+            self.network.remove_node('automatic_' + para_name + '_volume_rois')
 
     def initialize_processing_structure(self):
         """

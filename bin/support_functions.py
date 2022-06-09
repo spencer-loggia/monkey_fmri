@@ -549,13 +549,28 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     if runtime_order_defs:
         print("Stimuli orders are defined manually at runtime for this paradigm. "
               "Please load order csv file (rows are trs, cols are IMAs)")
-        ima_order = pd.read_csv(input_control.dir_input("Path to csv file: "))
+        ima_order = pd.read_csv(input_control.dir_input("Path to csv file: "), sep='\t')
         for c_name, c in ima_order.iteritems():
+            c_name = c_name.strip()
+            if c_name not in ima_order_map:
+                # this ima wasn't used
+                continue
             clist = c.tolist()
             # check if integers
             if False in [str(item).isnumeric() for item in clist]:
-                cond_int = {v: k for k, v in condition_names.items()}
-                clist = [int(cond_int[cond_name]) for cond_name in clist]
+                cond_int = {v.lower().strip(): k for k, v in condition_names.items()}
+                int_clist = []
+                for cond_name in clist:
+                    try:
+                        int_cond = int(cond_int[cond_name.lower().strip()])
+                        int_clist.append(int_cond)
+                    except KeyError:
+                        print("condition descriptor", cond_name, "in the runlist did not match any known condition in the paradigm.")
+                        exit(1)
+                clist = int_clist
+            else:
+                clist = [int(c) for c in clist]
+
             design_matrices.append(analysis.design_matrix_from_run_list(clist,
                                                                         num_conditions,
                                                                         base_conditions))
@@ -563,8 +578,8 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
                 paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
             else:
                 paradigm_data['order_number_definitions'][os.path.basename(sess_dir)] = {c_name: clist}
-            with open(paradigm_path, 'w') as f:
-                json.dump(paradigm_data, f)
+        with open(paradigm_path, 'w') as f:
+            json.dump(paradigm_data, f, indent=4)
 
     else:
         for run_dir in source:
@@ -674,6 +689,27 @@ def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *a
     proj_config['data_map'][para_name][subject][session_id] = session_info
     with open(proj_config_path, 'w') as f:
         json.dump(proj_config, f, indent=4)
+
+
+def delete_paradigm(paradigm_path):
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    project_root = os.path.join(subj_root, '..', '..')
+    os.chdir(project_root)
+    proj_config_path = 'config.json'
+    with open(proj_config_path, 'r') as f:
+        proj_config = json.load(f)
+    with open(paradigm_path, 'r') as f:
+        paradigm_data = json.load(f)
+    para_name = paradigm_data['name']
+    remove = input_control.bool_input("WARNING: Paradigm " + para_name
+                                      + " and associated data will be permanently removed. Continue? ")
+    if remove:
+        proj_config['paradigms'].pop(para_name)
+        proj_config['data_map'].pop(para_name)
+
+        with open(proj_config_path, 'w') as f:
+            json.dump(proj_config, f, indent=4)
+    return para_name, remove
 
 
 def demote_session(paradigm_path, *argv):
