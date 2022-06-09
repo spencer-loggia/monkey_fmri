@@ -402,7 +402,8 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         block[:, base_conditions_idxs] = 1
         design_matrix = np.concatenate([design_matrix, block], axis=0)
     pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix), None]
-    design_matrix = np.concatenate([design_matrix, pos_linear_drift], axis=1)
+    exp_drift = np.exp(-1 * np.e * np.arange(0, 1, (1 / len(design_matrix))))[:len(design_matrix), None]
+    design_matrix = np.concatenate([design_matrix, pos_linear_drift, exp_drift], axis=1)
     return design_matrix
 
 
@@ -419,14 +420,16 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     if type(run_list) is list:
         run_list = np.array(run_list)
     num_trs = len(run_list)
-    design_matrix = np.zeros((num_trs, num_conditions + 1))
+    design_matrix = np.zeros((num_trs, num_conditions + 2))
     for i in range(num_conditions):
         if i in base_condition_idxs:
             design_matrix[:, i] = 1
         else:
             design_matrix[run_list == i, i] = 1
     pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix)]
-    design_matrix[:, -1] = pos_linear_drift
+    exp_drift = np.exp(-1 * np.e * np.arange(0, 1, (1 / len(design_matrix))))[:len(design_matrix)]
+    design_matrix[:, -2] = pos_linear_drift
+    design_matrix[:, -1] = exp_drift
     return design_matrix
 
 
