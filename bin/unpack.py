@@ -36,6 +36,45 @@ def unpack(inDir,outDir,adj=False,dirdepth=5, nifti_name='f'):
     return 'Completed'
 
 
+def unpack_other_list(inDir: str, outDir: str, ima_numbers: List[int], session_id):
+    """
+    Unpack a list of images (non-runs) to a target directory.
+    :param inDir: A directory from a day of scanning containing mulitiple runs
+    :param outDir: target directory of session
+    :param ima_numbers: a list of imas
+    :param session_id: The session id
+    :return:
+    """
+    ima_dirs = os.listdir(inDir)
+    session_dir = os.path.join(outDir,str(session_id))
+    image_out_dir = _create_dir_if_needed(session_dir,'images_other')
+    to_unpack = []
+    imgs = []
+    tkn_idx = None
+
+    print('ima numbers ', ima_numbers)
+    for ima in ima_dirs:
+        if ima[0] == '.':
+            continue
+        tkns = ima.split('_')
+        if tkn_idx is None:
+            print(tkns)
+            tkn_idx = int(input("enter 0 indexed index of token denoting IMA number "
+                                "(this is usually the 0th index but might not be always.)"))
+        if len(tkns) < tkn_idx:
+            continue
+        this_ima_num = int(tkns[tkn_idx])
+        if this_ima_num in ima_numbers:
+            print(ima)
+            imgs.append(ima)
+            to_unpack.append((os.path.join(inDir,ima),image_out_dir,False,2,ima))
+    with Pool() as p:
+        p.starmap(unpack, to_unpack)
+    return imgs
+
+
+
+
 def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id, nifti_name: str = 'f'):
     """
     Unpack a list of runs to target dir.
@@ -95,18 +134,6 @@ def scan_log_cmd(inF, outF):
     print('Done')
 
 
-def unpack_dcmunpack(inF,outF,runs,HDR):
-    runlist = ''
-    HDRs = ['mion','bold']
-    if HDR.lower() in HDRs:
-        for x in runs:
-            runlist += '\ -run %s %s nii f.nii '%(x,HDR)
-        inxF = os.path.join(outF,'dcm.index.dat')
-        cmd = 'dcmunpack -src %s -index-in %s -targ %s %s'%(inF,inxF,outF,runlist)
-        call(cmd,shell=True)
-    else:
-        print('Please enter either "MION" or "BOLD"')
-
 
 def create_dir_structure(input_dir: str, output_root_dir: str) -> List[str]:
     """
@@ -157,12 +184,6 @@ def create_dir_structure(input_dir: str, output_root_dir: str) -> List[str]:
     return functional_dirs
 
 
-if __name__ == '__main__':
-    # dirty test
-    dicomDir = '/Users/loggiasr/Projects/fmri/monkey_fmri/wooster_merridian_list_mgh4chan'
-    run_numbers = [9, 10, 11, 12, 20, 21, 22, 23, 24]
-    sessDir = '/Users/loggiasr/Projects/fmri/monkey_fmri/WoosterMerridianMGH4CHAN/functional/'
-    unpack_run_list(dicomDir, sessDir, run_numbers, 'f')
 
         
     

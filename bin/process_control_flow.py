@@ -21,7 +21,7 @@ class BaseControlNet:
         connected = list(nx.connected_components(self.network.to_undirected()))
         if len(connected) > 1:
             print("Error: graph is diconnected. Print non-main components")
-            for comp in connected[1:]:
+            for comp in connected:
                 print(comp)
         data_node, process_node = nx.bipartite.sets(self.network)
         for n in process_node:
@@ -374,6 +374,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.graph['is_mion'] = None
 
         # Initial preproccessing nodes
+        self.network.add_node('other_images', data=[], type='volume', bipartite=0, complete=False, space='epi_native')
         self.network.add_node('raw_epi', data=[], type='time_series', bipartite=0, complete=False, space='epi_native')
         self.network.add_node('sphinx_epi', data=[], type='time_series', bipartite=0, complete=False,
                               space='epi_native')
@@ -422,7 +423,8 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('deconvolution', data=None, type='ndarray', bipartite=0, complete=False, space='')
 
         # Define functional data processing nodes
-
+        self.network.add_node('get_images', argv=session_id, fxn='support_functions.get_images', bipartite=1,
+                              desc='Accept user input for path to session directory, load images into a dump folder')
         self.network.add_node('get_epi', argv=session_id, fxn='support_functions.get_epis', bipartite=1,
                               desc='Accept user input for path to session directory containing directories of dicoms or'
                                    ' a nifti, and load the data into project format (freesurfer convention)')
@@ -489,6 +491,9 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('auto_roi_time_series', fxn='support_functions.segment_contrast_time_course', bipartite=1)
 
         # define edges (parameter / return values)
+
+        self.network.add_edge('raw_epi', 'get_images', order=0)
+        self.network.add_edge('get_images', 'other_images', order=0)
 
         self.network.add_edge('get_epi', 'raw_epi', order=0) #10
 

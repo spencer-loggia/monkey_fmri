@@ -54,6 +54,25 @@ def include_patterns(*patterns):
 
     return _ignore_patterns
 
+def get_images(null,*argv):
+    session_id = argv[0]
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    project_root = os.path.join(subj_root, '..','..')
+    os.chdir(project_root)
+    from_dicom = input_control.bool_input("load new images from dicoms?")
+    f_dir = preprocess._create_dir_if_needed(subj_root, 'sessions')
+    if from_dicom:
+        dicom_dir = input_control.dir_input('Enter directory contraining DICOMS of images we want to look at')
+        ima_numbers = input_control.int_list_input(
+            "Enter whitespace separated list of valid image IMA numbers. (e.g. '2 4 5')"
+        )
+        SOURCE = unpack.unpack_other_list(dicom_dir, f_dir, ima_numbers, session_id)
+        print("Paths of the new images: \n",
+              SOURCE)
+        return SOURCE
+    else:
+        return None
+
 
 def get_epis(*argv):
     session_id = argv[0]
