@@ -66,10 +66,17 @@ def _compute_convolutional_sequence(in_spatial, out_spatial, in_channels, out_ch
     return conv, rescale, activation
 
 
+def exp_decay(cur_x, start_y, stop_y, stop_x):
+    a = start_y
+    b = -1 * (stop_y / start_y) ** (1 / stop_x) + 1
+    y = a * (1 - b) ** cur_x
+    return y
+
+
 class BrainMimic:
 
     def __init__(self, structure: nx.Graph, input_node,
-                units_per_voxel=10, stimuli_shape=(1, 3, 64, 64), start_lr=.001):
+                units_per_voxel=10, stimuli_shape=(1, 3, 64, 64)):
         self.brain = nx.DiGraph()
         self.rdm_loss_fxn = torch.nn.MSELoss()
         self.stim_shape = stimuli_shape
@@ -102,7 +109,7 @@ class BrainMimic:
                                 roi_name=data['roi_name'],
                                 shape=roi_shape,
                                 neurons=None,
-                                rdm=None,
+                                rdm=[],
                                 computed=False)
             print('added computational node', n, data['roi_name'], 'with size', roi_shape)
         total_edges = len(structure.edges)
@@ -129,15 +136,62 @@ class BrainMimic:
         self.params.append(initial_sequence[0].weight)  # append the convolution
         self.brain.add_edge(-1, self.head_node,
                             sequence=initial_sequence)
-        self.optimizer = torch.optim.SGD(lr=start_lr, params=self.params)
-        self.schedule = torch.optim.lr_scheduler.StepLR(self.optimizer, 5, .1)
 
-    # def _detach(self):
-    #     for n in self.brain.nodes():
-    #         self.brain.nodes[n]['neurons'] = torch.ones_like(self.brain.nodes[n]['neurons']) * -0.1
+    def weight_regularization(self, verbose=True):
+        """
+        Want all individual weights to be go to zero, and low variance within a given edge
+        :return:
+        """
+        l1_cost = torch.Tensor([0.0])
+        var_cost = torch.Tensor([0.0])
+        for param in self.params:
+            flat_param = param.flatten()
+            l1 = torch.sum(torch.abs(flat_param))
+            var = torch.std(flat_param)
+            l1_cost = l1_cost + l1
+            var_cost = var_cost + var * len(flat_param)
+        l1_cost = l1_cost / len(self.params)
+        var_cost = var_cost / len(self.params)
+        if verbose:
+            print("L1 cost:", l1_cost.detach().item())
+            print("Var Cost: ", var_cost.detach().item())
+        cost = l1_cost + var_cost
+        return cost
+
+    def prune_graph(self, prune_factor=.05, verbose=False):
+        """
+        Deletes low ranked node edges.
+        :param prune_factor:
+        :return:
+        """
+        print("Pruning...")
+        total_weights = torch.stack([torch.mean(torch.abs(w.flatten())) for w in self.params], dim=0)
+        torch.sort(total_weights)
+        cutoff_idx = math.ceil(len(total_weights) * prune_factor)
+        cutoff = total_weights[cutoff_idx]
+        for s, t, data in self.brain.edges(data=True):
+            link_weight = torch.mean(torch.abs(data['sequence'][0].weight.flatten()))
+            if link_weight < cutoff:
+                self.brain.remove_edge(s, t)
+                if verbose:
+                    print("Pruned edge ", self.brain.nodes[s]['roi_name'], '->', self.brain.nodes[t]['roi_name'],
+                          "with weight", link_weight.detach().item())
+
+    def initialize_optimizer(self, lr):
+        """
+        update currently existing param set and create an optimizer object.
+        :param lr: the learning rate to use.
+        :return:
+        """
+        self.params = []
+        for u, v, data in self.brain.edges(data=True):
+            self.params.append(data['sequence'][0].weight)
+        optimizer = torch.optim.SGD(lr=lr, params=self.params)
+        return optimizer
 
     @torch.utils.hooks.unserializable_hook
-    def fit_rdms(self, stim_gen: List[PsychDataloader], epochs=1000, stimulus_frames = 5, verbose=True, snapshot_out='./'):
+    def fit_rdms(self, stim_gen: List[PsychDataloader], epochs=1000, stimulus_frames = 20, batch_size=10,
+                 start_lr=.00001, final_lr=.00000001, prune_start=.1, prune_stop=.01, verbose=True, snapshot_out='./', prune=True):
         """
         Attempt to find  structure for the brain network that matches observed geometry.
 
@@ -148,27 +202,31 @@ class BrainMimic:
         # optimize over all incoming edges with source node thats been computed.
         loss_history = []
 
+        for node in self.brain.nodes():
+            self.brain.nodes[node]['rdm'] = [None for _ in stim_gen]
+
         for epoch in range(epochs):
+            lr = exp_decay(epoch, start_lr, final_lr, epochs)
+            optimizer = self.initialize_optimizer(lr)
 
-            for paradigm in stim_gen:
-                stimuli = paradigm.get_batch(stimulus_frames)
-
-                # stimuli = [torch.cat(stim, dim=0) for stim in raw_stimuli]
-                # stimuli_batch_orders = [torch.randperm(len(cond_stim)) for cond_stim in stimuli]
-                # stimuli = [stim[stimuli_batch_orders[i]] for i, stim in enumerate(stimuli)]
-                # stimuli = [torch.nn.functional.interpolate(stim, [len(stim)] + self.stim_shape[1:]) for stim in stimuli]
+            for para_idx, paradigm in enumerate(stim_gen):
+                print("********************")
+                print("PRESENTING paradigm", paradigm)
+                print("********************")
+                # generate batch of this paradigm
+                stimuli, condition_names = paradigm.get_batch(batch_size)
 
                 cond_presentation_order = torch.randperm(len(stimuli))
                 run_list = []
-                # show the network the stimuli from head
-                self.optimizer.zero_grad()  # this actually isn't theoretically necessary here :o but it will free up ram.
+
+                optimizer.zero_grad()
                 activation_states = {n: [] for n in self.brain.nodes if n != -1}
 
                 for cond in cond_presentation_order:
                     stim_cond = stimuli[cond]
                     batch_size = stim_cond.shape[1]
                     actual_stim_frames = stim_cond.shape[0]
-                    assert len(stim_cond.shape) == 4
+                    assert len(stim_cond.shape) == 5
 
                     # set batch size
                     # allocating memory in network for stimulus shapes
@@ -179,8 +237,8 @@ class BrainMimic:
 
                     for i in range(stimulus_frames):
                         if verbose:
-                            print("presenting cond ", cond, "frame", i)
-                        stim = stim_cond[i % actual_stim_frames]
+                            print("\nPRESENTING cond", condition_names[cond.item()], "frame", i)
+                        stim = stim_cond[i % actual_stim_frames]  # cycle over stimframes if not enough in dataset
                         # set internal state of stimulus input pseudo-node to equal this stimulus batch
                         self.brain.nodes[-1]['neurons'] = stim
                         run_list.append(cond)
@@ -197,7 +255,7 @@ class BrainMimic:
                             activation_states[node].append(torch.zeros_like(self.brain.nodes[node]['neurons']))
                             for pred in self.brain.predecessors(node):
                                 state = self.brain.nodes[pred]['neurons']
-                                assert len(state.shape) == 4
+                                # assert len(state.shape) == 4
                                 connection_sequence = self.brain.edges[(pred, node)]['sequence']
                                 for step in connection_sequence:
                                     state = step(state.clone())
@@ -212,6 +270,7 @@ class BrainMimic:
                 design_matrix = torch.from_numpy(analysis.design_matrix_from_run_list(run_list,
                                                                                       len(cond_presentation_order),
                                                                                       base_condition_idxs=[])).float()# t x k
+                design_matrix = design_matrix[:, :-1]
                 loss = torch.Tensor([0.])
 
                 # compute beta matrix from network activity, compute rdms on matrix, compare to brain rdms
@@ -219,26 +278,30 @@ class BrainMimic:
                     time_course = torch.stack(activation_states[node], dim=1)  # batch x t x n
                     betas = torch.transpose(torch.inverse(design_matrix.T @ design_matrix) @ design_matrix.T @ time_course, 1, 2) # batch x n x k
                     betas = torch.mean(betas, dim=0)  # average out batch dimmension
-                    rdm = representation_geometry.dissimilarity(betas[:, :-1], metric='dot')
+                    rdm = representation_geometry.dissimilarity(betas, metric='dot')
                     # rdm.register_hook(lambda x: print(node, 'gradient:', x))
-                    self.brain.nodes[node]['rdm'] = rdm
-                    target_brain_rdm = torch.Tensor(self.structure.nodes[node]['rdm'])
+
+                    self.brain.nodes[node]['rdm'][para_idx] = rdm.detach().clone()
+                    target_brain_rdm = torch.Tensor(self.structure.nodes[node]['rdm'][para_idx])
                     local_loss = self.rdm_loss_fxn(rdm, target_brain_rdm)
                     loss = loss + local_loss
                 if verbose:
                     print("computed beta coefficients")
                 # finalize loss term
-                l1_reg = torch.sum(torch.stack([torch.abs(w).flatten().sum() for w in self.params])) / len(self.params)  # enforce sparsity & keep weights smallish
                 reg_weight = .05
-                reg_loss = loss + reg_weight * l1_reg
+                reg = self.weight_regularization(verbose=verbose)
+                reg_loss = loss + reg_weight * reg
                 # save states
                 nx.write_gpickle(self.brain, os.path.join(snapshot_out, 'brain_mimic_epoch_' + str(epoch)))
                 reg_loss.backward()
-                self.optimizer.step()
-                self.schedule.step()
+                optimizer.step()
                 loss_history.append(reg_loss.detach().item())
                 if verbose:
-                    print("completed optimization subroutine: LOSS = ", loss.detach().item(), "REGULARIZATION = ", reg_weight * l1_reg.detach().item())
+                    print("completed", str(paradigm), "optimization subroutine: LOSS = ", loss.detach().item(), "REGULARIZATION = ", reg_weight * reg.detach().item())
+
+            # remove unimportant node edges
+            prune_factor = exp_decay(epoch, prune_start, prune_stop, epochs)
+            self.prune_graph(prune_factor, verbose=verbose)
         plt.plot(np.arange(epochs), np.array(loss_history))
         return loss_history
 
