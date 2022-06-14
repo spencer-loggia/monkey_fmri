@@ -33,7 +33,7 @@ def _compute_roi_dim(num, dist_from_root, root_spatial_dim):
     return 1, int(channel_dim), int(allowed_dim), int(allowed_dim)
 
 
-def _compute_convolutional_sequence(in_spatial, out_spatial, in_channels, out_channels):
+def _compute_convolutional_sequence(in_spatial, out_spatial, in_channels, out_channels, mean=0., std=.01):
     """
     Return a convolution, spatial rescaling, and hyperbolic tangent sequence that maps the units of one node to the
     units of another.
@@ -61,7 +61,9 @@ def _compute_convolutional_sequence(in_spatial, out_spatial, in_channels, out_ch
         rescale = torch.nn.Upsample(scale_factor=rescale_kernel, mode='nearest')
         assert in_spatial * rescale_kernel == out_spatial
     conv = torch.nn.Conv2d(kernel_size=int(kernel), padding=int(pad), stride=1, in_channels=int(in_channels),
-                           out_channels=int(out_channels))
+                           out_channels=int(out_channels), bias=False)
+    weights = torch.nn.Parameter(torch.normal(mean, std, size=conv.weight.shape))
+    conv.weight = weights
     activation = torch.nn.Tanh()
     return conv, rescale, activation
 
@@ -76,12 +78,17 @@ def exp_decay(cur_x, start_y, stop_y, stop_x):
 class BrainMimic:
 
     def __init__(self, structure: nx.Graph, input_node,
-                units_per_voxel=10, stimuli_shape=(1, 3, 64, 64)):
+                units_per_voxel=10, stimuli_shape=(1, 3, 64, 64), start_lr=.0001):
         self.brain = nx.DiGraph()
         self.rdm_loss_fxn = torch.nn.MSELoss()
         self.stim_shape = stimuli_shape
         self.structure = structure
         self.head_node = input_node  # index of first node in data stream (e.g. corresponds to roi v1 for vision)
+        self.start_lr = start_lr
+        self.default_state = -.1  # node activation states equilibrate here
+        self.resistance = .2
+        self.init_weight_mean = 0.
+        self.init_weight_std = 0.001
         self.params = []
 
         # we want to find highest magnitude path with fewest connections
@@ -117,8 +124,8 @@ class BrainMimic:
         for u, v, data in structure.edges(data=True):
             _, u_channels, u_spatial, _ = self.brain.nodes[u]['shape']  # must be square in spatial dims
             _, v_channels, v_spatial, _ = self.brain.nodes[v]['shape']
-            u_v_sequence = _compute_convolutional_sequence(u_spatial, v_spatial, u_channels, v_channels)
-            v_u_sequence = _compute_convolutional_sequence(v_spatial, u_spatial, v_channels, u_channels)
+            u_v_sequence = _compute_convolutional_sequence(u_spatial, v_spatial, u_channels, v_channels, self.init_weight_mean, self.init_weight_std)
+            v_u_sequence = _compute_convolutional_sequence(v_spatial, u_spatial, v_channels, u_channels, self.init_weight_mean, self.init_weight_std)
             self.params.append(u_v_sequence[0].weight)
             self.params.append(v_u_sequence[0].weight)
             self.brain.add_edge(u, v,
@@ -136,6 +143,7 @@ class BrainMimic:
         self.params.append(initial_sequence[0].weight)  # append the convolution
         self.brain.add_edge(-1, self.head_node,
                             sequence=initial_sequence)
+        self.optimizer = torch.optim.Adam(lr=self.start_lr, params=self.params)
 
     def weight_regularization(self, verbose=True):
         """
@@ -155,39 +163,43 @@ class BrainMimic:
         if verbose:
             print("L1 cost:", l1_cost.detach().item())
             print("Var Cost: ", var_cost.detach().item())
-        cost = l1_cost + var_cost
+        cost = .8 * l1_cost + var_cost
         return cost
 
-    def prune_graph(self, prune_factor=.05, verbose=False):
+    def prune_graph(self, prune_factor=.05, min_edges=30, verbose=True):
         """
+        TODO: FIX
         Deletes low ranked node edges.
         :param prune_factor:
         :return:
         """
-        print("Pruning...")
-        total_weights = torch.stack([torch.mean(torch.abs(w.flatten())) for w in self.params], dim=0)
-        torch.sort(total_weights)
-        cutoff_idx = math.ceil(len(total_weights) * prune_factor)
-        cutoff = total_weights[cutoff_idx]
-        for s, t, data in self.brain.edges(data=True):
-            link_weight = torch.mean(torch.abs(data['sequence'][0].weight.flatten()))
-            if link_weight < cutoff:
+        print("Pruning, factor=", prune_factor)
+        print("current number edges:", len(self.brain.edges()))
+        if len(self.brain.edges()) <= min_edges:
+            return
+        # total_weights = torch.stack([torch.mean(torch.abs(res[2]['sequence'][0].weight))
+        #                              for res in self.brain.edges(data=True)], dim=0)
+        # # total_weights, _ = torch.sort(total_weights)
+        # mean_weight = torch.mean(total_weights).detach().item()
+        # std_weight = torch.std(total_weights).detach().item()
+        # print("average weight :", mean_weight, "weight std")
+        # cutoff_idx = math.ceil(len(total_weights) * prune_factor)
+        # cutoff = total_weights[cutoff_idx]
+        for s, t, data in list(self.brain.edges(data=True)):
+            link_weight = torch.mean(data['sequence'][0].weight.flatten())
+            link_std = torch.std(data['sequence'][0].weight.flatten())
+            if abs(link_weight) < .5 * self.init_weight_std and link_std < self.init_weight_std:
                 self.brain.remove_edge(s, t)
                 if verbose:
                     print("Pruned edge ", self.brain.nodes[s]['roi_name'], '->', self.brain.nodes[t]['roi_name'],
                           "with weight", link_weight.detach().item())
-
-    def initialize_optimizer(self, lr):
-        """
-        update currently existing param set and create an optimizer object.
-        :param lr: the learning rate to use.
-        :return:
-        """
-        self.params = []
-        for u, v, data in self.brain.edges(data=True):
-            self.params.append(data['sequence'][0].weight)
-        optimizer = torch.optim.SGD(lr=lr, params=self.params)
-        return optimizer
+        # remove any edges that become disconnected from stimulus
+        reachable = nx.descendants(self.brain, self.head_node) | {self.head_node, -1}  # all nodes reachable from head, plus head itself and stimuli pseudo-node
+        for node in list(self.brain.nodes()):
+            if node not in reachable:
+                if verbose:
+                    print("Removed disconnected node ", self.brain.nodes[node]['roi_name'])
+                self.brain.remove_node(node)
 
     @torch.utils.hooks.unserializable_hook
     def fit_rdms(self, stim_gen: List[PsychDataloader], epochs=1000, stimulus_frames = 20, batch_size=10,
@@ -206,11 +218,11 @@ class BrainMimic:
             self.brain.nodes[node]['rdm'] = [None for _ in stim_gen]
 
         for epoch in range(epochs):
-            lr = exp_decay(epoch, start_lr, final_lr, epochs)
-            optimizer = self.initialize_optimizer(lr)
-
+            loss_history.append(0.)
+            self.optimizer.zero_grad()
+            epoch_loss = torch.Tensor([0.])
             for para_idx, paradigm in enumerate(stim_gen):
-                print("********************")
+                print("\n********************")
                 print("PRESENTING paradigm", paradigm)
                 print("********************")
                 # generate batch of this paradigm
@@ -219,7 +231,6 @@ class BrainMimic:
                 cond_presentation_order = torch.randperm(len(stimuli))
                 run_list = []
 
-                optimizer.zero_grad()
                 activation_states = {n: [] for n in self.brain.nodes if n != -1}
 
                 for cond in cond_presentation_order:
@@ -233,7 +244,7 @@ class BrainMimic:
                     for node, data in self.brain.nodes(data=True):
                         in_shape = list(data['shape'])
                         in_shape[0] = batch_size
-                        self.brain.nodes[node]['neurons'] = torch.ones(in_shape) * -.1
+                        self.brain.nodes[node]['neurons'] = torch.ones(in_shape) * self.default_state
 
                     for i in range(stimulus_frames):
                         if verbose:
@@ -247,12 +258,13 @@ class BrainMimic:
                         # find inputs (i.e. the set of edges from predecessor nodes marked as computed)
 
                         for node in nodes:
-                            if verbose:
-                                print("computing inputs to node", self.brain.nodes[node]['roi_name'], " on epoch", epoch)
+                            # if verbose:
+                            #     print("computing inputs to node", self.brain.nodes[node]['roi_name'], " on epoch", epoch)
                             if node == -1:
                                 # if initial stimulus node continue
                                 continue
-                            activation_states[node].append(torch.zeros_like(self.brain.nodes[node]['neurons']))
+                            drift = self.resistance * (self.brain.nodes[node]['neurons'] - self.default_state)
+                            activation_states[node].append(self.brain.nodes[node]['neurons'].clone() - drift) # neurons drift toward defualt state
                             for pred in self.brain.predecessors(node):
                                 state = self.brain.nodes[pred]['neurons']
                                 # assert len(state.shape) == 4
@@ -291,13 +303,17 @@ class BrainMimic:
                 reg_weight = .05
                 reg = self.weight_regularization(verbose=verbose)
                 reg_loss = loss + reg_weight * reg
+                epoch_loss = epoch_loss + reg_loss
                 # save states
                 nx.write_gpickle(self.brain, os.path.join(snapshot_out, 'brain_mimic_epoch_' + str(epoch)))
-                reg_loss.backward()
-                optimizer.step()
-                loss_history.append(reg_loss.detach().item())
                 if verbose:
-                    print("completed", str(paradigm), "optimization subroutine: LOSS = ", loss.detach().item(), "REGULARIZATION = ", reg_weight * reg.detach().item())
+                    print("completed", str(paradigm), "LOSS = ", loss.detach().item(),
+                          "REGULARIZATION = ", reg_weight * reg.detach().item())
+            epoch_loss.backward()
+            self.optimizer.step()
+            loss_history[-1] += epoch_loss.detach().item()
+            if verbose:
+                print("COMPLETED epoch", epoch, "optimization subroutine: TOTAL LOSS = ", loss_history[-1], "REGULARIZATION = ", reg_weight * reg.detach().item())
 
             # remove unimportant node edges
             prune_factor = exp_decay(epoch, prune_start, prune_stop, epochs)
