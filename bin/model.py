@@ -241,6 +241,15 @@ class BrainMimic:
             print("computed beta coefficients")
         return loss
 
+    def linear_decode_classification_loss(self, decode_nodes: List[int], target_classes):
+        """
+        We should be able to linearly decode some target from the decode nodes.
+        :param decode_nodes: the node to attempt to decode stimuli from.
+        :param target_classes: tensor of length runlist, with associated targets for each frame.
+        :return:
+        """
+        raise NotImplementedError
+
     def compute_node_update(self, node):
         """
         Computes nodes update in network
