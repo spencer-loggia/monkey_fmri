@@ -147,7 +147,7 @@ class BrainMimic:
                             sequence=initial_sequence)
         self.optimizer = torch.optim.Adam(lr=self.start_lr, params=self.params)
 
-    def weight_regularization(self, verbose=True):
+    def weight_regularization(self, l1_weight=.5, var_weight=1., verbose=True):
         """
         Want all individual weights to be go to zero, and low variance within a given edge
         :return:
@@ -156,16 +156,17 @@ class BrainMimic:
         var_cost = torch.Tensor([0.0])
         for param in self.params:
             flat_param = param.flatten()
-            l1 = torch.sum(torch.abs(flat_param))
+            # different from standard l1 (triangle inequality)
+            l1 = torch.abs(torch.sum(flat_param))
             var = torch.std(flat_param)
             l1_cost = l1_cost + l1
-            var_cost = var_cost + var * len(flat_param)
+            var_cost = var_cost + var * len(flat_param)  # variance cost is scaled by the number of parameters
         l1_cost = l1_cost / len(self.params)
         var_cost = var_cost / len(self.params)
         if verbose:
             print("L1 cost:", l1_cost.detach().item())
             print("Var Cost: ", var_cost.detach().item())
-        cost = l1_cost + var_cost
+        cost = l1_weight * l1_cost + var_weight * var_cost
         return cost
 
     def prune_graph(self, prune_factor=.05, min_edges=30, verbose=True):
@@ -183,8 +184,7 @@ class BrainMimic:
                                      for res in self.brain.edges(data=True)], dim=0)
         total_weights, _ = torch.sort(total_weights)
         mean_weight = torch.mean(total_weights).detach().item()
-        std_weight = torch.std(total_weights).detach().item()
-        print("average weight :", mean_weight, "weight std", std_weight)
+        print("average weight :", mean_weight)
         cutoff_idx = math.ceil(len(total_weights) * prune_factor)
         cutoff = total_weights[cutoff_idx]
         for s, t, data in list(self.brain.edges(data=True)):
