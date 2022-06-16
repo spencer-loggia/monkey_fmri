@@ -23,6 +23,13 @@ def _dot_pdist(arr: torch.Tensor, normalize=False):
     return outer[indices[0], indices[1]]
 
 
+def _pearson_pdist(arr: torch.Tensor):
+    k = arr.shape[1]
+    coef = torch.corrcoef(arr)
+    indices = torch.triu_indices(k, k, offset=1)
+    return coef[indices[0], indices[1]]
+
+
 def dissimilarity(beta: torch.Tensor, metric='dot'):
     if len(beta.shape) != 2:
         raise IndexError("beta should be 2 dimensional and have observations on dim 0 and conditions on dim 1")
@@ -32,6 +39,8 @@ def dissimilarity(beta: torch.Tensor, metric='dot'):
         rdm = _dot_pdist(beta, normalize=False)
     elif metric == 'cosine':
         rdm = _dot_pdist(beta, normalize=True)
+    elif metric == 'pearson':
+        rdm = _pearson_pdist(beta)
     else:
         raise NotImplementedError
     return rdm
@@ -76,7 +85,7 @@ def pairwise_rsa(beta: torch.Tensor, atlas: torch.Tensor, min_roi_dim=5):
         roi_betas = beta[atlas == roi_id]
         if len(roi_betas) > min_roi_dim:
             unique_filtered.append(roi_id)
-            rdm = dissimilarity(roi_betas, metric='dot')
+            rdm = dissimilarity(roi_betas, metric='pearson')
             roi_dissimilarity.append(rdm)
     adjacency = torch.zeros([len(unique_filtered), len(unique_filtered)])
     pvals = torch.zeros([len(unique_filtered), len(unique_filtered)])
