@@ -20,13 +20,12 @@ from multiprocessing import Pool
 
 from preprocess import _pad_to_cube
 
-from sklearn.mixture import GaussianMixture
 from skimage.measure import regionprops
+from sklearn.mixture import GaussianMixture
 
 try:
     from sklearnex import patch_sklearn
     from sklearnex.linear_model import LinearRegression
-
     patch_sklearn()
 except ModuleNotFoundError:
     print("Intel Hardware Acceleration is not enabled. ")
@@ -415,6 +414,8 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     :param base_condition_idxs:
     :return:
     """
+    if type(run_list) is list:
+        run_list = np.array(run_list)
     num_trs = len(run_list)
     run_list = torch.stack(run_list)
     design_matrix = np.zeros((num_trs, num_conditions + 1))
@@ -422,7 +423,7 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
         if i in base_condition_idxs:
             design_matrix[:, i] = 1
         else:
-            design_matrix[run_list==i, i] = 1
+            design_matrix[run_list == i, i] = 1
     pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix)]
     design_matrix[:, -1] = pos_linear_drift
     return design_matrix

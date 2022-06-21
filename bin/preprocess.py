@@ -428,7 +428,7 @@ def ResampleImageToTarget(in_vol, target_vol, out_path, interp='interpolate'):
 
 def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
               across_modalities=False, outPref='antsReg',
-              transforms=['Affine', 'SyN'], run=True, n_jobs=10):
+              run=True, n_jobs=10):
     """
     From kurts code
     :param fixedP:
@@ -443,38 +443,54 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
     :return:
     """
     os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = '%d' % n_jobs
-    from nipype.interfaces.ants import Registration
-    reg = Registration()
-    reg.inputs.fixed_image = fixedP
-    reg.inputs.moving_image = movingP
-    reg.inputs.output_transform_prefix = outPref
-    reg.inputs.interpolation = 'BSpline'
-    reg.inputs.transforms = transforms
-    reg.inputs.transform_parameters = [(2.0,), (0.25, .25, 0.0)]
-    reg.inputs.number_of_iterations = [[1500, 200], [100, 100, 50]][:len(transforms)]
-    reg.inputs.dimension = 3
-    # if initialTrsnfrmP!=None:
-    #     reg.inputs.initial_moving_transform = initialTrsnfrmP
-    reg.inputs.write_composite_transform = True
-    reg.inputs.collapse_output_transforms = True
-    reg.inputs.initialize_transforms_per_stage = False
-    reg.inputs.metric = [['Mattes', 'MI'][1]] * 2
-    reg.inputs.metric_weight = [1] * 2  # Default (value ignored currently by ANTs)
-    reg.inputs.radius_or_number_of_bins = [32] * 2
-    reg.inputs.sampling_strategy = ['Random', None][:len(transforms)]
-    reg.inputs.sampling_percentage = [0.05, None][:len(transforms)]
-    reg.inputs.convergence_threshold = [1.e-8, 1.e-9][:len(transforms)]
-    reg.inputs.convergence_window_size = [20] * 2
-    reg.inputs.smoothing_sigmas = [[1, 0], [2, 1, 0]][:len(transforms)]
-    reg.inputs.sigma_units = ['vox'] * 2
-    reg.inputs.shrink_factors = [[2, 1], [3, 2, 1]][:len(transforms)]
-    reg.inputs.use_estimate_learning_rate_once = [True] * len(transforms)
-    reg.inputs.use_histogram_matching = [across_modalities==False] * len(transforms)  # This is the default
-    reg.inputs.output_warped_image = outP
-    reg.inputs
-    print(reg.cmdline)
-    if run:
-        reg.run()
+    cmd = "antsRegistration" \
+          " --verbose 1 --dimensionality 3 --float 0 --collapse-output-transforms 1 --write-composite-transform 1" \
+          " --output [ ./,./Warped.nii.gz,./InverseWarped.nii.gz ] " \
+          " --interpolation Linear --use-histogram-matching 0 --winsorize-image-intensities [ 0.005,0.995 ]" \
+          " --initial-moving-transform [" + fixedP + "," + movingP + ",1 ]" \
+          " --transform Rigid[ 0.1 ] --metric MI[" + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
+          " --convergence [1000x500x250,1e-8,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
+          " --transform Affine[ 0.1 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
+          " --convergence [1000x500x250,1e-8,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
+          " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
+          " --convergence [300x200x40,1e-8,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
+          " --transform SyN[ .001,2,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
+          " --convergence [200x50,1e-9,10 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox"
+    print(cmd)
+    subprocess.call(cmd, shell=True)
+    # from nipype.interfaces.ants import Registration
+    # reg = Registration()
+    # reg.inputs.fixed_image = fixedP
+    # reg.inputs.moving_image = movingP
+    # reg.inputs.output_transform_prefix = outPref
+    # reg.inputs.interpolation = 'Linear'
+    # reg.inputs.transforms = transforms
+    # reg.inputs.transform_parameters = [(2.0,), (0.25, 3.0, 0.0)]
+    # reg.inputs.number_of_iterations = [[3000, 400], [200, 200, 100]][:len(transforms)]
+    # reg.inputs.dimension = 3
+    # # if initialTrsnfrmP!=None:
+    # #     reg.inputs.initial_moving_transform = initialTrsnfrmP
+    # reg.inputs.write_composite_transform = True
+    # reg.inputs.collapse_output_transforms = True
+    # reg.inputs.initialize_transforms_per_stage = False
+    # reg.inputs.metric = [['Mattes', 'MI'][1]] * 2
+    # reg.inputs.metric_weight = [1] * 2  # Default (value ignored currently by ANTs)
+    # reg.inputs.radius_or_number_of_bins = [32] * 2
+    # reg.inputs.sampling_strategy = ['Random', None][:len(transforms)]
+    # reg.inputs.sampling_percentage = [0.05, None][:len(transforms)]
+    # reg.inputs.convergence_threshold = [1.e-9, 1.e-10][:len(transforms)]
+    # reg.inputs.convergence_window_size = [20] * 2
+    # reg.inputs.winsorize_upper_quantile = 0.975
+    # reg.inputs.smoothing_sigmas = [[1, 0], [2, 1, 0]][:len(transforms)]
+    # reg.inputs.sigma_units = ['vox'] * 2
+    # reg.inputs.shrink_factors = [[2, 1], [3, 2, 1]][:len(transforms)]
+    # reg.inputs.use_estimate_learning_rate_once = [True] * len(transforms)
+    # reg.inputs.use_histogram_matching = [across_modalities==False] * len(transforms)  # This is the default
+    # reg.inputs.output_warped_image = outP
+    # reg.inputs
+    # print(reg.cmdline)
+    # if run:
+    #     reg.run()
 
 
 def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2):
@@ -487,7 +503,7 @@ def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2):
     :param n_jobs:
     :return:
     """
-    outF = os.path.split(outP)[0]
+    outF = os.path.dirname(outP)
     os.chdir(outF)
     antsCoreg(fixedP,
         movingP,
@@ -495,10 +511,9 @@ def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2):
         initialTrsnfrmP=None, # we are working on resampled img
         across_modalities=True,
         outPref='antsReg',
-        transforms=ltrns,
         run=True,n_jobs=n_jobs)
-    frwdTrnsP =  glob.glob(outF+'/antsRegComposite.h5')[0]
-    invTrnsP = glob.glob(outF+'/antsRegInverseComposite.h5')[0]
+    frwdTrnsP = os.path.join(outF, 'Composite.h5')
+    invTrnsP = os.path.join(outF, 'InverseComposite.h5')
     return frwdTrnsP, invTrnsP
 
 

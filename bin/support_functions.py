@@ -1,4 +1,5 @@
 import pandas
+import pandas as pd
 import torch
 from typing import List, Union, Tuple
 
@@ -318,24 +319,22 @@ def _define_contrasts(condition_integerizers, base_index):
     print(
         "Need to define contrasts to preform to continue with analysis. Enter indexes of positive and negative conditions"
         "for each contrast. If multidexed conditions are being used, may enter tuples of indexes. ")
-    print("Recall: conditions are mapped as follows ", ['condition set ' + str(i) + ' : ' + str(cond_int) for i, cond_int in enumerate(condition_integerizers)])
+    print("Recall: conditions are mapped as follows ", ['condition set ' + str(i) + ' : ' + condition_integerizers[cond_int] for i, cond_int in enumerate(condition_integerizers)])
     add_contrast = True
     contrasts = []
     contrast_descriptions = []
+    if type(condition_integerizers['0']) is dict:
+        contrast_matrix_shape = [len(cond_int) for cond_int in condition_integerizers]
+    else:
+        contrast_matrix_shape = [len(condition_integerizers)]
     while add_contrast:
-        contrast_matrix = np.zeros([len(cond_int) for cond_int in condition_integerizers])
-        pos_conds = input_control.tuple_list_input("Enter positive contrast indexes (-1 will fill axis): ")
-        neg_conds = input_control.tuple_list_input("Enter negative contrast indexes (-1 will fill axis): ")
+        contrast_matrix = np.zeros(contrast_matrix_shape)
+        pos_conds = input_control.int_list_input("Enter positive contrast indexes: ")
+        neg_conds = input_control.int_list_input("Enter negative contrast indexes: ")
         for pos_cond in pos_conds:
-            pos_cond = str(pos_cond)[1:-1]
-            pos_cond = pos_cond.replace("-1", ":")
-            idx = eval("np.index_exp[" + pos_cond + "]")
-            contrast_matrix[idx] = 1
+            contrast_matrix[pos_cond] = 1
         for neg_cond in neg_conds:
-            neg_cond = str(neg_cond)[1:-1]
-            neg_cond = neg_cond.replace("-1", ":")
-            idx = eval("np.index_exp[" + neg_cond + "]")
-            contrast_matrix[idx] = -1
+            contrast_matrix[neg_cond] = -1
         contrast_matrix[base_index] = 0  # the base case should not be considered in contrasts generally
         contrast_matrix[contrast_matrix == 1] /= np.count_nonzero(contrast_matrix == 1)
         contrast_matrix[contrast_matrix == -1] /= np.count_nonzero(contrast_matrix == -1)
@@ -360,14 +359,25 @@ def _create_paradigm():
     para_def_dict['name'] = name
     num_trs = int(input('how many trs are in each run ? '))
     para_def_dict['trs_per_run'] = num_trs
-    block_design = input_control.bool_input('Define stimuli order using standar block definitions? Otherwise must '
-                                            'provide a length number of trs list of condition indexes for each '
-                                            'order number. ')
+    predefine_orders = input_control.bool_input("Predefine stimuli presentation orders? (highly recommended for your "
+                                                "future convenience and reproducibility, unless your orders are in "
+                                                "someway stochastic)")
+    para_def_dict['is_runtime_defined'] = not predefine_orders
+
+    if predefine_orders:
+        block_design = input_control.bool_input('Define stimuli order using standard block definitions? Otherwise must '
+                                                'provide a length number of trs list of condition indexes for each '
+                                                'order number. ')
+    else:
+        block_design = False
     para_def_dict['is_block'] = block_design
-    num_order_sets = int(input("How many order sets are there: (i.e. how many indexes are needed to specify a specific order?)"))
+    # BELOW IS LOCKED TO ONE UNTIL IMPLEMENTATION IS DONE
+    # num_order_sets = int(input("How many stimuli condition sets are there: (i.e. how many indexes are needed to specify a specific condition?)"))
+    num_order_sets = 1
     num_orders = []
-    for order_set in range(num_order_sets):
-        num_orders.append(int(input('how many unique orders are there for condition set ' + str(order_set) + '? ')))
+    if predefine_orders:
+        for order_set in range(num_order_sets):
+            num_orders.append(int(input('how many unique orders are there for condition set ' + str(order_set) + '? ')))
     if block_design:
         para_def_dict['block_length_trs'] = int(input('TRs per block? '))
     else:
@@ -376,61 +386,72 @@ def _create_paradigm():
         para_def_dict['num_orders'] = num_orders[0]
     else:
         para_def_dict['num_orders'] = num_orders
+
     para_def_dict['condition_integerizer'] = []
     para_def_dict['num_conditions'] = []
+
     for order_set in range(num_order_sets):
         num_conditions = int(input('how many uniques conditions are there in condition set ' + str(order_set) + '? '))
         temp_cond_map = {}
         para_def_dict['num_conditions'].append(num_conditions)
         for i in range(num_conditions):
-            temp_cond_map[str(i)] = input('description for condition set' + str(i) + ' condition #' + str(i))
+            temp_cond_map[str(i)] = input('description for condition set' + str(order_set) + ' condition #' + str(i))
         para_def_dict['condition_integerizer'].append(temp_cond_map)
+
     if num_order_sets == 1:
         para_def_dict['num_conditions'] = para_def_dict['num_conditions'][0]
         para_def_dict['condition_integerizer'] = para_def_dict['condition_integerizer'][0]
     else:
+        print("WARNING: n-dimmensional condition sets are not fully stable yet.")
         print("WARNING: When filling in order numbeer maps with multiple order sets - if order definition lengths are not equal, "
               "the two sets will be overlayed by repeating provided sequence, ignoring specified base case conditions. ")
-    if len(num_orders) >= 1:
+    if len(num_orders) > 1:
         condition_map = para_def_dict['condition_integerizer'][0]
     else:
         condition_map = para_def_dict['condition_integerizer']
+
     print("Choose the base case condition from from primary condition set (condition set 0)")
     para_def_dict['base_case_condition'] = int(input_control.select_option_input(list(condition_map.keys())))
     para_def_dict['order_number_definitions'] = []
 
-    load_orders_from_file = False
-    if not block_design:
-        print("Since you're not generating order defs automatically, recommend loading from file")
-        load_orders_from_file = input_control.bool_input("Do you want to do that? ")
-    if load_orders_from_file:
-        print("Please choose a tsv / csv file with order numbers as columns and a row for each tr, filled with "
-              "condition index values, or tuples of condition index values. If multiple condition sets are being used, "
-              "load an order def file for each.")
-        for order_set_idx, num_order in enumerate(num_orders):
-            print("Defining order numbers for condition set " + str(order_set_idx))
-            file = input_control.dir_input("Path to file: ")
-            df = pandas.read_csv(file)
-            df.columns = [int(c) for c in df.columns]
-            order_def_map = df.reset_index().to_dict(orient='list')
-            para_def_dict['order_number_definitions'].append(order_def_map)
-        if len(num_orders) == 1:
-            para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
+    if predefine_orders:
+        load_orders_from_file = False
+        if not block_design:
+            print("Since you're not generating order defs automatically, recommend loading from file")
+            load_orders_from_file = input_control.bool_input("Do you want to do that? ")
+        if load_orders_from_file:
+            print("Please choose a tsv / csv file with order numbers as columns and a row for each tr, filled with "
+                  "condition index values, or tuples of condition index values. If multiple condition sets are being used, "
+                  "load an order def file for each.")
+            for order_set_idx, num_order in enumerate(num_orders):
+                print("Defining order numbers for condition set " + str(order_set_idx))
+                file = input_control.dir_input("Path to file: ")
+                df = pandas.read_csv(file)
+                df.columns = [int(c) for c in df.columns]
+                order_def_map = df.reset_index().to_dict(orient='list')
+                para_def_dict['order_number_definitions'].append(order_def_map)
+            if len(num_orders) == 1:
+                para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
+        else:
+            for order_set_idx, num_order in enumerate(num_orders):
+                order_def_map = {}
+                print("Defining order numbers for condition set " + str(order_set_idx))
+                for i in range(num_order):
+                    order_def_map[str(i)] = input_control.int_list_input(
+                        'enter the block order if block design, or event sequence if event related for order number ' + str(i))
+                para_def_dict['order_number_definitions'].append(order_def_map)
+            if len(num_orders) == 1:
+                para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
     else:
-        for order_set_idx, num_order in enumerate(num_orders):
-            order_def_map = {}
-            print("Defining order numbers for condition set " + str(order_set_idx))
-            for i in range(num_order):
-                order_def_map[str(i)] = input_control.int_list_input(
-                    'enter the block order if block design, or event sequence if event related for order number ' + str(i))
-            para_def_dict['order_number_definitions'].append(order_def_map)
-        if len(num_orders) == 1:
-            para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
+        print("Stimuli orders will be defined at runtime. A mapping from the session name to the stimuli order list "
+              "will be recorded in this paradigm's \"order_number_definitions\" field")
+        para_def_dict['order_number_definitions'] = {}
     good = False
     while not good:
         try:
             contrasts_id, contrast_desc = _define_contrasts(para_def_dict['condition_integerizer'], para_def_dict['base_case_condition'])
         except Exception:
+            print("Caught exception. Trying again.... ")
             continue
         good = True
     para_def_dict['desired_contrasts'] = contrasts_id
@@ -518,20 +539,65 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     sess_dir = os.path.dirname(source[0])
     design_matrices = []
     base_conditions = [paradigm_data['base_case_condition']]
+    condition_names = paradigm_data['condition_integerizer']
     block_length = int(paradigm_data['block_length_trs'])
     num_blocks = int(paradigm_data['trs_per_run'] / block_length)
     num_conditions = int(paradigm_data['num_conditions'])
-    for run_dir in source:
-        ima = os.path.basename(run_dir).strip()
-        order_num = ima_order_map[ima]
-        order = list(paradigm_data['order_number_definitions'][str(order_num)])
-        design_matrix = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
-                                                              base_conditions)
-        design_matrices.append(design_matrix)
+    is_block_design = paradigm_data['is_block']
+    runtime_order_defs = paradigm_data['is_runtime_defined']
+    sess_name = os.path.basename(sess_dir)
+    if runtime_order_defs:
+        print("Stimuli orders are defined manually at runtime for this paradigm. "
+              "Please load order csv file (rows are trs, cols are IMAs)")
+        ima_order = pd.read_csv(input_control.dir_input("Path to csv file: "), sep='\t')
+        for c_name, c in ima_order.iteritems():
+            c_name = c_name.strip()
+            if c_name not in ima_order_map:
+                # this ima wasn't used
+                continue
+            clist = c.tolist()
+            # check if integers
+            if False in [str(item).isnumeric() for item in clist]:
+                cond_int = {v.lower().strip(): k for k, v in condition_names.items()}
+                int_clist = []
+                for cond_name in clist:
+                    try:
+                        int_cond = int(cond_int[cond_name.lower().strip()])
+                        int_clist.append(int_cond)
+                    except KeyError:
+                        print("condition descriptor", cond_name, "in the runlist did not match any known condition in the paradigm.")
+                        exit(1)
+                clist = int_clist
+            else:
+                clist = [int(c) for c in clist]
+
+            design_matrices.append(analysis.design_matrix_from_run_list(clist,
+                                                                        num_conditions,
+                                                                        base_conditions))
+            if sess_name in paradigm_data['order_number_definitions']:
+                paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
+            else:
+                paradigm_data['order_number_definitions'][os.path.basename(sess_dir)] = {c_name: clist}
+        with open(paradigm_path, 'w') as f:
+            json.dump(paradigm_data, f, indent=4)
+
+    else:
+        for run_dir in source:
+            ima = os.path.basename(run_dir).strip()
+            order_num = ima_order_map[ima]
+            order = list(paradigm_data['order_number_definitions'][str(order_num)])
+            if is_block_design:
+                design_matrix = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
+                                                                  base_conditions)
+            else:
+                design_matrix = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions)
+            design_matrices.append(design_matrix)
+
     print("using mion: ", mion)
     print('source fname: ', fname)
-    _, beta_path, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir, fname=fname,
-                                                       mion=mion, use_python_mp=False, auto_conv=False, tr=3)
+    _, beta_path, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
+                                                          fname=fname, mion=mion, use_python_mp=False, auto_conv=False,
+                                                          tr=3)
     print("Beta Coefficient Matrix created at: " + str(beta_path))
     return os.path.relpath(beta_path, project_root)
 
@@ -623,6 +689,27 @@ def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *a
     proj_config['data_map'][para_name][subject][session_id] = session_info
     with open(proj_config_path, 'w') as f:
         json.dump(proj_config, f, indent=4)
+
+
+def delete_paradigm(paradigm_path):
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    project_root = os.path.join(subj_root, '..', '..')
+    os.chdir(project_root)
+    proj_config_path = 'config.json'
+    with open(proj_config_path, 'r') as f:
+        proj_config = json.load(f)
+    with open(paradigm_path, 'r') as f:
+        paradigm_data = json.load(f)
+    para_name = paradigm_data['name']
+    remove = input_control.bool_input("WARNING: Paradigm " + para_name
+                                      + " and associated data will be permanently removed. Continue? ")
+    if remove:
+        proj_config['paradigms'].pop(para_name)
+        proj_config['data_map'].pop(para_name)
+
+        with open(proj_config_path, 'w') as f:
+            json.dump(proj_config, f, indent=4)
+    return para_name, remove
 
 
 def demote_session(paradigm_path, *argv):
@@ -979,7 +1066,7 @@ def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
                 ima_order_data = json.load(f)
             sess_dir = os.path.dirname(sessions_dict[session_id]['session_net'])
             manual_transform = os.path.join(sess_dir, 'itkManual.txt')
-            fine_forward_transform = os.path.join(sess_dir, 'antsRegComposite.h5')
+            fine_forward_transform = os.path.join(sess_dir, 'Composite.h5')
             functional_dirs = [os.path.join(sess_dir, str(ima)) for ima in sessions_dict[session_id]['imas_used']]
             ts_func_path = time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, condition, sess_dir,
                                                                fname='epi_masked.nii', pre_onset_blocks=pre_block, post_offset_blocks=post_block)
