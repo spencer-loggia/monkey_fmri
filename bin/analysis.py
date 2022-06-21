@@ -18,8 +18,7 @@ from scipy.ndimage import gaussian_filter, binary_fill_holes, label
 
 from multiprocessing import Pool
 
-from . import preprocess
-from .preprocess import _pad_to_cube
+from preprocess import _pad_to_cube
 
 from sklearn.mixture import GaussianMixture
 from skimage.measure import regionprops
