@@ -321,6 +321,7 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
 def contrast(beta_coef: np.ndarray, contrast_matrix: np.ndarray, pid=0) -> np.ndarray:
     """
      just a wrapper for matrix multiplication so I can put some expected dimensions :)
+     assume any dimensions after contrast features are nuisance regressors and can be ignored here
     :param beta_coef: a (w, h, d, k) matrix, where k is conditions
     :param contrast_matrix: a (k, m) matrix, where m is the number of contrasts to preform
     :return: resulting contrast, a (w, h, d, m) matrix
@@ -400,7 +401,8 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         block[:, base_conditions_idxs] = 1
         design_matrix = np.concatenate([design_matrix, block], axis=0)
     pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix), None]
-    design_matrix = np.concatenate([design_matrix, pos_linear_drift], axis=1)
+    exp_drift = np.exp(-1 * np.e * np.arange(0, 1, (1 / len(design_matrix))))[:len(design_matrix), None]
+    design_matrix = np.concatenate([design_matrix, pos_linear_drift, exp_drift], axis=1)
     return design_matrix
 
 
@@ -419,15 +421,16 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     elif type(run_list) is torch.Tensor:
         run_list = run_list.numpy()
     num_trs = len(run_list)
-    run_list = np.stack(run_list)
-    design_matrix = np.zeros((num_trs, num_conditions + 1))
+    design_matrix = np.zeros((num_trs, num_conditions + 2))
     for i in range(num_conditions):
         if i in base_condition_idxs:
             design_matrix[:, i] = 1
         else:
             design_matrix[run_list == i, i] = 1
     pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix)]
-    design_matrix[:, -1] = pos_linear_drift
+    exp_drift = np.exp(-1 * np.e * np.arange(0, 1, (1 / len(design_matrix))))[:len(design_matrix)]
+    design_matrix[:, -2] = pos_linear_drift
+    design_matrix[:, -1] = exp_drift
     return design_matrix
 
 
