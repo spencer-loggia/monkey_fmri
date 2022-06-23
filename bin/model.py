@@ -234,9 +234,12 @@ class BrainMimic:
 
             self.brain.nodes[node]['rdm'][paradigm_index] = rdm.detach().clone()
             target_brain_rdm = torch.Tensor(self.structure.nodes[node]['rdm'][paradigm_index])
+            rdm_size = len(target_brain_rdm)
             local_loss = self.rdm_loss_fxn(rdm, target_brain_rdm)
+            local_loss = local_loss / rdm_size  # loss is scaled by the size of the rdm
             loss = loss + local_loss
-        loss = loss / len(self.brain.nodes)
+        loss = loss / len(self.brain.nodes) # loss is scaled by the number of nodes so that it doesn't artificially
+                                            # decrease if nodes are disconnected
         if verbose:
             print("computed beta coefficients")
         return loss
