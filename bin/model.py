@@ -147,7 +147,7 @@ class BrainMimic:
                             sequence=initial_sequence)
         self.optimizer = torch.optim.Adam(lr=self.start_lr, params=self.params)
 
-    def weight_regularization(self, l1_weight=.5, var_weight=1., verbose=True):
+    def weight_regularization(self, l1_weight=0.1, var_weight=1., verbose=True):
         """
         Want all individual weights to be go to zero, and low variance within a given edge
         :return:
@@ -157,7 +157,7 @@ class BrainMimic:
         for param in self.params:
             flat_param = param.flatten()
             # different from standard l1 (triangle inequality)
-            l1 = torch.abs(torch.sum(flat_param))
+            l1 = torch.abs(torch.sum(flat_param))  # push the mean toward 0
             var = torch.std(flat_param)
             l1_cost = l1_cost + l1
             var_cost = var_cost + var * len(flat_param)  # variance cost is scaled by the number of parameters
@@ -171,7 +171,6 @@ class BrainMimic:
 
     def prune_graph(self, prune_factor=.05, min_edges=30, verbose=True):
         """
-        TODO: FIX
         Deletes low ranked node edges.
         :param prune_factor:
         :return:
@@ -253,14 +252,18 @@ class BrainMimic:
         """
         raise NotImplementedError
 
-    def compute_node_update(self, node):
+    def compute_node_update(self, node, inject_noise=True):
         """
         Computes nodes update in network
         :param node: the node to update.
+        :param inject_noise: whether to inject noise into node state
         :return:
         """
         drift = self.resistance * (self.brain.nodes[node]['neurons'] - self.default_state)
         node_state = self.brain.nodes[node]['neurons'].clone() - drift  # neurons drift toward defualt state
+        if inject_noise:
+            noise = torch.normal(mean=0, std=self.default_state*.2, size=node_state.shape)
+            node_state += noise
         for pred in self.brain.predecessors(node):
             state = self.brain.nodes[pred]['neurons']
             # assert len(state.shape) == 4
@@ -272,7 +275,8 @@ class BrainMimic:
 
     @torch.utils.hooks.unserializable_hook
     def fit_rdms(self, stim_gen: List[PsychDataloader], super_epochs=10, epochs=30, stimulus_frames = 20, batch_size=10,
-                 start_lr=.00001, final_lr=.00000001, prune_start=.1, prune_stop=.01, verbose=True, snapshot_out='./', reg_weight=.2):
+                 start_lr=.00001, final_lr=.00000001, prune_start=.1, prune_stop=.01, verbose=True, snapshot_out='./',
+                 out_prefix='snapshot_out', reg_weight=.2, inject_noise=True):
         """
         Attempt to find  structure for the brain network that matches observed geometry.
 
@@ -339,7 +343,7 @@ class BrainMimic:
                                 if node == -1:
                                     # if initial stimulus node continue
                                     continue
-                                node_state = self.compute_node_update(node)
+                                node_state = self.compute_node_update(node, inject_noise=inject_noise)
                                 activation_states[node].append(node_state)
                             for node in nodes:
                                 if node == -1:
@@ -352,8 +356,6 @@ class BrainMimic:
                                                                                verbose=verbose)
                     epoch_loss = epoch_loss + paradigm_dissimilarity_loss
 
-                    # save states
-                    nx.write_gpickle(self.brain, os.path.join(snapshot_out, 'brain_mimic_epoch_' + str(epoch)))
                     if verbose:
                         print("completed", str(paradigm), "LOSS = ", paradigm_dissimilarity_loss.detach().item())
 
@@ -370,6 +372,8 @@ class BrainMimic:
                           reg_weight * reg.detach().item())
             loss_history = np.array(loss_history)
             super_loss_history.append(loss_history)
+            # save states
+            nx.write_gpickle(self.brain, os.path.join(snapshot_out, out_prefix + '_super_epoch_' + str(super_epoch)))
             plt.plot(loss_history)
             plt.title("Super Epoch #" + str(super_epoch) + " epoch loss history")
             plt.show(block=False)
