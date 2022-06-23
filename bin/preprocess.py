@@ -453,7 +453,7 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
           " --transform Affine[ 0.1 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
           " --convergence [1000x500x250,1e-8,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
           " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
-          " --convergence [300x200x40,1e-8,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
+          " --convergence [300x200x40,1e-9,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
           " --transform SyN[ .001,2,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
           " --convergence [200x50,1e-9,10 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox"
     print(cmd)

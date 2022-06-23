@@ -357,6 +357,19 @@ def _create_paradigm():
     para_def_dict = {}
     name = input('what is this paradigm called? ')
     para_def_dict['name'] = name
+    if name in proj_data['paradigms']:
+        print("paradigm already exists.")
+        with open(proj_data['paradigms'][name], 'r') as f:
+            para_def_dict = json.load(f)
+            config_file_path = os.path.relpath(os.path.join(para_dir, name + '_experiment_config.json'), project_root)
+        if name not in proj_data['data_map']:
+            proj_data['data_map'][name] = {subj: {} for subj in proj_data['subjects']}
+            proj_data['paradigms'][para_def_dict['name']] = config_file_path
+        with open(proj_config, 'w') as f:
+            json.dump(proj_data, f, indent=4)
+        print("Successfully saved experiment / paradigm configuration json at", config_file_path)
+        return para_def_dict, config_file_path
+
     num_trs = int(input('how many trs are in each run ? '))
     para_def_dict['trs_per_run'] = num_trs
     predefine_orders = input_control.bool_input("Predefine stimuli presentation orders? (highly recommended for your "
@@ -571,7 +584,15 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
             else:
                 clist = [int(c) for c in clist]
 
-            design_matrices.append(analysis.design_matrix_from_run_list(clist,
+            cond_good = True
+            # check all conditions are present
+            for cond_idx in condition_names.keys():
+                if int(cond_idx) not in clist:
+                    print("WARNING: Session", c_name, "does not contain condition", cond_idx, "named",
+                          condition_names[cond_idx], "it will be skipped")
+                    cond_good = False
+            if cond_good:
+                design_matrices.append(analysis.design_matrix_from_run_list(clist,
                                                                         num_conditions,
                                                                         base_conditions))
             if sess_name in paradigm_data['order_number_definitions']:

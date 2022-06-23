@@ -18,7 +18,7 @@ from scipy.ndimage import gaussian_filter, binary_fill_holes, label
 
 from multiprocessing import Pool
 
-from preprocess import _pad_to_cube
+from bin.preprocess import _pad_to_cube
 
 from skimage.measure import regionprops
 from sklearn.mixture import GaussianMixture
@@ -416,8 +416,10 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     """
     if type(run_list) is list:
         run_list = np.array(run_list)
+    elif type(run_list) is torch.Tensor:
+        run_list = run_list.numpy()
     num_trs = len(run_list)
-    run_list = torch.stack(run_list)
+    run_list = np.stack(run_list)
     design_matrix = np.zeros((num_trs, num_conditions + 1))
     for i in range(num_conditions):
         if i in base_condition_idxs:

@@ -15,6 +15,8 @@ def _dot_pdist(arr: torch.Tensor, normalize=False):
     :param arr:
     :return:
     """
+    if len(arr.shape) == 1:
+        arr = arr.reshape(1, arr.shape[0])
     k = arr.shape[1]
     if normalize:
         arr = arr / arr.norm(dim=0)[None, :]
@@ -72,20 +74,23 @@ def searchlight_net(mean: torch.Tensor, cov: torch.Tensor,):
     raise NotImplementedError
 
 
-def pairwise_rsa(beta: torch.Tensor, atlas: torch.Tensor, min_roi_dim=5):
+def pairwise_rsa(beta: torch.Tensor, atlas: torch.Tensor, min_roi_dim=5, ignore_atlas_base=True, metric='cosine'):
     if type(beta) is np.ndarray:
         beta = torch.from_numpy(beta)
     if type(atlas) is np.ndarray:
         atlas = torch.from_numpy(atlas)
     atlas = atlas.int()
-    unique = torch.unique(atlas)[1:]  # omit index 0 (unclassified)
+    unique = torch.unique(atlas)
+    if ignore_atlas_base:
+        # omit index 0 (unclassified)
+        unique = unique[1:]
     unique_filtered = []
     roi_dissimilarity = []
     for roi_id in unique:
         roi_betas = beta[atlas == roi_id]
         if len(roi_betas) > min_roi_dim:
             unique_filtered.append(roi_id)
-            rdm = dissimilarity(roi_betas, metric='pearson')
+            rdm = dissimilarity(roi_betas, metric=metric)
             roi_dissimilarity.append(rdm)
     adjacency = torch.zeros([len(unique_filtered), len(unique_filtered)])
     pvals = torch.zeros([len(unique_filtered), len(unique_filtered)])
@@ -101,4 +106,29 @@ def pairwise_rsa(beta: torch.Tensor, atlas: torch.Tensor, min_roi_dim=5):
             pvals[i, j_t] = pval
             pvals[j_t, i] = pval
     return adjacency, unique_filtered, roi_dissimilarity, pvals
+
+
+def pca(betas: torch.Tensor, brain_mask=None, n_components=2, noisy=False):
+    betas = betas[brain_mask]
+    if n_components == -1:
+        n_components = betas.shape[-1]
+        if noisy:
+            n_components -= 1
+    if len(betas.shape) > 2:
+        betas = betas.reshape(-1, betas.shape[-1])
+    cov = torch.cov(betas.T)
+    eig_vals, eig_vecs = torch.linalg.eig(cov)
+    eig_vals = eig_vals.real
+    eig_vecs = eig_vecs.real
+    sort_idx = torch.argsort(eig_vals, descending=True)
+    eig_vecs = eig_vecs[:, sort_idx]
+    eig_vals = eig_vals[sort_idx]
+    eig_vecs = eig_vecs * eig_vals
+    if noisy:
+        proj_mat = eig_vecs[:, 1:n_components+1]
+    else:
+        proj_mat = eig_vecs[:, :n_components]
+    projected_betas = betas @ proj_mat
+    return projected_betas, eig_vecs, eig_vals
+
 
