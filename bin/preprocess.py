@@ -20,6 +20,7 @@ import subprocess
 import glob
 
 from scipy.ndimage import zoom, gaussian_filter
+from bin import filters
 
 import nipype.interfaces.io as nio  # Data i/o
 import nipype.interfaces.fsl as fsl  # fsl
@@ -364,6 +365,51 @@ def _flirt_wrapper(in_file, out_file, mat_out_file, temp_file, flt, dof=12):
     except Exception:
         out = None
     return out
+
+
+def bandpass_filter_functional(input_file, out_file, block_length_trs, plot=True, save_out=True):
+    """
+    frequencies in cycles / tr
+    :param input_file:
+    :param out_file:
+    :param block_length_trs:
+    :param plot:
+    :param save_out:
+    :return:
+    """
+    fnii = nib.load(input_file)
+    fdata = np.array(fnii.get_fdata())
+    filtered_nii = filters.butter_bandpass_filter(fdata,
+                                                  low_freq_cutoff=1 / (2.25 * block_length_trs),
+                                                  high_freq_cutoff=1 / (.3 * block_length_trs),
+                                                  fs=1,
+                                                  order=5)
+    if plot:
+        mean_og = np.mean(fdata, axis=(0, 1, 2))
+        mean_filt = np.mean(filtered_nii, axis=(0, 1, 2))
+        fig, axs = plt.subplots()
+        axs.plot(mean_og)
+        axs.plot(mean_filt)
+    if save_out:
+        out_nii = nib.Nifti1Image(filtered_nii, affine=fnii.affine, header=fnii.header)
+        nib.save(out_nii, out_file)
+    return filtered_nii
+
+
+def batch_bandpass_functional(functional_input_dirs, block_length_trs, fname='epi_masked.nii', out_name='epi_filtered.nii.gz'):
+    args = []
+    for source_dir in functional_input_dirs:
+        if not os.path.isdir(source_dir):
+            print("Failure", sys.stderr)
+        in_file = os.path.join(source_dir, fname)
+        if not os.path.exists(in_file):
+            print('Failed to find requested file')
+            exit()
+        out_file = os.path.join(source_dir, out_name)
+        args.append((in_file, out_file, block_length_trs, False, True))
+    with Pool() as p:
+        p.starmap(bandpass_filter_functional, args)
+    return functional_input_dirs
 
 
 def linear_affine_registration(functional_input_dirs: List[str], template_file: str, fname: str = 'stripped.nii.gz', output: str = None, dof=12):
