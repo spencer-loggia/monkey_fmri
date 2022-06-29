@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, List
 
 import torch
 from sklearn.metrics import confusion_matrix
@@ -192,6 +192,49 @@ class LinearDecoder:
             return y_hat, c_entropy, confusion
         return y_hat
 
+
+class SearchLightDecoder:
+    """
+    A class to fit a linear decoder in many rois and compare.
+    """
+
+    def __init__(self, atlas: torch.Tensor, roi_lookup, out_dim):
+        """
+
+        :param atlas: atlas of rois to look at in the brain
+        :param roi_lookup: dictionary mapping atlas keys to roi names
+        :param in_dim: in dimmensioality of model
+        :param out_dim: out dimmensionality of model (number of classes)
+        """
+        self.atlas: torch.Tensor = atlas
+        self.roi_lookup: dict = roi_lookup
+        self.out_dim: int = out_dim
+        self.models: List[Union[None, LinearDecoder]] = [None for _ in range(len(roi_lookup))]
+
+    def fit(self, time_course, targets):
+        """
+        :param time_course: (n_blocks, block_length, spatial0, spatial1, spatial2) time course blocks should be
+                            pre-convolved as nesseseary depending on aquisision method.
+        :param targets:
+        :return:
+        """
+        roi_idxs = self.roi_lookup.keys()
+        for i, roi_idx in enumerate(roi_idxs):
+            roi_time_course = time_course[:, :, self.atlas == roi_idx]
+            roi_time_course = roi_time_course.reshape(roi_time_course.shape[0], -1)
+            roi_model = LinearDecoder(roi_time_course.shape[1], self.out_dim)
+            roi_model.fit(roi_time_course, targets)
+            self.models[i] = roi_model
+
+    def predict(self, time_course, targets):
+        predict_result = []
+        roi_idxs = self.roi_lookup.keys()
+        for i, roi_idx in enumerate(roi_idxs):
+            roi_time_course = time_course[:, :, self.atlas == roi_idx]
+            roi_time_course = roi_time_course.reshape(roi_time_course.shape[0], -1)
+            res = self.models[i].predict(roi_time_course, targets)
+            predict_result.append(res)
+        return predict_result
 
 
 
