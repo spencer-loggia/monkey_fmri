@@ -1,4 +1,7 @@
+from typing import Union
+
 import torch
+from sklearn.metrics import confusion_matrix
 import numpy as np
 import nibabel as nib
 import graspologic as gr
@@ -130,5 +133,44 @@ def pca(betas: torch.Tensor, brain_mask=None, n_components=2, noisy=False):
         proj_mat = eig_vecs[:, :n_components]
     projected_betas = betas @ proj_mat
     return projected_betas, eig_vecs, eig_vals
+
+
+class LinearDecoder:
+    def __init__(self, in_dim, out_dim):
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.beta = None
+
+    def _reshape_time_course(self, time_course):
+        X = time_course.reshape(time_course.shape[0], -1)  # n_blocks x voxels
+        if X.shape[1] != self.in_dim:
+            raise ValueError("time course voxels flat must be the shape of in_dim attribute.")
+        return X
+
+    def get_target_loss_stats(self, y_target, y_hat):
+        loss = torch.nn.CrossEntropyLoss()
+        c_entropy = loss(y_hat, y_target)
+        pred_labels = torch.argmax(y_hat, dim=1)
+        confusion = confusion_matrix(y_target.detach().numpy(), pred_labels.detach().numpy(),
+                                     labels=np.arange(self.out_dim))
+        return c_entropy, confusion
+
+    def fit(self, time_course: torch.Tensor, targets: torch.Tensor):
+        # reshape to n_blocks x all
+        X = self._reshape_time_course(time_course)
+        target_arr = torch.nn.functional.one_hot(targets, num_classes=self.out_dim)  # n_blocks x k
+        self.beta = torch.inverse(X.T @ X) @ X.T @ target_arr  # voxels x k
+        return self.beta
+
+    def predict(self, time_course: torch.Tensor, targets: Union[None, torch.Tensor] = None):
+        X = self._reshape_time_course(time_course)
+        y_hat = X @ self.beta  # n_blocks x k
+        if targets is not None:
+            c_entropy, confusion = self.get_target_loss_stats(targets, y_hat)
+            return y_hat, c_entropy, confusion
+        return y_hat
+
+
+
 
 
