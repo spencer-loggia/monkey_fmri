@@ -136,7 +136,15 @@ def pca(betas: torch.Tensor, brain_mask=None, n_components=2, noisy=False):
 
 
 class LinearDecoder:
+    """
+    Class designed to fit a single task on a singe voxel set (e.g. roi)
+    """
     def __init__(self, in_dim, out_dim):
+        """
+        Constructs a new linear decoder
+        :param in_dim:
+        :param out_dim:
+        """
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.beta = None
@@ -156,6 +164,13 @@ class LinearDecoder:
         return c_entropy, confusion
 
     def fit(self, time_course: torch.Tensor, targets: torch.Tensor):
+        """
+        fit (compute beta coefficients for) this linear model.
+        :param time_course: the time course, (n_blocks, block_length, spatial0, spatial1, spatial2)
+                            or (n_samples, features) if not strictly mri time course data.
+        :param targets: target class ids of length n_blocks / n_samples.
+        :return: beta coefficients
+        """
         # reshape to n_blocks x all
         X = self._reshape_time_course(time_course)
         target_arr = torch.nn.functional.one_hot(targets, num_classes=self.out_dim)  # n_blocks x k
@@ -163,6 +178,13 @@ class LinearDecoder:
         return self.beta
 
     def predict(self, time_course: torch.Tensor, targets: Union[None, torch.Tensor] = None):
+        """
+        Predict class labels for data using the current model. If targets are passed, will also compute cross entropy
+        and a confusion matrix on the targets.
+        :param time_course:
+        :param targets:
+        :return: predicted classes for each sample, cross entropy and confusion matrix if targets were passed.
+        """
         X = self._reshape_time_course(time_course)
         y_hat = X @ self.beta  # n_blocks x k
         if targets is not None:
