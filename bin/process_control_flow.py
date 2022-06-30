@@ -7,6 +7,7 @@ import time
 
 import preprocess
 import support_functions
+import analysis
 from input_control import select_option_input, bool_input
 
 
@@ -32,7 +33,7 @@ class BaseControlNet:
             else:
                 for d in pred:
                     if 'complete' not in self.network.nodes[d]:
-                        raise ValueError
+                        raise ValueError(d + " : " + str(self.network.nodes[d]))
                     if self.network.nodes[d]['complete'] or self.network.nodes[d]['complete'] is None:
                         # TODO: Needs fixin'
                         # if 'modified' in self.network.nodes[n] and 'modified' in self.network.nodes[d] and self.network.nodes[d]['complete'] is not None:
@@ -405,8 +406,10 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('paradigm', data=None, type='json', bipartite=0, complete=False)
         self.network.add_node('ima_order_map', type='json', bipartite=0, complete=False)
 
-        self.network.add_node('beta_matrix', data=None, type='4D_volume', bipartite=0, complete=False, spece='epi_native')
-        self.network.add_node('reg_beta_matrix', data=None, type='4D_volume', bipartite=0, complete=False, spece='epi_native')
+        self.network.add_node('run_beta_matrices', data=[], type='4D_volume', bipartite=0, complete=False, space='epi_native')
+        self.network.add_node('reg_beta_matrices', data=None, type='4D_volume', bipartite=0, complete=False, spece='ds_t1_approx')
+        self.network.add_node('reg_beta_matrix', data=None, type='4D_volume', bipartite=0, complete=False,
+                              spece='ds_t1_approx')
 
         # index in path is id of contrast
         self.network.add_node('reg_contrasts', data=[], type='volume', bipartite=0, complete=False,
@@ -473,8 +476,12 @@ class DefaultSessionControlNet(BaseControlNet):
                                    'about from this experiment, and satisfies the equation (DesignMatrix * hrf) @ BetaMatrix ~= EpiTimeSeries'
                                    ' where * is the convolution operator and @ is matrix multiplication.')
 
-        self.network.add_node('register_beta_matrix', fxn='support_functions.apply_warp_4d', bipartite=1,
-                              desc='Use the functional -> working space transform to take the beta coefficients to '
+        self.network.add_node('create_session_averaged_beta_matrix', fxn='analysis.create_averaged_beta',
+                              bipartite=1, desc='Average all the individual run betas from this session to construct '
+                                                'session averaged beta matrix.')
+
+        self.network.add_node('register_beta_matrices', fxn='support_functions.apply_warp_4d', bipartite=1,
+                              desc='Use the functional -> working space transform to take the run level beta coefficients to '
                                    'the working space. ')
         self.network.add_node('create_session_contrast', fxn='support_functions.create_contrast', bipartite=1,
                               desc='Create contrast volumes from the beta matrix.')
@@ -543,14 +550,17 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('epi_masked', 'create_beta_matrix', order=0)  # 01
         self.network.add_edge('paradigm', 'create_beta_matrix', order=1)  # 01
         self.network.add_edge('ima_order_map', 'create_beta_matrix', order=2)  # 01
-        self.network.add_edge('create_beta_matrix', 'beta_matrix', order=0)  # 10
+        self.network.add_edge('create_beta_matrix', 'run_beta_matrices', order=0)  # 10
         self.network.add_edge('create_beta_matrix', 'hrf_estimate', order=1)  # 10
 
-        self.network.add_edge('beta_matrix', 'register_beta_matrix', order=0)  # 01
-        self.network.add_edge('ds_t1_masked', 'register_beta_matrix', order=1)
-        self.network.add_edge('manual_transform', 'register_beta_matrix', order=2)  # 01
-        self.network.add_edge('auto_composite_transform', 'register_beta_matrix', order=3)  # 01
-        self.network.add_edge('register_beta_matrix', 'reg_beta_matrix', order=0)  # 10
+        self.network.add_edge('run_beta_matrices', 'register_beta_matrices', order=0)  # 01
+        self.network.add_edge('ds_t1_masked', 'register_beta_matrices', order=1)
+        self.network.add_edge('manual_transform', 'register_beta_matrices', order=2)  # 01
+        self.network.add_edge('auto_composite_transform', 'register_beta_matrices', order=3)  # 01
+        self.network.add_edge('register_beta_matrix', 'reg_beta_matrices', order=0)  # 10
+
+        self.network.add_edge('reg_beta_matrices', 'create_session_averaged_beta_matrix', order=0)
+        self.network.add_edge('create_session_averaged_beta_matrix', 'reg_beta_matrix', order=0)
 
         self.network.add_edge('reg_beta_matrix', 'promote_session', order=0)  # 01
         self.network.add_edge('paradigm', 'promote_session', order=1)  # 01

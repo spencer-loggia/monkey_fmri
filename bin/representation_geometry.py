@@ -135,7 +135,7 @@ def pca(betas: torch.Tensor, brain_mask=None, n_components=2, noisy=False):
     return projected_betas, eig_vecs, eig_vals
 
 
-class LinearDecoder:
+class LogisticDecoder:
     """
     Class designed to fit a single task on a singe voxel set (e.g. roi)
     """
@@ -148,10 +148,11 @@ class LinearDecoder:
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.beta = None
+        self.softmax = torch.nn.Softmax(dim=1)
 
-    def _reshape_time_course(self, time_course):
-        X = time_course.reshape(time_course.shape[0], -1)  # n_blocks x voxels
-        if X.shape[1] != self.in_dim:
+    def _reshape_time_course(self, X):
+        X = X.reshape(-1, X.shape[-1]).T  # voxels x n_samples
+        if X.shape[0] != self.in_dim:
             raise ValueError("time course voxels flat must be the shape of in_dim attribute.")
         return X
 
@@ -161,23 +162,39 @@ class LinearDecoder:
         pred_labels = torch.argmax(y_hat, dim=1)
         confusion = confusion_matrix(y_target.detach().numpy(), pred_labels.detach().numpy(),
                                      labels=np.arange(self.out_dim))
-        return c_entropy, confusion
+        return pred_labels, c_entropy, confusion
 
-    def fit(self, time_course: torch.Tensor, targets: torch.Tensor):
+    def fit(self, X: torch.Tensor, targets: torch.Tensor, optim_threshold=1e-9, cutoff_epoch=10000):
         """
         fit (compute beta coefficients for) this linear model.
-        :param time_course: the time course, (n_blocks, block_length, spatial0, spatial1, spatial2)
-                            or (n_samples, features) if not strictly mri time course data.
+        :param X:
+        :param optim_threshold:
         :param targets: target class ids of length n_blocks / n_samples.
         :return: beta coefficients
         """
         # reshape to n_blocks x all
-        X = self._reshape_time_course(time_course)
+        X = self._reshape_time_course(X)
         target_arr = torch.nn.functional.one_hot(targets, num_classes=self.out_dim)  # n_blocks x k
-        self.beta = torch.inverse(X.T @ X) @ X.T @ target_arr  # voxels x k
+        self.beta = torch.nn.Parameter(torch.inverse(X.T @ X) @ X.T @ target_arr.double())
+        optimizer = torch.optim.Adam(lr=.01, params=[self.beta])
+        cross_entropy = torch.nn.CrossEntropyLoss()
+        print("Initialized Logistic Optimizer...")
+        grad_dt = torch.inf
+        epoch = 0
+        while grad_dt > optim_threshold and epoch < cutoff_epoch:
+            optimizer.zero_grad()
+            old_beta = self.beta.data.detach().clone()
+            lin_scores = X @ self.beta
+            class_probs = self.softmax(lin_scores)
+            class_loss = cross_entropy(class_probs, targets)
+            class_loss.backward()
+            optimizer.step()
+            grad_dt = torch.linalg.norm((old_beta.flatten() - self.beta.data.flatten())).detach().clone()
+            print("Epoch", epoch, "gradient delta", grad_dt.item())
+            epoch += 1
         return self.beta
 
-    def predict(self, time_course: torch.Tensor, targets: Union[None, torch.Tensor] = None):
+    def predict(self, X: torch.Tensor, targets: Union[None, torch.Tensor] = None):
         """
         Predict class labels for data using the current model. If targets are passed, will also compute cross entropy
         and a confusion matrix on the targets.
@@ -185,12 +202,11 @@ class LinearDecoder:
         :param targets:
         :return: predicted classes for each sample, cross entropy and confusion matrix if targets were passed.
         """
-        X = self._reshape_time_course(time_course)
-        y_hat = X @ self.beta  # n_blocks x k
+        X = self._reshape_time_course(X)
+        y_hat = self.softmax(X @ self.beta)  # n_blocks x k
         if targets is not None:
-            c_entropy, confusion = self.get_target_loss_stats(targets, y_hat)
-            return y_hat, c_entropy, confusion
-        return y_hat
+            return self.get_target_loss_stats(targets, y_hat)
+        return torch.argmax(y_hat, dim=0)
 
 
 class SearchLightDecoder:
@@ -209,32 +225,33 @@ class SearchLightDecoder:
         self.atlas: torch.Tensor = atlas
         self.roi_lookup: dict = roi_lookup
         self.out_dim: int = out_dim
-        self.models: List[Union[None, LinearDecoder]] = [None for _ in range(len(roi_lookup))]
+        self.models: List[Union[None, LogisticDecoder]] = [None for _ in range(len(roi_lookup))]
 
-    def fit(self, time_course, targets):
+    def fit(self, X, targets, optim_threshold=1e-9, cutoff_epoch=10000):
         """
-        :param time_course: (n_blocks, block_length, spatial0, spatial1, spatial2) time course blocks should be
-                            pre-convolved as nesseseary depending on aquisision method.
+        :param X: (spatial0, spatial1, spatial2, samples )
         :param targets:
         :return:
         """
         roi_idxs = self.roi_lookup.keys()
         for i, roi_idx in enumerate(roi_idxs):
-            roi_time_course = time_course[:, :, self.atlas == roi_idx]
+            roi_time_course = X[self.atlas == roi_idx]
             roi_time_course = roi_time_course.reshape(roi_time_course.shape[0], -1)
-            roi_model = LinearDecoder(roi_time_course.shape[1], self.out_dim)
-            roi_model.fit(roi_time_course, targets)
+            roi_model = LogisticDecoder(roi_time_course.shape[1], self.out_dim)
+            roi_model.fit(roi_time_course, targets, optim_threshold=optim_threshold, cutoff_epoch=cutoff_epoch)
             self.models[i] = roi_model
 
-    def predict(self, time_course, targets):
+    def predict(self, X, targets):
         predict_result = []
         roi_idxs = self.roi_lookup.keys()
         for i, roi_idx in enumerate(roi_idxs):
-            roi_time_course = time_course[:, :, self.atlas == roi_idx]
-            roi_time_course = roi_time_course.reshape(roi_time_course.shape[0], -1)
-            res = self.models[i].predict(roi_time_course, targets)
+            roi_x = X[self.atlas == roi_idx]
+            roi_x = roi_x.reshape(roi_x.shape[0], -1)
+            res = self.models[i].predict(roi_x, targets)
             predict_result.append(res)
         return predict_result
+
+
 
 
 

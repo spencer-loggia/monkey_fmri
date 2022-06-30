@@ -205,7 +205,7 @@ def bold_response_function(tr=3, time_length=30):
 
 
 def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndarray, base_conditions_idxs,
-                                          num_nuisance=1, conv_size=11, conv_pad=5, epochs=30, pid=0,
+                                          num_nuisance=2, conv_size=11, conv_pad=5, epochs=30, pid=0,
                                           mion=True, auto_conv=True, tr=3):
     """
     Hi so this is the meat of the algorithm for finding beta coeficients, e.g. first level MRI analysis.
@@ -313,6 +313,8 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
         print("optim epoch #", i, "(pid=", pid, ")", ' loss=', flex_loss.detach().item())
 
     beta = np.array(beta).T
+    cond_betas = beta[:, 1:-1 * num_nuisance]
+    beta = (beta - np.mean(cond_betas.flatten())) / np.std(cond_betas.flatten())
     beta = beta.reshape(list(og_shape[:-1]) + [design_matrix.shape[-1]])
     hemodynamic_est = np.array(conv1d.weight.clone().detach()).reshape(np.prod(conv1d.weight.shape))
     return beta, hemodynamic_est, loss_hist
@@ -448,7 +450,8 @@ def _pipe(d_mat, run, base_condition_idxs, mion, auto_conv, tr, pid):
 
 
 def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.ndarray], base_condition_idxs: List[int],
-                               output_dir: str, fname: str, mion=False, use_python_mp=False, auto_conv=False, tr=3):
+                               output_dir: str, fname: str, mion=False, use_python_mp=False, auto_conv=False, tr=3,
+                               save_run_betas=True):
     run_stack = []
     affines = []
     header = None
@@ -476,7 +479,8 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
                                [mion] * len(run_stack),
                                [auto_conv] * len(run_stack),
                                [tr] * len(run_stack),
-                               list(range(len(run_stack)))))
+                               list(range(len(run_stack))),
+                               ))
     if use_python_mp:
         with Pool() as p:
             # dispatch workers, by default will claim all but one cpu core.
@@ -486,11 +490,12 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
         for i in range(len(full_run_params)):
             res.append(_pipe(*full_run_params[i]))
     betas, hemo, loss_hists = list(zip(*res))
-    avg_betas = np.mean(np.stack(betas, axis=0), axis=0)[0]
-    affine = np.mean(np.concatenate(affines, axis=0), axis=0)
-    beta_nii = nib.Nifti1Image(avg_betas, affine=affine, header=header)
-    out_path = os.path.join(output_dir, 'beta_coef.nii')
-    nib.save(beta_nii, out_path)
+    beta_paths = []
+    for i, run in enumerate(run_dirs):
+        out_path = os.path.join(run, 'run_beta.nii.gz')
+        beta_paths.append(out_path)
+        run_beta_nii = nib.Nifti1Image(np.squeeze(betas[i]), affine=np.squeeze(affines[i]), header=header)
+        nib.save(run_beta_nii, out_path)
     fig, axs = plt.subplots(2)
     for i, h in enumerate(hemo):
         axs[0].plot(h, label=i)
@@ -499,10 +504,26 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
     if None not in loss_hists:
         avg_loss_hist = np.sum(np.array(loss_hists), axis=0)
         axs[1].plot(avg_loss_hist)
-    print(avg_betas.shape)
     fig.show()
     plt.show()
-    return avg_betas, out_path, avg_hemo
+    return beta_paths, avg_hemo
+
+
+def create_averaged_beta(beta_paths, out_dir=None):
+    betas = []
+    affines = []
+    for beta_path in beta_paths:
+        beta_nii = nib.load(beta_path)
+        betas.append(np.array(beta_nii.get_fdata()))
+        affines.append(np.array(beta_nii.affine))
+    avg_betas = np.mean(np.stack(betas, axis=0), axis=0)[0]
+    affine = np.mean(np.stack(affines, axis=0), axis=0)
+    beta_nii = nib.Nifti1Image(avg_betas, affine=affine, header=beta_nii.header)
+    if out_dir is None:
+        out_dir = os.path.dirname(os.path.dirname(beta_paths[0]))
+    out_path = os.path.join(out_dir, 'beta_coef.nii')
+    nib.save(beta_nii, out_path)
+    return out_path
 
 
 def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_descriptors: List[str], output_dir: str):

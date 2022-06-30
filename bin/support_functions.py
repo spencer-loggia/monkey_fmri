@@ -208,8 +208,8 @@ def apply_warp_4d(source, vol_in_target_space, forward_gross_transform_path=None
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
-    return os.path.relpath(apply_warp(source, vol_in_target_space, forward_gross_transform_path=forward_gross_transform_path,
-                      fine_transform_path=fine_transform_path, type_code=3, dim=3), project_root)
+    return apply_warp(source, vol_in_target_space, forward_gross_transform_path=forward_gross_transform_path,
+                      fine_transform_path=fine_transform_path, type_code=3, dim=3)
 
 
 def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, out=None):
@@ -635,11 +635,11 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
 
     print("using mion: ", mion)
     print('source fname: ', fname)
-    _, beta_path, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
+    out_paths, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
                                                           fname=fname, mion=mion, use_python_mp=False, auto_conv=False,
                                                           tr=3)
-    print("Beta Coefficient Matrix created at: " + str(beta_path))
-    return os.path.relpath(beta_path, project_root)
+    print("Run Level Beta Coefficient Matrices Created")
+    return out_paths
 
 
 def create_contrast(beta_path, paradigm_path):
