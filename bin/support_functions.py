@@ -166,6 +166,16 @@ def downsample_vol_rois_cmdline_wrap(dir, factor=2, affine_scale=1, resample='ne
     return downsample_vol_rois(roi_dict, out_dict, factor=factor, affine_scale=affine_scale, resample=resample, output_dir=output_dir)
 
 
+def bandpass_wrapper(functional_dirs, paradigm_path):
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    project_root = os.path.join(subj_root, '..', '..')
+    os.chdir(project_root)
+    with open(paradigm_path, 'r') as f:
+        paradigm_data = json.load(f)
+    blocklength = paradigm_data['block_length_trs']
+    return preprocess.batch_bandpass_functional(functional_dirs, blocklength)
+
+
 def coreg_wrapper(source_space_vol_path, target_space_vol_path):
     """
 

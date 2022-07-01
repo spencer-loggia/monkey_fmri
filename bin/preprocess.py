@@ -381,7 +381,7 @@ def bandpass_filter_functional(input_file, out_file, block_length_trs, plot=True
     fdata = np.array(fnii.get_fdata())
     filtered_nii = filters.butter_bandpass_filter(fdata,
                                                   low_freq_cutoff=1 / (2.25 * block_length_trs),
-                                                  high_freq_cutoff=1 / (.3 * block_length_trs),
+                                                  high_freq_cutoff=.5,
                                                   fs=1,
                                                   order=5)
     if plot:

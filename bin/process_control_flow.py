@@ -403,6 +403,9 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('epi_masked', data=[], fname=None, type='time_series', bipartite=0, complete=False,
                               space='epi_native')
 
+        self.network.add_node('epi_masked_filtered', data=[], type='time_series', bipartite=0, complete=False,
+                              space='epi_native')
+
         self.network.add_node('paradigm', data=None, type='json', bipartite=0, complete=False)
         self.network.add_node('ima_order_map', type='json', bipartite=0, complete=False)
 
@@ -463,6 +466,9 @@ class DefaultSessionControlNet(BaseControlNet):
                                    'ds t1, so that the epi can be nonlinear coregistered to the t1 without intereference from the skull')
         self.network.add_node('apply_functional_mask', fxn='support_functions.apply_binary_mask_functional', bipartite=1,
                               desc='Apply the brainmask in the functional space to all epi time series.')
+        self.network.add_node('bandpass_filter', fxn='support_functions.bandpass_wrapper', bipartite=1,
+                              desc="Removes high frequency (less than 2 trs) and low frequency "
+                                   "(greater than 2.25 blocks) signal")
         self.network.add_node('load_paradigm', fxn='support_functions.create_load_paradigm', bipartite=1,
                               desc='Either load an existing stimuli paradigm json config file, or use the prompt to '
                                    'create a new one.')
@@ -547,7 +553,11 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('epi_masked', 'create_load_ima_order_map', order=0)  # 01
         self.network.add_edge('create_load_ima_order_map', 'ima_order_map', order=0)  # 10
 
-        self.network.add_edge('epi_masked', 'create_beta_matrix', order=0)  # 01
+        self.network.add_edge('epi_masked', 'bandpass_filter', order=0)
+        self.network.add_edge('paradigm', 'bandpass_filter', order=1)
+        self.network.add_edge('bandpass_filter', 'epi_masked_filtered', order=0)
+
+        self.network.add_edge('epi_masked_filtered', 'create_beta_matrix', order=0)  # 01
         self.network.add_edge('paradigm', 'create_beta_matrix', order=1)  # 01
         self.network.add_edge('ima_order_map', 'create_beta_matrix', order=2)  # 01
         self.network.add_edge('create_beta_matrix', 'run_beta_matrices', order=0)  # 10

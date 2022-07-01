@@ -189,7 +189,7 @@ class LogisticDecoder:
             class_loss = cross_entropy(class_probs, targets)
             class_loss.backward()
             optimizer.step()
-            grad_dt = torch.linalg.norm((old_beta.flatten() - self.beta.data.flatten())).detach().clone()
+            grad_dt = (torch.linalg.norm((old_beta.flatten() - self.beta.data.flatten())).detach().clone()) / len(old_beta.flatten())
             print("Epoch", epoch, "gradient delta", grad_dt.item())
             epoch += 1
         return self.beta

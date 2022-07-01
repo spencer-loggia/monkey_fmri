@@ -516,12 +516,12 @@ def create_averaged_beta(beta_paths, out_dir=None):
         beta_nii = nib.load(beta_path)
         betas.append(np.array(beta_nii.get_fdata()))
         affines.append(np.array(beta_nii.affine))
-    avg_betas = np.mean(np.stack(betas, axis=0), axis=0)[0]
+    avg_betas = np.mean(np.stack(betas, axis=0), axis=0)
     affine = np.mean(np.stack(affines, axis=0), axis=0)
     beta_nii = nib.Nifti1Image(avg_betas, affine=affine, header=beta_nii.header)
     if out_dir is None:
         out_dir = os.path.dirname(os.path.dirname(beta_paths[0]))
-    out_path = os.path.join(out_dir, 'beta_coef.nii')
+    out_path = os.path.join(out_dir, 'reg_beta_coef.nii')
     nib.save(beta_nii, out_path)
     return out_path
 
