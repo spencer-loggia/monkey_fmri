@@ -347,7 +347,7 @@ class BrainMimic:
                     paradigm_dissimilarity_loss = self.beta_dissimilarity_loss(activation_states, run_list,
                                                                                len(cond_presentation_order), para_idx,
                                                                                verbose=verbose)
-                    epoch_loss = epoch_loss + paradigm_dissimilarity_loss
+                    epoch_loss = epoch_loss + paradigm_dissimilarity_loss # this could cause numerical instability ...
 
                     # save states
                     nx.write_gpickle(self.brain, os.path.join(snapshot_out, 'brain_mimic_epoch_' + str(epoch)))

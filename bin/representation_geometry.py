@@ -11,6 +11,30 @@ from scipy.stats import spearmanr
 _distance_metrics_ = ['euclidian', 'pearson', 'spearman', 'dot', 'cosine']
 
 
+def _pad_to_cube(arr: np.ndarray, time_axis=3):
+    """
+    makes spatial dims have even size.
+    :param arr:
+    :param time_axis:
+    :return:
+    """
+    if time_axis < np.ndim(arr):
+        size = max(arr.shape[:time_axis] + arr.shape[time_axis+1:])
+        print(size)
+    else:
+        size = max(arr.shape)
+        # print('ruhroh')
+
+    ax_pad = [0] * np.ndim(arr)
+    for i in range(len(ax_pad)):
+        if i != time_axis:
+            ideal = (size - arr.shape[i]) / 2
+            ax_pad[i] = (int(np.floor(ideal)), int(np.ceil(ideal)))
+        else:
+            ax_pad[i] = (0, 0)
+    arr = np.pad(arr, ax_pad, mode='constant', constant_values=(0, 0))
+    return arr
+
 def _dot_pdist(arr: torch.Tensor, normalize=False):
     """
     arr should be 2D < observations(v) x conditions (k) >
@@ -209,7 +233,7 @@ class LogisticDecoder:
         return torch.argmax(y_hat, dim=0)
 
 
-class SearchLightDecoder:
+class ROIDecoder:
     """
     A class to fit a linear decoder in many rois and compare.
     """
@@ -252,7 +276,65 @@ class SearchLightDecoder:
         return predict_result
 
 
+class SearchLightDecoder:
 
+    def __init__(self, brain_mask, roi_loookup, out_dim, kernel=4, dev='cuda:0'):
+        self.kernel = kernel
+        self.out_dim = out_dim
+        self.lookup = roi_loookup
+        self.device = torch.device(dev)
+        self.softmax = torch.nn.Softmax(dim=1)
+        self.ce_loss = torch.nn.CrossEntropyLoss(reduction='none')
+        self.conv1 = None
+        self.conv2 = None
 
+    def fit(self, X, targets, optim_threshold=1e-9, cutoff_epoch=5000, lr=.0001):
+        X = _pad_to_cube(X) # spatial, spatial, spatial, batch
+        X = torch.from_numpy(X.transpose((3, 0, 1, 2))).double()
+        X = torch.unsqueeze(X, dim=1)  # batch, channels, spatial, spatial, spatial
 
+        # DEBUG: DOWNSAMPLE: DEBUG ONLY
+        # pool = torch.nn.MaxPool3d(3)
+        # X = pool(X)
 
+        print(X.shape)
+        in_spatial = X.shape[2]
+        stride = 1
+        # computing padding that maintains spatial dims
+        pad = (((in_spatial - 1) * stride) - in_spatial + self.kernel) / 2
+        if not pad.is_integer() or pad >= self.kernel:
+            print('kernel', self.kernel, "is invalid.")
+            return
+        pad = int(pad)
+        print(pad)
+        self.conv1 = torch.nn.Conv3d(kernel_size=self.kernel,
+                                     in_channels=1,
+                                     out_channels=16,
+                                     padding=pad,
+                                     dtype=torch.double,
+                                     device=self.device)
+        self.conv2 = torch.nn.Conv3d(kernel_size=1,
+                                     in_channels=16,
+                                     out_channels=self.out_dim,
+                                     dtype=torch.double,
+                                     device=self.device)
+        optimizer = torch.optim.Adam(params=[self.conv1.weight, self.conv2.weight], lr=lr)
+        loss_dt = torch.inf
+        old_loss = torch.inf
+        epoch = 0
+        targets = targets.reshape(len(targets), 1, 1, 1)
+        targets = torch.tile(targets, (1, in_spatial, in_spatial, in_spatial)).to(self.device)
+        while loss_dt > optim_threshold and epoch < cutoff_epoch:
+            optimizer.zero_grad()
+            h = self.conv1(X)
+            h = self.conv2(h)  # a (samples, classes, spatial1, spatial2, spatial3) tensor
+            y_hat = self.softmax(h)
+            ce = self.ce_loss(y_hat, targets)  # loss per hyper-voxel (voxel is actually result of linear convolution)
+            loss = torch.mean(torch.pow(ce.flatten(), 1 / 3)) # 3rt the ce so we care more about making low examples lower
+            loss.backward()
+            optimizer.step()
+            loss_dt = (old_loss - loss).detach().cpu().clone().item()
+            old_loss = loss.detach().cpu().clone()
+            print("CE on epoch", epoch, "is", old_loss.item())
+            epoch += 1
+        return ce.detach().cpu().clone()
