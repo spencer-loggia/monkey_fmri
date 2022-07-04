@@ -288,14 +288,15 @@ class SearchLightDecoder:
         self.conv1 = None
         self.conv2 = None
 
-    def fit(self, X, targets, optim_threshold=1e-9, cutoff_epoch=5000, lr=.0001):
+    def fit(self, X, targets, optim_threshold=1e-9, cutoff_epoch=5000, lr=.0001, downscale_factor=1):
         X = _pad_to_cube(X) # spatial, spatial, spatial, batch
         X = torch.from_numpy(X.transpose((3, 0, 1, 2))).double()
         X = torch.unsqueeze(X, dim=1)  # batch, channels, spatial, spatial, spatial
-
+        og_size = X.shape[2]
         # DEBUG: DOWNSAMPLE: DEBUG ONLY
-        # pool = torch.nn.MaxPool3d(3)
-        # X = pool(X)
+        if downscale_factor > 1:
+            pool = torch.nn.MaxPool3d(downscale_factor)
+            X = pool(X)
 
         print(X.shape)
         in_spatial = X.shape[2]
@@ -330,11 +331,16 @@ class SearchLightDecoder:
             h = self.conv2(h)  # a (samples, classes, spatial1, spatial2, spatial3) tensor
             y_hat = self.softmax(h)
             ce = self.ce_loss(y_hat, targets)  # loss per hyper-voxel (voxel is actually result of linear convolution)
-            loss = torch.mean(torch.pow(ce.flatten(), 1 / 3)) # 3rt the ce so we care more about making low examples lower
+            loss = torch.mean(torch.pow(.1 * ce.flatten(), .5)) # 3rt the ce so we care more about making low examples lower
             loss.backward()
             optimizer.step()
             loss_dt = (old_loss - loss).detach().cpu().clone().item()
             old_loss = loss.detach().cpu().clone()
             print("CE on epoch", epoch, "is", old_loss.item())
             epoch += 1
-        return ce.detach().cpu().clone()
+        ce = ce.detach().cpu().clone()
+        if downscale_factor > 1:
+            upsample = torch.nn.Upsample(size=(og_size, og_size, og_size))
+            ce = upsample(ce[None, :, :, :, :])
+            ce = torch.squeeze(ce)
+        return ce
