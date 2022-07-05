@@ -195,6 +195,29 @@ def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
     mcflt.cmdline
     return mcflt.run()
 
+def NORDIC(input_dirs: List[str], noise_path=None,filename='f_nordic'):
+    """
+    Perform NORDIC denoising of images. Should be done before any other manipulation of images that might disrupt the
+    noise pattern.
+    :param input_dirs: A list of strings corresponding to the functional images you wish to denoise.
+    :param noise_path: Path to the noise image. Generally recommended, but if not used, the NORDIC function will
+    try and estimate the noise itself.
+    :param filename: A string of the new filename
+    :return: A list of strings corresponding to the outputs.
+    """
+    os.chdir('bin')
+    if noise_path is None:
+        noise_path = 'None' # Matlab needs a text/char input, not None
+    cmd = 'matlab -r '
+    fun = ' "monk_nordic({},{},{}); exit;"'.format("{'"+"','".join(input_dirs)+"'}", "'" + noise_path + "'","'"+filename+"'")
+    cmd = cmd + fun
+    print(cmd)
+    subprocess.call(cmd,shell=True)
+    os.chdir('..')
+    out_dirs = [os.path.join(os.path.dirname(input_dir),filename+'.nii') for input_dir in input_dirs]
+    return out_dirs
+
+
 
 def motion_correction(input_dirs: List[str], ref_path: str, outname='moco.nii.gz', output: Union[None, str] = None, fname='f_sphinx.nii',
                       check_rms=True, abs_threshold=3, var_threshold=1) -> Union[List[str], None]:
