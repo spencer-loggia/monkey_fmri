@@ -145,7 +145,7 @@ def _clean_img_wrapper(in_file, out_file, low_pass, high_pass, TR):
     nib.save(clean_img, out_file)
 
 
-def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii.gz', scan_pos = 'HFP'):
+def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f_nordic.nii', scan_pos = 'HFP'):
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION or BOLD dir)
@@ -195,7 +195,8 @@ def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
     mcflt.cmdline
     return mcflt.run()
 
-def NORDIC(input_dirs: List[str], noise_path=None,filename='f_nordic'):
+
+def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
     """
     Perform NORDIC denoising of images. Should be done before any other manipulation of images that might disrupt the
     noise pattern.
@@ -209,12 +210,12 @@ def NORDIC(input_dirs: List[str], noise_path=None,filename='f_nordic'):
     if noise_path is None:
         noise_path = 'None' # Matlab needs a text/char input, not None
     cmd = 'matlab -r '
-    fun = ' "monk_nordic({},{},{}); exit;"'.format("{'"+"','".join(input_dirs)+"'}", "'" + noise_path + "'","'"+filename+"'")
+    fun = ' "monk_nordic({},{},{}); exit;"'.format("{'"+"','".join(input_dirs)+"'}", "'" + noise_path + "'", "'"+filename+"'")
     cmd = cmd + fun
     print(cmd)
     subprocess.call(cmd,shell=True)
     os.chdir('..')
-    out_dirs = [os.path.join(os.path.dirname(input_dir),filename+'.nii') for input_dir in input_dirs]
+    out_dirs = [os.path.join(os.path.dirname(input_dir), filename+'.nii') for input_dir in input_dirs]
     return out_dirs
 
 
@@ -319,7 +320,7 @@ def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_l
     return good
 
 
-def sample_frames(SOURCE: List[str], num_samples, output=None, fname='f.nii.gz') -> str:
+def sample_frames(SOURCE: List[str], num_samples, output=None, fname='f_nordic.nii') -> str:
     """
     Returns a frame to in the middle of a session
     :param out: output path
