@@ -694,6 +694,100 @@ def preform_nifti_registration(functional_input_dirs: List[str], transform_input
         return p.starmap(_apply_warp_wrapper, args)
 
 
+def average_timeseries(input_dirs = List[str]):
+    """
+    A quick function to average timeseries into a single 3d image.
+    :param input_dirs: A list of input directories to average
+    :return: A list of the paths to the averaged images
+    """
+    output_dirs = []
+    for input_dir in input_dirs:
+        output_basename = 'avg_'+os.path.basename(input_dir)
+        output_dir = os.path.join(os.path.dirname(input_dir),output_basename)
+        cmd = 'antsMotionCorr  -d 3 -a {} -o {}'.format(input_dir,output_dir)
+        print(cmd)
+        subprocess.call(cmd,shell=True)
+        output_dirs.append(output_dir)
+    return output_dirs
+
+def create_warp_field(functional_inputs,reverse_phase_inputs,func_encoding_direction=['HF'],reverse_encoding_directon=['FH'],number_imgs=None):
+
+
+    if len(func_encoding_direction) == 1:
+        func_encoding_direction = [func_encoding_direction[0] for path in functional_inputs]
+    if len(reverse_encoding_directon) == 1:
+        reverse_encoding_directon = [reverse_encoding_directon[0] for path in functional_inputs]
+    if len(reverse_phase_inputs) == 1:
+        reverse_phase_inputs = [reverse_phase_inputs[0] for path in functional_inputs]
+    assert len(func_encoding_direction) == len(functional_inputs), 'Length of both input lists must be the same'
+    assert len(reverse_encoding_directon) == len(functional_inputs), 'Length of both input lists must be the same'
+
+    merged_files = []
+    scan_param_paths = []
+    for func_enc,rev_enc,func,rev in zip(func_encoding_direction,reverse_encoding_directon,functional_inputs,reverse_phase_inputs):
+        rev_img = nib.load(rev)
+        func_img = nib.load(func)
+        rev_length = rev_img.header.get_data_shape()[3]
+        if number_imgs is None or number_imgs > rev_length:
+            topup_length = rev_length
+        else:
+            topup_length = number_imgs
+
+        merge_file = os.path.join(os.path.dirname(func),'PERPE.nii.gz')
+        topup_array = np.concatenate((func_img.get_fdata()[:,:,:,-1*topup_length-1:-1],rev_img.get_fdata()[:,:,:,0:topup_length]), axis=3)
+        topup_img = nib.Nifti1Image(topup_array,func_img.affine)
+        nib.save(topup_img,merge_file)
+
+        out_buf = ""
+        scan_param_path = os.path.join(os.path.dirname(func),'scan_encode_params.txt')
+        if 'HF' in func_enc:
+            out_buf = out_buf + '0 1 0 0.0371245 \n'*topup_length
+        elif 'FH' in func_enc:
+            out_buf = out_buf + '0 -1 0 0.0371245 \n'*topup_length
+        elif 'LR' in func_enc:
+            out_buf = out_buf + '1 0 0 0.0371245 \n'*topup_length
+        elif 'RL' in func_enc:
+            out_buf = out_buf + '-1 0 0 0.0371245 \n'*topup_length
+
+        if 'HF' in rev_enc:
+            out_buf = out_buf + '0 1 0 0.0371245 \n'*topup_length
+        elif 'FH' in rev_enc:
+            out_buf = out_buf + '0 -1 0 0.0371245 \n'*topup_length
+        elif 'LR' in rev_enc:
+            out_buf = out_buf + '1 0 0 0.0371245 \n'*topup_length
+        elif 'RL' in rev_enc:
+            out_buf = out_buf + '-1 0 0 0.0371245 \n'*topup_length
+
+        with open(scan_param_path, 'w') as f:
+            f.write(out_buf)
+
+        scan_param_paths.append(scan_param_path)
+        merged_files.append(merge_file)
+
+
+    topup_basenames = []
+    for mfile, scanf in zip(merged_files,scan_param_paths):
+        outbase = os.path.join(os.path.dirname(mfile),'topup')
+        fout = os.path.join(os.path.dirname(mfile),'topup_field.nii.gz')
+        cmd = 'topup --imain={} --datain={} --config=b02b0_mac.cnf --out={} --fout={}'.format(mfile,scanf,outbase,fout)
+        print(cmd)
+        subprocess.call(cmd,shell=True)
+        topup_basenames.append(outbase)
+
+
+    return topup_basenames,scan_param_paths
+
+def apply_topup(functional_inputs=List[str],topupbasenames=List[str],scan_param_paths=List[str]):
+    outputs = []
+    for finp, bname, scanp in zip(functional_inputs,topupbasenames,scan_param_paths):
+        output = os.path.join(os.path.dirname(finp),'f_topup.nii.gz')
+        cmd = 'applytopup --imain={} --inindex=1 --datain={} --topup={} --out={} --method=jac'.format(finp,scanp,bname,output)
+        print(cmd)
+        subprocess.run(cmd,shell=True)
+        outputs.append(output)
+    return outputs
+
+
 def estimate_warp_field(hf_source=(), fh_source=(), lr_source=(), rl_source=(), fname='f.nii', warpfield_out_dir=None, output=None):
     """
     Estmates the wrpfield f=using epis with different encoding directions.
