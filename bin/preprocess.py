@@ -217,7 +217,7 @@ def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
     fun = ' "monk_nordic({},{},{}); exit;"'.format("{'"+"','".join(input_dirs)+"'}", "'" + noise_path + "'", "'"+filename+"'")
     cmd = cmd + fun
     print(cmd)
-    subprocess.call(cmd,shell=True)
+    subprocess.call(cmd, shell=True)
     os.chdir('..')
     out_dirs = [os.path.join(os.path.dirname(input_dir), filename+'.nii') for input_dir in input_dirs]
     return out_dirs
