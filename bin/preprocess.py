@@ -145,7 +145,7 @@ def _clean_img_wrapper(in_file, out_file, low_pass, high_pass, TR):
     nib.save(clean_img, out_file)
 
 
-def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f.nii.gz', scan_pos = 'HFP'):
+def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f_nordic.nii', scan_pos = 'HFP'):
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION or BOLD dir)
@@ -194,6 +194,30 @@ def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
     mcflt.inputs.save_rms = True
     mcflt.cmdline
     return mcflt.run()
+
+
+def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
+    """
+    Perform NORDIC denoising of images. Should be done before any other manipulation of images that might disrupt the
+    noise pattern.
+    :param input_dirs: A list of strings corresponding to the functional images you wish to denoise.
+    :param noise_path: Path to the noise image. Generally recommended, but if not used, the NORDIC function will
+    try and estimate the noise itself.
+    :param filename: A string of the new filename
+    :return: A list of strings corresponding to the outputs.
+    """
+    os.chdir('bin')
+    if noise_path is None:
+        noise_path = 'None' # Matlab needs a text/char input, not None
+    cmd = 'matlab -r '
+    fun = ' "monk_nordic({},{},{}); exit;"'.format("{'"+"','".join(input_dirs)+"'}", "'" + noise_path + "'", "'"+filename+"'")
+    cmd = cmd + fun
+    print(cmd)
+    subprocess.call(cmd,shell=True)
+    os.chdir('..')
+    out_dirs = [os.path.join(os.path.dirname(input_dir), filename+'.nii') for input_dir in input_dirs]
+    return out_dirs
+
 
 
 def motion_correction(input_dirs: List[str], ref_path: str, outname='moco.nii.gz', output: Union[None, str] = None, fname='f_sphinx.nii',
@@ -296,7 +320,7 @@ def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_l
     return good
 
 
-def sample_frames(SOURCE: List[str], num_samples, output=None, fname='f.nii.gz') -> str:
+def sample_frames(SOURCE: List[str], num_samples, output=None, fname='f_nordic.nii') -> str:
     """
     Returns a frame to in the middle of a session
     :param out: output path
