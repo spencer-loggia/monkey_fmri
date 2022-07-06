@@ -41,6 +41,7 @@ def unpack(inDir,outDir,adj=False,dirdepth=5, nifti_name='f', ts_only=False):
         cmd = 'dcm2niix -o {} -a {} -i {} -d {} -z y -f {} {}'.format(outDir,a, i, dirdepth, nifti_name, inDir)
     else:
         cmd = 'dcm2niix -o {} -a {} -i {} -d {} -z y {}'.format(outDir, a, i, dirdepth, inDir)
+    print(cmd)
     call(cmd, shell=True)
     return 'Completed'
 
