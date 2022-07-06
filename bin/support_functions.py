@@ -1047,9 +1047,13 @@ def motion_correction_wrapper(source, targets, fname='f_sphinx.nii'):
 
 
 def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):
-    noise_image_path = input_control.dir_input("Enter path to desired thermal noise image.")
+    use_noise = input_control.bool_input("Use noise image? (highly recommended) ")
     in_paths = [os.path.join(fdir, fname) for fdir in functional_dirs]
-    preprocess.NORDIC(in_paths, noise_image_path, 'f_nordic')
+    if use_noise:
+        noise_image_path = input_control.dir_input("Enter path to desired thermal noise image.")
+        preprocess.NORDIC(in_paths, noise_image_path, 'f_nordic')
+    else:
+        preprocess.NORDIC(in_paths, None, 'f_nordic')
     return in_paths
 
 def time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, target_condition, output_dir,

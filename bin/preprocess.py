@@ -1,6 +1,8 @@
 from __future__ import print_function
 from __future__ import division
 
+from pathlib import Path
+
 import math
 import ntpath
 
@@ -206,7 +208,9 @@ def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
     :param filename: A string of the new filename
     :return: A list of strings corresponding to the outputs.
     """
-    os.chdir('bin')
+    b_path = Path(__file__).absolute()
+    print(b_path)
+    os.chdir(b_path)
     if noise_path is None:
         noise_path = 'None' # Matlab needs a text/char input, not None
     cmd = 'matlab -r '
