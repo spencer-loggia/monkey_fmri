@@ -41,6 +41,7 @@ def unpack(inDir,outDir,adj=False,dirdepth=5, nifti_name='f', ts_only=False):
         cmd = 'dcm2niix -o {} -a {} -i {} -d {} -z y -f {} {}'.format(outDir,a, i, dirdepth, nifti_name, inDir)
     else:
         cmd = 'dcm2niix -o {} -a {} -i {} -d {} -z y {}'.format(outDir, a, i, dirdepth, inDir)
+    print(cmd)
     call(cmd, shell=True)
     return 'Completed'
 
@@ -94,7 +95,8 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id,
     if os.path.exists("./tmp_unpack"):
         shutil.rmtree("./tmp_unpack")
     os.mkdir("./tmp_unpack")
-    unpack(inDir, "./tmp_unpack", False, 2, None, True)
+    print(os.path.abspath("./tmp_unpack"))
+    unpack(inDir, os.path.abspath("./tmp_unpack"), False, 2, None, True)
 
     unpacked_epis = os.listdir("./tmp_unpack")
     _create_dir_if_needed(outDir, str(session_id))
