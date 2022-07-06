@@ -374,6 +374,28 @@ def _define_contrasts(condition_integerizers, base_index):
     return contrasts, contrast_descriptions
 
 
+def _order_def_from_nilearn_timing(condition_integerizer):
+    files_dir = input_control.dir_input("Enter directory containing all nilearn timing files. They will be assigned an"
+                                        " order number.")
+    files = os.listdir(files_dir)
+
+    cond_int = {v.lower().strip(): k for k, v in condition_integerizer.items()}
+    order_def_map = {}
+    for order_num, file in files:
+        if '.txt' in file:
+            order_def = []
+            data = pd.read_csv(os.path.join(files_dir, file), sep='\t')
+            conds = data['Condition'].tolist()
+            durs = data['Duration'].tolist()
+            for i, cond_name in enumerate(conds):
+                duration = durs[i]
+                cond_idx = cond_int[cond_name]
+                order_def += [cond_idx]*int(duration)
+            order_def_map[str(order_num)] = order_def
+            print(file, "assigned order number", order_num)
+    return order_def_map
+
+
 def _create_paradigm():
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
@@ -467,10 +489,16 @@ def _create_paradigm():
                   "load an order def file for each.")
             for order_set_idx, num_order in enumerate(num_orders):
                 print("Defining order numbers for condition set " + str(order_set_idx))
-                file = input_control.dir_input("Path to file: ")
-                df = pandas.read_csv(file)
-                df.columns = [int(c) for c in df.columns]
-                order_def_map = df.reset_index().to_dict(orient='list')
+                from_nilearn = input_control.bool_input("Load order defs from directory of nilearn timing files.")
+                if from_nilearn:
+                    para_def_dict['block_length_trs'] = 1
+                    print('WARNING: set block length to 1 since nilearn orders are explicit')
+                    order_def_map = _order_def_from_nilearn_timing(condition_map)
+                else:
+                    file = input_control.dir_input("Path to file: ")
+                    df = pandas.read_csv(file)
+                    df.columns = [int(c) for c in df.columns]
+                    order_def_map = df.reset_index().to_dict(orient='list')
                 para_def_dict['order_number_definitions'].append(order_def_map)
             if len(num_orders) == 1:
                 para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
@@ -607,7 +635,8 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
                         int_cond = int(cond_int[cond_name.lower().strip()])
                         int_clist.append(int_cond)
                     except KeyError:
-                        print("condition descriptor", cond_name, "in the runlist did not match any known condition in the paradigm.")
+                        print("condition descriptor", cond_name,
+                              "in the runlist did not match any known condition in the paradigm.")
                         exit(1)
                 clist = int_clist
             else:

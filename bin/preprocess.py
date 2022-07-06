@@ -403,8 +403,13 @@ def bandpass_filter_functional(input_file, out_file, block_length_trs, plot=True
     """
     fnii = nib.load(input_file)
     fdata = np.array(fnii.get_fdata())
+    if block_length_trs == 1:
+        period = int(input("enter max length in trs that we expect to see meaningful signal change "
+                           "(e.g. probably about 2 blocklengths) "))
+    else:
+        period = 2.25 * block_length_trs
     filtered_nii = filters.butter_bandpass_filter(fdata,
-                                                  low_freq_cutoff=1 / (2.25 * block_length_trs),
+                                                  low_freq_cutoff=1 / (period),
                                                   high_freq_cutoff=.5,
                                                   fs=1,
                                                   order=5)

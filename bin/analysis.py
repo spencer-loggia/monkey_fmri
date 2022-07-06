@@ -239,12 +239,7 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
         def_hrf = mion_response_function(tr, conv_size * tr)
     else:
         def_hrf = bold_response_function(tr, time_length=conv_size * tr)
-    if auto_conv:
-        weight = def_hrf.clone()
-    else:
-        weight = def_hrf.clone()
-        epochs = 1
-
+    weight = def_hrf.clone()
     conv1d.weight = torch.nn.Parameter(weight, requires_grad=True)
     features_to_conv = tuple(set(range(design_matrix.shape[-1])[:(-1 * num_nuisance)]) - set(base_conditions_idxs))
     design_matrix = torch.from_numpy(design_matrix)[:, None, :].float()  # design matrix should be (k, t) so that k
@@ -255,11 +250,6 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     gt = torch.from_numpy(gt).float()
     # linear = torch.nn.Linear(in_features=design_matrix.shape[-1], out_features=gt.shape[1], bias=False)
     beta = torch.normal(mean=.5, std=.2, size=[design_matrix.shape[-1], gt.shape[1]], requires_grad=False).float()
-    optim = torch.optim.SGD(lr=.0001, params=list(conv1d.parameters()))
-    sched = torch.optim.lr_scheduler.StepLR(optimizer=optim, step_size=15, gamma=.1)
-    mseloss = torch.nn.MSELoss()
-    loss_deconv = torch.nn.MSELoss()
-    # mseloss = _ssqrt_lfxn
     print('Starting optimization routine... (pid=', pid, ')')
     no_conv_mask = torch.zeros_like(design_matrix)
     print(design_matrix.shape)
@@ -282,35 +272,22 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
             raise ValueError("Convolution result must have same dimension as design matrix (" +
                              str(dmat.shape) + ") , not " + str(xexp.shape) +
                              ". Adjust conv size and padding size.")
-        # deconv_loss = mse_loss_deconv(dmat_exp, dmat)
-        # deconv_loss.backward()
-        # optim_deconv.step()
-        # deconv_sched.step()
+
         xexp = xexp.squeeze()  # remove channel dim for conv
         y_hat = xexp @ beta  # time is now treated as the batch, we do (t x k) * (k x v) -> (t x v) where v is all voxels
         return xexp, y_hat
 
     loss_hist = []
-    for i in range(epochs):
-        # expectation
-        optim.zero_grad()
-        x_expect, y_hat = pred_seq(design_matrix)
-        # analytical maximization
+    # expectation
+    x_expect, _ = pred_seq(design_matrix)
+    # analytical maximization
+    try:
         with torch.no_grad():
             beta = torch.inverse(x_expect.T @ x_expect) @ x_expect.T @ gt
-        y_hat = x_expect @ beta
-        flex_loss = mseloss(gt.T, y_hat.T)
-        loss = flex_loss
-        loss_hist.append(torch.log2(loss).detach().clone())
-        if auto_conv:
-            loss.backward()
-            optim.step()
-            sched.step()
-        optim.zero_grad()
-        # deconvolution estimate update
-        with torch.no_grad():
-            xexp = conv1d(design_matrix.T).T
-        print("optim epoch #", i, "(pid=", pid, ")", ' loss=', flex_loss.detach().item())
+    except Exception:
+        print("Unable to preform analytical optimization since not all conditions are present. Using l1 regularized "
+              "numerical optimization.")
+        return
 
     beta = np.array(beta).T
     cond_betas = beta[:, 1:-1 * num_nuisance]

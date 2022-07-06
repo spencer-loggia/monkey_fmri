@@ -90,9 +90,15 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id,
     _create_dir_if_needed(outDir, str(session_id))
     tkn_idx = None
     for run in run_dirs:
-        if run[0] == '.':
+        if run[0] == '.' or '.dcm' not in run :
             continue
-        tkns = run.split('_')
+
+        if '_' in run:
+            tkns = run.split('_')
+        elif '-' in run:
+            tkns = run.split('-')
+        else:
+            tkns = run.split()
         if tkn_idx is None:
             print(tkns)
             tkn_idx = int(input("enter 0 indexed index of token denoting run number "
