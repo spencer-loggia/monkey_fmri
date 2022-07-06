@@ -22,7 +22,7 @@ import subprocess
 import glob
 
 from scipy.ndimage import zoom, gaussian_filter
-from bin import filters
+import filters
 
 import nipype.interfaces.io as nio  # Data i/o
 import nipype.interfaces.fsl as fsl  # fsl
@@ -208,20 +208,19 @@ def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
     :param filename: A string of the new filename
     :return: A list of strings corresponding to the outputs.
     """
-    b_path = Path(__file__).absolute()
+    b_path = os.path.dirname(Path(__file__).absolute())
     print(b_path)
     os.chdir(b_path)
     if noise_path is None:
         noise_path = 'None' # Matlab needs a text/char input, not None
-    cmd = 'matlab -r '
+    cmd = '$MATLAB -nojvm -r '
     fun = ' "monk_nordic({},{},{}); exit;"'.format("{'"+"','".join(input_dirs)+"'}", "'" + noise_path + "'", "'"+filename+"'")
     cmd = cmd + fun
     print(cmd)
-    subprocess.call(cmd,shell=True)
+    subprocess.run(cmd, shell=True)
     os.chdir('..')
     out_dirs = [os.path.join(os.path.dirname(input_dir), filename+'.nii') for input_dir in input_dirs]
     return out_dirs
-
 
 
 def motion_correction(input_dirs: List[str], ref_path: str, outname='moco.nii.gz', output: Union[None, str] = None, fname='f_sphinx.nii',

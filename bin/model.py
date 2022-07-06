@@ -11,7 +11,7 @@ import random
 from torch.utils.data import DataLoader
 import networkx as nx
 
-from bin import analysis, representation_geometry
+import analysis, representation_geometry
 from dataloaders.base import PsychDataloader
 
 
