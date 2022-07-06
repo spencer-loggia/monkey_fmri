@@ -9,9 +9,10 @@ import sys
 import os
 import glob
 from multiprocessing import Pool
+import re
 
 
-def unpack(inDir,outDir,adj=False,dirdepth=5, nifti_name='f'):
+def unpack(inDir,outDir,adj=False,dirdepth=5, nifti_name='f', ts_only=False):
     """
     unpack unpacks DICOM data from the scanner into the NIFTI format.
     :param nifti_name: what to name output nifti
@@ -31,7 +32,15 @@ def unpack(inDir,outDir,adj=False,dirdepth=5, nifti_name='f'):
     else:
         a = 'n'
 
-    cmd = 'dcm2niix -o {} -a {} -d {} -z y -f {} {}'.format(outDir,a,dirdepth, nifti_name, inDir)
+    if ts_only:
+        i = 'y'
+    else:
+        i = 'n'
+
+    if nifti_name is not None:
+        cmd = 'dcm2niix -o {} -a {} -i {} -d {} -z y -f {} {}'.format(outDir,a, i, dirdepth, nifti_name, inDir)
+    else:
+        cmd = 'dcm2niix -o {} -a {} -i {} -d {} -z y {}'.format(outDir, a, i, dirdepth, inDir)
     call(cmd, shell=True)
     return 'Completed'
 
@@ -73,8 +82,6 @@ def unpack_other_list(inDir: str, outDir: str, ima_numbers: List[int], session_i
     return imgs
 
 
-
-
 def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id, nifti_name: str = 'f'):
     """
     Unpack a list of runs to target dir.
@@ -84,41 +91,70 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id,
     :param run_numbers: list of good run number
     :return: a list of the dirs created containing nifti files
     """
-    run_dirs = os.listdir(inDir)
-    to_unpack = []
-    f_dirs = []
+    # if os.path.exists("./tmp_unpack"):
+    #     shutil.rmtree("./tmp_unpack")
+    # os.mkdir("./tmp_unpack")
+    # unpack(inDir, "./tmp_unpack", False, 2, None, True)
+
+    unpacked_epis = os.listdir("./tmp_unpack")
     _create_dir_if_needed(outDir, str(session_id))
     tkn_idx = None
-    for run in run_dirs:
-        if run[0] == '.' or '.dcm' not in run :
+    fdirs = []
+    for run in unpacked_epis:
+        if run[0] == '.' or '.nii' not in run:
             continue
-
-        if '_' in run:
-            tkns = run.split('_')
-        elif '-' in run:
-            tkns = run.split('-')
-        else:
-            tkns = run.split()
+        tkns = re.split('-|_|\.', run)
         if tkn_idx is None:
             print(tkns)
             tkn_idx = int(input("enter 0 indexed index of token denoting run number "
                                 "(usually is 0 but seems to unexpectedly change sometimes.)"))
+
         if len(tkns) < tkn_idx:
             continue
         this_run_num = int(tkns[tkn_idx])
         if this_run_num in run_numbers:
-            if 't2' in run:
-                local_out = os.path.join(outDir, session_id)
-                name = 't2'
-            else:
-                _create_dir_if_needed(os.path.join(outDir, session_id), str(this_run_num))
-                local_out = os.path.join(outDir, session_id, str(this_run_num))
-                f_dirs.append(local_out)
-                name = nifti_name
-            to_unpack.append((os.path.join(inDir, run), local_out, True, 2, name))
-    with Pool() as p:
-        p.starmap(unpack, to_unpack)
-    return f_dirs
+            _create_dir_if_needed(os.path.join(outDir, session_id), str(this_run_num))
+            local_out = os.path.join(outDir, session_id, str(this_run_num))
+            fdirs.append(local_out)
+            shutil.copy(os.path.join("./tmp_unpack", run), os.path.join(local_out, nifti_name + '.nii.gz'))
+    shutil.rmtree("./tmp_unpack")
+    return fdirs
+
+    # run_dirs = os.listdir(inDir)
+    # to_unpack = []
+    # f_dirs = []
+    # _create_dir_if_needed(outDir, str(session_id))
+    # tkn_idx = None
+    # for run in run_dirs:
+    #     if run[0] == '.' or '.dcm' not in run :
+    #         continue
+    #
+    #     if '_' in run:
+    #         tkns = run.split('_')
+    #     elif '-' in run:
+    #         tkns = run.split('-')
+    #     else:
+    #         tkns = run.split()
+    #     if tkn_idx is None:
+    #         print(tkns)
+    #         tkn_idx = int(input("enter 0 indexed index of token denoting run number "
+    #                             "(usually is 0 but seems to unexpectedly change sometimes.)"))
+    #     if len(tkns) < tkn_idx:
+    #         continue
+    #     this_run_num = int(tkns[tkn_idx])
+    #     if this_run_num in run_numbers:
+    #         if 't2' in run:
+    #             local_out = os.path.join(outDir, session_id)
+    #             name = 't2'
+    #         else:
+    #             _create_dir_if_needed(os.path.join(outDir, session_id), str(this_run_num))
+    #             local_out = os.path.join(outDir, session_id, str(this_run_num))
+    #             f_dirs.append(local_out)
+    #             name = nifti_name
+    #         to_unpack.append((os.path.join(inDir, run), local_out, False, 2, name, True))
+    # with Pool() as p:
+    #     p.starmap(unpack, to_unpack)
+    # return f_dirs
 
 
 def scan_log(inF, outF, re_scan=True):
