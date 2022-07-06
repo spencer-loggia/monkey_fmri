@@ -180,7 +180,15 @@ class DefaultSubjectControlNet(BaseControlNet):
         if 'is_mion' not in session.network.graph or session.network.graph['is_mion'] is None:
             mion = bool_input("Is this session using MION?")
             session.network.graph['is_mion'] = mion
+        if 'scan_pos' not in session.network.graph or session.network.graph['scan_pos'] is None:
+            is_hfp = bool_input("Is the scan acquasition position Head-First-Prone (y) or Head-First-Suppine (n)? ")
+            if is_hfp:
+                session.network.graph['scan_pos'] = 'HFP'
+            else:
+                session.network.graph['scan_pos'] = 'HFS'
         session.network.nodes['create_beta_matrix']['argv'] = session.network.graph['is_mion']
+        session.network.nodes['sphinx_correct']['argv'] = session.network.graph['scan_pos']
+        session.network.nodes['sphinx_correct_3d_rep']['argv'] = session.network.graph['scan_pos']
         return list(set(sessions + [os.path.relpath(session.control_loop(path), subj_root)]))
 
     def add_paradigm_control_set(self):

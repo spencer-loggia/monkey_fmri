@@ -314,7 +314,8 @@ def get_3d_rep(src: Union[List[str], str]):
     return [os.path.relpath(f, project_root) for f in preprocess.sample_frames(src, 5)]
 
 
-def convert_to_sphinx_vol_wrap(src):
+def convert_to_sphinx_vol_wrap(src, *argv):
+    pos = str(argv[0])
     if type(src) is str:
         src = [src]
     paths = []
@@ -324,7 +325,7 @@ def convert_to_sphinx_vol_wrap(src):
         os.chdir(project_root)
         dirname = os.path.dirname(path)
         fname = os.path.basename(path)
-        out = preprocess.convert_to_sphinx(input_dirs=[dirname], fname=fname)[0]
+        out = preprocess.convert_to_sphinx(input_dirs=[dirname], fname=fname, scan_pos=pos)[0]
         out_path = os.path.join(out, fname.split('.')[0] + '_sphinx.nii')
         paths.append(os.path.relpath(out_path, project_root))
     return paths
@@ -1012,7 +1013,7 @@ def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, o
     return output
 
 
-def motion_correction_wrapper(source, targets, fname='f_sphinx.nii'):
+def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
     """
     :param source:
     :param targets:
@@ -1025,7 +1026,7 @@ def motion_correction_wrapper(source, targets, fname='f_sphinx.nii'):
     best_disp = 9999999
     besp_disp_idx = -1
     for i, t in enumerate(targets):
-        preprocess.motion_correction(source, t, check_rms=False, fname='f_sphinx.nii', outname='temp_moco.nii.gz')
+        preprocess.motion_correction(source, t, check_rms=False, fname=fname, outname='temp_moco.nii.gz')
         sess_dir = os.path.dirname(source[0])
         disp = 0
         for run_dir in source:

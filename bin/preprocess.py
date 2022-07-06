@@ -147,7 +147,7 @@ def _clean_img_wrapper(in_file, out_file, low_pass, high_pass, TR):
     nib.save(clean_img, out_file)
 
 
-def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fname='f_nordic.nii', scan_pos = 'HFP'):
+def convert_to_sphinx(input_dirs: List[str], scan_pos='HFP', output: Union[None, str] = None, fname='f_nordic.nii'):
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION or BOLD dir)
@@ -158,6 +158,7 @@ def convert_to_sphinx(input_dirs: List[str], output: Union[None, str] = None, fn
     will have be changed from RAS to RAI.
     :return: path to output directory
     """
+
     assert scan_pos == 'HFP' or scan_pos == 'HFS', "Parameter scan_pos must be either 'HFP' or 'HFS'"
 
     args_sphinx = []
