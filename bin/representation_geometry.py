@@ -283,21 +283,17 @@ class SearchLightDecoder:
         self.out_dim = out_dim
         self.lookup = roi_loookup
         self.device = torch.device(dev)
-        self.softmax = torch.nn.Softmax(dim=1)
         self.ce_loss = torch.nn.CrossEntropyLoss(reduction='none')
+        self.softmax = torch.nn.Softmax(dim=1)
         self.conv1 = None
         self.conv2 = None
 
-    def fit(self, X, targets, optim_threshold=1e-9, cutoff_epoch=5000, lr=.0001, downscale_factor=1):
+    def fit(self, X, targets, optim_threshold=1e-9, cutoff_epoch=5000, lr=.0001, batch_size=10):
+        if self.device != 'cpu':
+            torch.cuda.empty_cache()
         X = _pad_to_cube(X) # spatial, spatial, spatial, batch
-        X = torch.from_numpy(X.transpose((3, 0, 1, 2))).double()
+        X = torch.from_numpy(X.transpose((3, 0, 1, 2))).float()
         X = torch.unsqueeze(X, dim=1)  # batch, channels, spatial, spatial, spatial
-        og_size = X.shape[2]
-        # DEBUG: DOWNSAMPLE: DEBUG ONLY
-        if downscale_factor > 1:
-            pool = torch.nn.MaxPool3d(downscale_factor)
-            X = pool(X)
-
         print(X.shape)
         in_spatial = X.shape[2]
         stride = 1
@@ -310,37 +306,49 @@ class SearchLightDecoder:
         print(pad)
         self.conv1 = torch.nn.Conv3d(kernel_size=self.kernel,
                                      in_channels=1,
-                                     out_channels=16,
+                                     out_channels=8,
                                      padding=pad,
-                                     dtype=torch.double,
+                                     dtype=torch.float,
                                      device=self.device)
         self.conv2 = torch.nn.Conv3d(kernel_size=1,
-                                     in_channels=16,
+                                     in_channels=8,
                                      out_channels=self.out_dim,
-                                     dtype=torch.double,
+                                     dtype=torch.float,
                                      device=self.device)
         optimizer = torch.optim.Adam(params=[self.conv1.weight, self.conv2.weight], lr=lr)
-        loss_dt = torch.inf
-        old_loss = torch.inf
         epoch = 0
         targets = targets.reshape(len(targets), 1, 1, 1)
-        targets = torch.tile(targets, (1, in_spatial, in_spatial, in_spatial)).to(self.device)
-        while loss_dt > optim_threshold and epoch < cutoff_epoch:
-            optimizer.zero_grad()
-            h = self.conv1(X)
-            h = self.conv2(h)  # a (samples, classes, spatial1, spatial2, spatial3) tensor
-            y_hat = self.softmax(h)
-            ce = self.ce_loss(y_hat, targets)  # loss per hyper-voxel (voxel is actually result of linear convolution)
-            loss = torch.mean(torch.pow(.1 * ce.flatten(), .5)) # 3rt the ce so we care more about making low examples lower
-            loss.backward()
-            optimizer.step()
-            loss_dt = (old_loss - loss).detach().cpu().clone().item()
-            old_loss = loss.detach().cpu().clone()
-            print("CE on epoch", epoch, "is", old_loss.item())
+        targets = torch.tile(targets, (1, in_spatial, in_spatial, in_spatial))
+        while epoch < cutoff_epoch:
+            perm_idxs = torch.randperm(len(targets))
+            perm_x = X[perm_idxs].to(self.device)
+            perm_targets = targets[perm_idxs].to(self.device)
+            epoch_loss = 0
+            for batch_start in range(0, len(targets), batch_size):
+
+                x_batch = perm_x[batch_start:min(batch_start + batch_size, len(targets))]
+                y_batch = perm_targets[batch_start:min(batch_start + batch_size, len(targets))]
+                optimizer.zero_grad()
+                h = self.conv1(x_batch)
+                h = self.conv2(h)  # a (samples, classes, spatial1, spatial2, spatial3) tensor
+                ce = self.ce_loss(h, y_batch)  # loss per hyper-voxel (voxel is actually result of linear convolution)
+                loss = torch.mean(ce.flatten()) # 3rt the ce so we care more about making low examples lower
+                loss.backward()
+                optimizer.step()
+                old_loss = loss.detach().cpu().clone()
+                epoch_loss += old_loss
+            print("CE on epoch", epoch, "is", epoch_loss)
             epoch += 1
-        ce = ce.detach().cpu().clone()
-        if downscale_factor > 1:
-            upsample = torch.nn.Upsample(size=(og_size, og_size, og_size))
-            ce = upsample(ce[None, :, :, :, :])
-            ce = torch.squeeze(ce)
-        return ce
+
+    def predict(self, X, targets):
+        X = _pad_to_cube(X)  # spatial, spatial, spatial, batch
+        X = torch.from_numpy(X.transpose((3, 0, 1, 2))).float()
+        X = torch.unsqueeze(X, dim=1)
+        in_spatial = X.shape[2]
+        targets = targets.reshape(len(targets), 1, 1, 1)
+        targets = torch.tile(targets, (1, in_spatial, in_spatial, in_spatial))
+        h = self.conv1.to("cpu")(X)
+        h = self.conv2.to('cpu')(h)
+        yhat = self.softmax(h)
+        ce = self.ce_loss(yhat, targets)
+        return yhat, ce
