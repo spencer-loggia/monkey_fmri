@@ -395,7 +395,7 @@ def _flirt_wrapper(in_file, out_file, mat_out_file, temp_file, flt, dof=12):
     return out
 
 
-def bandpass_filter_functional(input_file, out_file, block_length_trs, plot=True, save_out=True):
+def bandpass_filter_functional(input_file, out_file, low_period, plot=True, save_out=True):
     """
     frequencies in cycles / tr
     :param input_file:
@@ -407,13 +407,9 @@ def bandpass_filter_functional(input_file, out_file, block_length_trs, plot=True
     """
     fnii = nib.load(input_file)
     fdata = np.array(fnii.get_fdata())
-    if block_length_trs == 1:
-        period = int(input("enter max length in trs that we expect to see meaningful signal change "
-                           "(e.g. probably about 2 blocklengths) "))
-    else:
-        period = 2.25 * block_length_trs
+
     filtered_nii = filters.butter_bandpass_filter(fdata,
-                                                  low_freq_cutoff=1 / (period),
+                                                  low_freq_cutoff=1 / low_period,
                                                   high_freq_cutoff=.5,
                                                   fs=1,
                                                   order=5)
@@ -431,6 +427,12 @@ def bandpass_filter_functional(input_file, out_file, block_length_trs, plot=True
 
 def batch_bandpass_functional(functional_input_dirs, block_length_trs, fname='epi_masked.nii', out_name='epi_filtered.nii.gz'):
     args = []
+    if block_length_trs == 1:
+        period = int(input("enter max length in trs that we expect to see meaningful signal change "
+                           "(e.g. probably about 2 blocklengths) "))
+    else:
+        period = 2.25 * block_length_trs
+
     for source_dir in functional_input_dirs:
         if not os.path.isdir(source_dir):
             print("Failure", sys.stderr)
@@ -439,7 +441,7 @@ def batch_bandpass_functional(functional_input_dirs, block_length_trs, fname='ep
             print('Failed to find requested file')
             exit()
         out_file = os.path.join(source_dir, out_name)
-        args.append((in_file, out_file, block_length_trs, False, True))
+        args.append((in_file, out_file, period, False, True))
     with Pool() as p:
         p.starmap(bandpass_filter_functional, args)
     return functional_input_dirs
