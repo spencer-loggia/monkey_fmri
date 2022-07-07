@@ -12,3 +12,5 @@ test/tmp/*
 *.dcm*
 full_session_test
 wooster
+MTurk1*
+CCSF*
