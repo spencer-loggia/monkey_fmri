@@ -1,3 +1,5 @@
+import multiprocessing
+
 import pandas
 import pandas as pd
 import torch
@@ -87,7 +89,6 @@ def get_epis(*argv):
             "Enter whitespace separated list of valid epi run IMA numbers. (e.g. '2 4 5')")
         SOURCE = unpack.unpack_run_list(dicom_dir, f_dir, run_numbers, session_id, 'f')
         SOURCE = [os.path.relpath(s, project_root) for s in SOURCE]
-        sessDir = os.path.dirname(SOURCE[0])
         print("Created the following functional run directories: \n ",
               SOURCE,
               " \n each containing a raw functional file 'f.nii.gz'")
@@ -194,6 +195,12 @@ def coreg_wrapper(source_space_vol_path, target_space_vol_path):
                                                                            n_jobs=2)])
 
 
+def _apply_warp_wrapper(s, vol, out, transforms, interp, type_code, dim, invert, project_root):
+    preprocess.antsApplyTransforms(s, vol, out, transforms, interp,
+                                   img_type_code=type_code, dim=dim, invertTrans=invert)
+    return os.path.relpath(out, project_root)
+
+
 def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None, type_code=0, dim=3, interp='Linear'):
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
@@ -203,12 +210,18 @@ def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, f
     transforms = [fine_transform_path, forward_gross_transform_path]
     transforms = [t for t in transforms if t is not None]
     to_invert = [False] * len(transforms)
-    out_paths = []
-    for s in source:
-        out = os.path.join(os.path.dirname(s), 'reg_' + os.path.basename(s))
-        preprocess.antsApplyTransforms(s, vol_in_target_space, out, transforms, interp,
-                                       img_type_code=type_code, dim=dim, invertTrans=to_invert)
-        out_paths.append(os.path.relpath(out, project_root))
+    args = [source, [vol_in_target_space]*len(source),
+            [os.path.join(os.path.dirname(s), 'reg_' + os.path.basename(s)) for s in source],
+            [transforms]*len(source),
+            [interp]*len(source),
+            [type_code]*len(source),
+            [dim]*len(source),
+            [to_invert]*len(source),
+            [project_root]*len(source)
+            ]
+    args = list(zip(*args))
+    with multiprocessing.Pool(16) as p:
+        out_paths = p.starmap(_apply_warp_wrapper, args)
     if len(out_paths) == 1:
         out_paths = out_paths[0]
     return out_paths

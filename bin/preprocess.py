@@ -31,7 +31,12 @@ import nipype.pipeline.engine as pe  # pypeline engine
 import nipype.algorithms.modelgen as model  # model generation
 import nipype.algorithms.rapidart as ra  # artifact detection
 import nibabel as nib
-from nilearn import image as nimg
+
+# don't require nilearn
+try:
+    from nilearn import image as nimg
+except ModuleNotFoundError:
+    print("Nilearn not installed")
 
 from matplotlib import pyplot as plt
 from multiprocessing import Pool
