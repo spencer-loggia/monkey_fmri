@@ -12,7 +12,6 @@ test/tmp/*
 *.dcm*
 full_session_test
 wooster
-MTurk1_frozen_20220527
-MTurk1/
-MTurk1_frozen_20220527/
-CCSF/
+MTurk1_frozen_20220527*
+MTurk1*
+CCSF*
