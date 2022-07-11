@@ -242,9 +242,7 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     weight = def_hrf.clone()
     conv1d.weight = torch.nn.Parameter(weight, requires_grad=True)
     features_to_conv = tuple(set(range(design_matrix.shape[-1])[:(-1 * num_nuisance)]) - set(base_conditions_idxs))
-    design_matrix = torch.from_numpy(design_matrix)[:, None, :].float()  # design matrix should be (k, t) so that k
-                                                                         # conditions is treated as batch by torch
-                                                                         # convention
+    design_matrix = torch.from_numpy(design_matrix)[:, None, :].float()
     if np.ndim(gt) > 1:
         gt = gt.reshape(-1, design_matrix.shape[0]).T  # reshape to all time, LL VOXELS
     gt = torch.from_numpy(gt).float()
@@ -283,7 +281,8 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     # analytical maximization
     try:
         with torch.no_grad():
-            beta = torch.inverse(x_expect.T @ x_expect) @ x_expect.T @ gt
+            # pinv(X'X) * X' * Y
+            beta = torch.linalg.lstsq((x_expect.T @ x_expect), x_expect.T).solution @ gt
     except Exception:
         print("Unable to preform analytical optimization since not all conditions are present. Using l1 regularized "
               "numerical optimization.")
