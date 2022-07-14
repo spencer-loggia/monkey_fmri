@@ -35,6 +35,7 @@ def _pad_to_cube(arr: np.ndarray, time_axis=3):
     arr = np.pad(arr, ax_pad, mode='constant', constant_values=(0, 0))
     return arr
 
+
 def _dot_pdist(arr: torch.Tensor, normalize=False):
     """
     arr should be 2D < observations(v) x conditions (k) >
