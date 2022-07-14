@@ -73,7 +73,12 @@ def unpack_other_list(inDir: str, outDir: str, ima_numbers: List[int], session_i
                                 "(this is usually the 0th index but might not be always.)"))
         if len(tkns) < tkn_idx:
             continue
-        this_ima_num = int(tkns[tkn_idx])
+        try:
+            this_ima_num = int(tkns[tkn_idx])
+        except Exception:
+            print("failed to grab", ima)
+            continue
+
         if this_ima_num in ima_numbers:
             print(ima)
             imgs.append(ima)
@@ -95,10 +100,10 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id,
     if os.path.exists("./tmp_unpack"):
         shutil.rmtree("./tmp_unpack")
     os.mkdir("./tmp_unpack")
-    print(os.path.abspath("./tmp_unpack"))
-    unpack(inDir, os.path.abspath("./tmp_unpack"), False, 2, None, True)
+    print(os.path.abspath("./" + str(session_id) + "tmp_unpack"))
+    unpack(inDir, os.path.abspath("./" + str(session_id) + "tmp_unpack"), False, 2, None, True)
 
-    unpacked_epis = os.listdir("./tmp_unpack")
+    unpacked_epis = os.listdir("./" + str(session_id) + "tmp_unpack")
     _create_dir_if_needed(outDir, str(session_id))
     tkn_idx = None
     fdirs = []
@@ -113,13 +118,18 @@ def unpack_run_list(inDir: str, outDir: str, run_numbers: List[int], session_id,
 
         if len(tkns) < tkn_idx:
             continue
-        this_run_num = int(tkns[tkn_idx])
+        try:
+            this_run_num = int(tkns[tkn_idx])
+        except Exception:
+            print("Failed to grab", run)
+            continue
+
         if this_run_num in run_numbers:
             _create_dir_if_needed(os.path.join(outDir, session_id), str(this_run_num))
             local_out = os.path.join(outDir, session_id, str(this_run_num))
             fdirs.append(local_out)
-            shutil.copy(os.path.join("./tmp_unpack", run), os.path.join(local_out, nifti_name + '.nii.gz'))
-    shutil.rmtree("./tmp_unpack")
+            shutil.copy(os.path.join("./" + str(session_id) + "tmp_unpack", run), os.path.join(local_out, nifti_name + '.nii.gz'))
+    shutil.rmtree("./" + str(session_id) + "tmp_unpack")
     return fdirs
 
     # run_dirs = os.listdir(inDir)
