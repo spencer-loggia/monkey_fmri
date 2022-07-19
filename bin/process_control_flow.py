@@ -159,13 +159,14 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.initialize_processing_structure()
         self.init_head_states()
 
-    def create_load_session(self, ds_t1, ds_t1_mask, ds_t1_masked, sessions):
+    def create_load_session(self, ds_t1, ds_t1_mask, ds_t1_masked,dil_t1_mask,sessions):
         """
         local method
         only creates a new session for now
         :param ds_t1:
         :param ds_t1_mask:
         :param ds_t1_masked:
+        :param dil_t1_mask:
         :return: path to session json
         """
         session_id = input("enter date of session")
@@ -173,10 +174,10 @@ class DefaultSubjectControlNet(BaseControlNet):
         path = os.path.join(subj_root, 'sessions', session_id, 'session_net.json')
         session = DefaultSessionControlNet(session_id, self.network.nodes['ds_t1'],
                                            self.network.nodes['ds_t1_mask'],
-                                           self.network.nodes['ds_t1_masked'])
+                                           self.network.nodes['ds_t1_masked'], self.network.nodes['dil_t1_mask'])
         if path in sessions or os.path.exists(path):
             print("loading previous session " + session_id)
-            session.load_net(path, ignore=('ds_t1', 'ds_t1_mask', 'ds_t1_masked'))
+            session.load_net(path, ignore=('ds_t1', 'ds_t1_mask', 'ds_t1_masked', 'dil_t1_mask'))
         if 'is_mion' not in session.network.graph or session.network.graph['is_mion'] is None:
             mion = bool_input("Is this session using MION?")
             session.network.graph['is_mion'] = mion
@@ -279,6 +280,7 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_node('ds_t1_mask', data=None, type='volume', bipartite=0, complete=False, space='ds_t1_native')
         self.network.add_node('ds_t1_masked', data=None, type='volume', bipartite=0, complete=False,
                               space='ds_t1_native')
+        self.network.add_node('dil_t1_mask', data=None, type='volume', bipartite=0,complete=False, space='ds_t1_native')
 
         self.network.add_node('white_surfs', data=[], type='surface', bipartite=0, complete=False, space='t1_native')
 
@@ -303,6 +305,7 @@ class DefaultSubjectControlNet(BaseControlNet):
                               desc='Downsample orginal t1 mask by a factor of 2 to the working space.')
         self.network.add_node('mask_downsampled_t1', fxn='support_functions.apply_binary_mask_vol', bipartite=1,
                               desc='Apply downsampled mask to downsampled t1.')
+        self.network.add_node('dilate_ds_mask',fxn='support_functions.dilate_mask',bipartite=1,desc='dilate the mask')
         self.network.add_node('create_load_session', fxn='self.create_load_session', bipartite=1,
                               desc='create preprocessing and basic analysis pipeline for new fmri session.')
 
@@ -333,14 +336,22 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_edge('t1_mask', 'downsample_t1_mask', order=0)  # 01
         self.network.add_edge('downsample_t1_mask', 'ds_t1_mask', order=0)  # 10
 
+        self.network.add_edge('ds_t1_mask','dilate_ds_mask',order=1)
+        self.network.add_edge('dilate_ds_mask','dil_t1_mask',order=1)
+
+
+
         self.network.add_edge('ds_t1', 'mask_downsampled_t1', order=0)
         self.network.add_edge('ds_t1_mask', 'mask_downsampled_t1', order=1)
         self.network.add_edge('mask_downsampled_t1', 'ds_t1_masked', order=0)
 
+
+
         self.network.add_edge('ds_t1', 'create_load_session', order=0)  # 01
-        self.network.add_edge('ds_t1_mask', 'create_load_session', order=1)  # 01
+        self.network.add_edge('ds_t1_mask', 'create_load_session', order=1) # 01
         self.network.add_edge('ds_t1_masked', 'create_load_session', order=2)
-        self.network.add_edge('sessions', 'create_load_session', order=3)
+        self.network.add_edge('dil_t1_mask', 'create_load_session', order=3)
+        self.network.add_edge('sessions', 'create_load_session', order=4)
         self.network.add_edge('create_load_session', 'sessions', order=0)  # 10
 
         self.network.add_edge('paradigm_complete_checkpoint', 'manual_surface_rois', order=0)
@@ -378,12 +389,12 @@ class DefaultSessionControlNet(BaseControlNet):
     data must be processed to get different desired products
     """
 
-    def __init__(self, session_id, ds_t1_path, ds_t1_mask_path, ds_t1_masked_path):
+    def __init__(self, session_id, ds_t1_path, ds_t1_mask_path, ds_t1_masked_path, dil_t1_mask_path):
         super().__init__()
-        self.initialize_proccessing_structure(session_id, ds_t1_path, ds_t1_mask_path, ds_t1_masked_path)
+        self.initialize_proccessing_structure(session_id, ds_t1_path, ds_t1_mask_path, ds_t1_masked_path, dil_t1_mask_path)
         self.init_head_states()
 
-    def initialize_proccessing_structure(self, session_id, ds_t1_node, ds_t1_mask_node, ds_t1_masked_node):
+    def initialize_proccessing_structure(self, session_id, ds_t1_node, ds_t1_mask_node, ds_t1_masked_node, dil_t1_mask_node):
         # runtime defined. If path attribute is a list, indicates these are multiple files to process in parallel
         self.network.graph['session_id'] = session_id
         self.network.graph['is_mion'] = None
@@ -406,6 +417,8 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('ds_t1', **ds_t1_node)
         self.network.add_node('ds_t1_mask', **ds_t1_mask_node)
         self.network.add_node('ds_t1_masked', **ds_t1_masked_node)
+        self.network.add_node('dil_t1_mask', **dil_t1_mask_node)
+
 
         self.network.add_node('manual_reg_epi_rep', data=None, type='volume', bipartite=0, complete=False,
                               space='ds_t1_aprox')
@@ -563,7 +576,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('manual_registration', 'manual_reg_epi_rep', order=1)  # 10
 
         self.network.add_edge('manual_reg_epi_rep', 'apply_reg_epi_mask', order=0)  # 01
-        self.network.add_edge('ds_t1_mask', 'apply_reg_epi_mask', order=1)  # 01
+        self.network.add_edge('dil_t1_mask', 'apply_reg_epi_mask', order=1)  # 01
         self.network.add_edge('apply_reg_epi_mask', 'masked_manual_reg_epi_rep', order=0)  # 10
 
         self.network.add_edge('masked_manual_reg_epi_rep', 'automatic_coregistration', order=0)  # 01

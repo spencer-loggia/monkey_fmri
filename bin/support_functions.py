@@ -22,6 +22,8 @@ import matplotlib.pyplot as plt
 from cycler import cycler
 matplotlib.rcParams['axes.prop_cycle'] = cycler(color='brgcmyk')
 
+from subprocess import call
+
 # subject support function must be operating with working directory appropriately set
 
 
@@ -113,6 +115,23 @@ def get_epis(*argv):
         expected = int(input("What is the expected number of trs? "))
         SOURCE = preprocess.check_time_series_length(SOURCE, fname='f.nii.gz', expected_length=expected)
     return SOURCE
+
+def dilate_mask(inpath,outpath=None):
+    """
+    Simple function to call fslmath's dilM
+    """
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    project_root = os.path.join(subj_root, '..', '..')
+    if outpath is None:
+        filename = os.path.basename(inpath)
+        outname = 'dil_'+filename
+        outpath = os.path.join(os.path.dirname(inpath),outname)
+    cmd = 'fslmaths %s -dilM %s'%(inpath,outpath)
+    call(cmd,shell=True)
+    print(cmd)
+    if outpath[-3:] != '.gz':
+        outpath = outpath+'.gz'
+    return outpath
 
 
 def downsample_anatomical(inpath, factor=2, out_dir=None, affine_scale=1, resample='interpolate'):
