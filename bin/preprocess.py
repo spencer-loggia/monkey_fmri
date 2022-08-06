@@ -35,7 +35,7 @@ import nibabel as nib
 # don't require nilearn
 try:
     from nilearn import image as nimg
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     print("Nilearn not installed")
 
 from matplotlib import pyplot as plt
@@ -141,7 +141,7 @@ def _mri_convert_wrapper(in_file, out_file, in_orientation, out_orientation, cvt
 def _slice_time_wrapper(in_file, out_file, slice_dir, TR, st):
     st.inputs.in_file = in_file
     st.inputs.out_file = out_file
-    st.inputs.slice_direction =  slice_dir
+    st.inputs.slice_direction = slice_dir
     st.inputs.interleaved = True
     st.inputs.time_repetition = TR
     return st.run()
@@ -266,6 +266,16 @@ def motion_correction(input_dirs: List[str], ref_path: str, outname='moco.nii.gz
         return good_moco
     else:
         return input_dirs
+
+
+def nonlinear_moco(moving_epi, reference, outfile):
+    out_no_ext = outfile.split('.')[0]
+    mc_cmd = "antsMotionCorr  -d 3 -o [{output},{output}.nii.gz,{avg}] " \
+             " -m MI[ {avg} , {inputB} , 1 , 1 , Random, 0.05  ] -t Affine[ 0.01 ] -i 10 -u 1 -e 1 -s 0 -f 1 " \
+             " -m CC[  {avg}, {inputB} , 1 , 3] -t SyN[0.1, 3, 0] -i 30 -u 1 -e 1 -f 2 -s 0" \
+             " -v\n".format(output=out_no_ext, inputB=moving_epi, avg=reference)
+    subprocess.call(mc_cmd, shell=True)
+    return outfile
 
 
 def slice_time_correction(input_dirs: List[str], output: Union[None, str] = None, fname='moco.nii.gz', slice_dir = 3, TR = 3):
@@ -436,7 +446,7 @@ def batch_bandpass_functional(functional_input_dirs, block_length_trs, fname='ep
         period = int(input("enter max length in trs that we expect to see meaningful signal change "
                            "(e.g. probably about 2 blocklengths) "))
     else:
-        period = 2.25 * block_length_trs
+        period = 3 * block_length_trs
 
     for source_dir in functional_input_dirs:
         if not os.path.isdir(source_dir):
@@ -514,7 +524,7 @@ def ResampleImageToTarget(in_vol, target_vol, out_path, interp='interpolate'):
 
 def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
               across_modalities=False, outPref='antsReg',
-              run=True, n_jobs=10):
+              run=True, n_jobs=64):
     """
     From kurts code
     :param fixedP:
@@ -528,7 +538,6 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
     :param n_jobs:
     :return:
     """
-    os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = '%d' % n_jobs
     cmd = "antsRegistration" \
           " --verbose 1 --dimensionality 3 --float 0 --collapse-output-transforms 1 --write-composite-transform 1" \
           " --output [ ./,./Warped.nii.gz,./InverseWarped.nii.gz ] " \
@@ -537,46 +546,19 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
           " --transform Rigid[ 0.1 ] --metric MI[" + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
           " --convergence [1000x500x250,1e-8,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
           " --transform Affine[ 0.1 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
-          " --convergence [1000x500x250,1e-8,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
+          " --convergence [1000x500,1e-9,10 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox" \
+          " --transform Affine[ 0.01 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
+          " --convergence [500,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
+          " --transform SyN[ .1,4,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,6 ]" \
+          " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
+          " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,5 ]" \
+          " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
           " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
-          " --convergence [300x200x40,1e-9,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
-          " --transform SyN[ .001,2,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
-          " --convergence [200x50,1e-9,10 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox"
+          " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
+          " --transform SyN[ .001,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
+          " --convergence [100,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
     print(cmd)
     subprocess.call(cmd, shell=True)
-    # from nipype.interfaces.ants import Registration
-    # reg = Registration()
-    # reg.inputs.fixed_image = fixedP
-    # reg.inputs.moving_image = movingP
-    # reg.inputs.output_transform_prefix = outPref
-    # reg.inputs.interpolation = 'Linear'
-    # reg.inputs.transforms = transforms
-    # reg.inputs.transform_parameters = [(2.0,), (0.25, 3.0, 0.0)]
-    # reg.inputs.number_of_iterations = [[3000, 400], [200, 200, 100]][:len(transforms)]
-    # reg.inputs.dimension = 3
-    # # if initialTrsnfrmP!=None:
-    # #     reg.inputs.initial_moving_transform = initialTrsnfrmP
-    # reg.inputs.write_composite_transform = True
-    # reg.inputs.collapse_output_transforms = True
-    # reg.inputs.initialize_transforms_per_stage = False
-    # reg.inputs.metric = [['Mattes', 'MI'][1]] * 2
-    # reg.inputs.metric_weight = [1] * 2  # Default (value ignored currently by ANTs)
-    # reg.inputs.radius_or_number_of_bins = [32] * 2
-    # reg.inputs.sampling_strategy = ['Random', None][:len(transforms)]
-    # reg.inputs.sampling_percentage = [0.05, None][:len(transforms)]
-    # reg.inputs.convergence_threshold = [1.e-9, 1.e-10][:len(transforms)]
-    # reg.inputs.convergence_window_size = [20] * 2
-    # reg.inputs.winsorize_upper_quantile = 0.975
-    # reg.inputs.smoothing_sigmas = [[1, 0], [2, 1, 0]][:len(transforms)]
-    # reg.inputs.sigma_units = ['vox'] * 2
-    # reg.inputs.shrink_factors = [[2, 1], [3, 2, 1]][:len(transforms)]
-    # reg.inputs.use_estimate_learning_rate_once = [True] * len(transforms)
-    # reg.inputs.use_histogram_matching = [across_modalities==False] * len(transforms)  # This is the default
-    # reg.inputs.output_warped_image = outP
-    # reg.inputs
-    # print(reg.cmdline)
-    # if run:
-    #     reg.run()
 
 
 def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2):
@@ -894,15 +876,18 @@ def center_nifti(source_dir:str, fname:str ='orig.mgz', output=None):
     nib.save(centered, output)
 
 
-def create_low_res_anatomical(source_dir:str, fname:str ='orig.mgz', output=None, factor=2, affine_scale=1, resample='interpolate'):
+def create_low_res_anatomical(source_dir:str, fname:str ='orig.mgz', output=None, factor=[2, 2, 2], affine_scale=None, resample='interpolate'):
     if not output:
         output = os.path.join(source_dir, 'low_res.nii')
-    factor = str(factor)
-    affine_scale = str(affine_scale)
     in_path = os.path.join(source_dir, fname)
-    subprocess.run(['mri_convert', in_path, '-vs', factor, factor, factor, '-rt', resample, output, '--out_type', 'nii'])
-    subprocess.run(['mri_convert', output, '-iis', affine_scale, '-ijs', affine_scale, '-iks', affine_scale,
-                    '-rt', resample, output, '--out_type', 'nii'])
+    cmd_resample = 'mri_convert %s -vs %s %s %s -rt %s %s --out_type nii'%(in_path, factor[0], factor[1], factor[2], resample, output)
+    subprocess.run(cmd_resample,shell=True)
+    if affine_scale is not None:
+        if len(affine_scale) < 3: # we expect a length of three
+            affine_scale = [affine_scale[0], affine_scale[0], affine_scale[0]]
+            print('Warning: length of affine_scale argument is less than three, using first element for all arguments')
+        cmd_affine_set = 'mri_convert %s -iis %s -ijs %s -iks %s -rt %s %s --out_type nii'%(output, affine_scale[0], affine_scale[1], affine_scale[2], resample, output)
+        subprocess.run(cmd_affine_set,shell=True)
     return output
 
 
@@ -1049,5 +1034,3 @@ def create_functional_mask(input_dirs: List[str], output: str, fname='normalized
                 n_data /= 9999999
                 new_nifti = nib.Nifti1Image(n_data, affine=nifti.affine, header=nifti.header)
                 nib.save(new_nifti, mask_out)
-
-

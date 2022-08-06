@@ -1,3 +1,4 @@
+import copy
 import math
 
 import os
@@ -281,7 +282,7 @@ def maximal_dynamic_convolution_regressor(design_matrix: np.ndarray, gt: np.ndar
     # analytical maximization
     try:
         with torch.no_grad():
-            # pinv(X'X) * X' * Y
+            #beta = torch.inverse(x_expect.T @ x_expect) @ x_expect.T @ gt
             beta = torch.linalg.lstsq((x_expect.T @ x_expect), x_expect.T).solution @ gt
     except Exception:
         print("Unable to preform analytical optimization since not all conditions are present. Using l1 regularized "
@@ -432,11 +433,15 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
     affines = []
     header = None
 
+    brain_mask = None
+
     for i, source_dir in enumerate(run_dirs):
         req_path = os.path.join(source_dir, fname)
         if os.path.isfile(req_path):
             brain = nib.load(req_path)
             brain_tensor = np.array(brain.get_fdata())
+            if brain_mask is None:
+                brain_mask = copy.copy(brain_tensor[:, :, :, int(len(brain_tensor) / 2)]).astype(bool)
             exp_num_frames = design_matrices[i].shape[0]
             if brain_tensor.shape[-1] != exp_num_frames:
                 print(
@@ -466,11 +471,22 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
         for i in range(len(full_run_params)):
             res.append(_pipe(*full_run_params[i]))
     betas, hemo, loss_hists = list(zip(*res))
+
     beta_paths = []
     for i, run in enumerate(run_dirs):
         out_path = os.path.join(run, 'run_beta.nii.gz')
         beta_paths.append(out_path)
-        run_beta_nii = nib.Nifti1Image(np.squeeze(betas[i]), affine=np.squeeze(affines[i]), header=header)
+        # convert to z-scores
+        beta = np.squeeze(betas[i])
+        refactored_betas = copy.copy(beta)
+        # refactored_betas = refactored_betas[brain_mask]
+        # remove nuicianse regressors
+        refactored_betas = refactored_betas[:, :, :, :-2]
+        # pop_mean = np.mean(refactored_betas.flatten())
+        # pop_std = np.std(refactored_betas.flatten())
+        # beta[brain_mask] = (beta[brain_mask] - pop_mean) / pop_std
+        # beta[np.logical_not(brain_mask)] = 0
+        run_beta_nii = nib.Nifti1Image(refactored_betas, affine=np.squeeze(affines[i]), header=header)
         nib.save(run_beta_nii, out_path)
     fig, axs = plt.subplots(2)
     for i, h in enumerate(hemo):
@@ -490,9 +506,13 @@ def create_averaged_beta(beta_paths, out_dir=None):
     affines = []
     for beta_path in beta_paths:
         beta_nii = nib.load(beta_path)
-        betas.append(np.array(beta_nii.get_fdata()))
+        beta = np.array(beta_nii.get_fdata())
+        local_center = np.mean(beta[:, :, :, 1:].flatten())
+        betas.append(beta - local_center)
         affines.append(np.array(beta_nii.affine))
-    avg_betas = np.mean(np.stack(betas, axis=0), axis=0)
+    all_betas = np.stack(betas, axis=0)
+    std = np.std(all_betas[:, :, :, :, 1:].flatten())
+    avg_betas = all_betas.mean(axis=0) / std
     affine = np.mean(np.stack(affines, axis=0), axis=0)
     beta_nii = nib.Nifti1Image(avg_betas, affine=affine, header=beta_nii.header)
     if out_dir is None:
@@ -507,11 +527,12 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
     We want voxels in A that are greater than
     """
     beta_nii = nib.load(beta_matrix)
-    avg_contrasts = contrast(np.array(beta_nii.get_fdata()), contrast_matrix)
+
+    betas = np.array(beta_nii.get_fdata())
+    avg_contrasts = contrast(betas, contrast_matrix)
 
     out_paths = []
     for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
-        cond /= np.std(cond.flatten())
         contrast_nii = nib.Nifti1Image(cond, affine=beta_nii.affine, header=beta_nii.header)
         out = os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii')
         nib.save(contrast_nii, out)
@@ -569,12 +590,12 @@ def create_contrast_surface(anatomical_white_surface: str,
         raise ValueError('Hemi must be one of rh or lh.')
     high_res = nib.load(orig_high_res_anatomical)
     high_res_data = high_res.get_fdata()
-    high_res_data = _pad_to_cube(high_res_data)
+    # high_res_data = _pad_to_cube(high_res_data)
     low_res = nib.load(orig_low_res_anatomical).get_fdata()
-    low_res = _pad_to_cube(low_res)
-    scale = _find_scale_factor(high_res_data, low_res)
+    # low_res = _pad_to_cube(low_res)
+    # scale = _find_scale_factor(high_res_data, low_res)
     contrast_nii = nib.load(contrast_vol_path)
-    contrast_data = _norm_4d(np.array(contrast_nii.get_fdata()))
+    contrast_data = np.array(contrast_nii.get_fdata())
     aff = contrast_nii.affine
     new_nii = nib.Nifti1Image(contrast_data, affine=aff, header=contrast_nii.header)
 
@@ -587,7 +608,7 @@ def create_contrast_surface(anatomical_white_surface: str,
     os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
 
     # subprocess.run(['fslroi', path, path_gz, '0', '256', '0', '256', '0,', '256'])
-    path = _scale_and_standardize(scale, path)
+    # path = _scale_and_standardize(scale, path)
     overlay_out_path = os.path.join(output, 'sigsurface_' + hemi + '_' + out_desc + '.mgh')
     subprocess.run(['mri_vol2surf', '--src', path,
                     '--out', overlay_out_path,

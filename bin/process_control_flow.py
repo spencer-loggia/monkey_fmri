@@ -613,7 +613,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('ds_t1_masked', 'register_beta_matrices', order=1)
         self.network.add_edge('manual_transform', 'register_beta_matrices', order=2)  # 01
         self.network.add_edge('auto_composite_transform', 'register_beta_matrices', order=3)  # 01
-        self.network.add_edge('register_beta_matrix', 'reg_beta_matrices', order=0)  # 10
+        self.network.add_edge('register_beta_matrices', 'reg_beta_matrices', order=0)  # 10
 
         self.network.add_edge('reg_beta_matrices', 'create_session_averaged_beta_matrix', order=0)
         self.network.add_edge('create_session_averaged_beta_matrix', 'reg_beta_matrix', order=0)

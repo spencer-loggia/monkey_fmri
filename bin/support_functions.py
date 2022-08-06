@@ -134,7 +134,7 @@ def dilate_mask(inpath,outpath=None):
     return outpath
 
 
-def downsample_anatomical(inpath, factor=2, out_dir=None, affine_scale=1, resample='interpolate'):
+def downsample_anatomical(inpath, factor=[2, 2, 2], out_dir=None, affine_scale=None, resample='interpolate'):
     """
     Resample should be either 'interpolate' or 'nearest'
     :param inpath:
@@ -149,6 +149,7 @@ def downsample_anatomical(inpath, factor=2, out_dir=None, affine_scale=1, resamp
     source_dir = os.path.dirname(inpath)
     name = os.path.basename(inpath)
     out_name = 'ds_' + name.split('.')[0] + '.nii'
+    factor = input_control.int_list_input("Enter the scale factor (x y z):")
     if out_dir is None:
         output_dir = preprocess._create_dir_if_needed(subj_root, 'mri')
     else:
@@ -159,7 +160,7 @@ def downsample_anatomical(inpath, factor=2, out_dir=None, affine_scale=1, resamp
     return output
 
 
-def downsample_vol_rois(roi_dict, ds_roi_dict, factor=2, affine_scale=1, resample='nearest', output_dir=None):
+def downsample_vol_rois(roi_dict, ds_roi_dict, factor=[2, 2, 2], affine_scale=None, resample='nearest', output_dir=None):
     options = list(roi_dict)
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
@@ -167,6 +168,7 @@ def downsample_vol_rois(roi_dict, ds_roi_dict, factor=2, affine_scale=1, resampl
     choice = input_control.select_option_input(options)
     roi_set_name = options[choice]
     roi_set_path = roi_dict[roi_set_name]
+    factor = input_control.int_list_input("Enter the scale factor (x y z):")
     if output_dir is None:
         output_dir = os.path.relpath(preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set_name), 'ds_roi_vols'), project_root)
     for roi_file in os.listdir(roi_set_path):
@@ -177,10 +179,11 @@ def downsample_vol_rois(roi_dict, ds_roi_dict, factor=2, affine_scale=1, resampl
     return ds_roi_dict
 
 
-def downsample_vol_rois_cmdline_wrap(dir, factor=2, affine_scale=1, resample='nearest', output_dir=None):
+def downsample_vol_rois_cmdline_wrap(dir, factor=[2, 2, 2], affine_scale=None, resample='nearest', output_dir=None):
     """
     So we can use outside of project structure
     """
+    factor = input_control.int_list_input("Enter the scale factor (x y z):")
     roi_dict = {os.path.basename(dir): dir}
     out_dict = {}
     return downsample_vol_rois(roi_dict, out_dict, factor=factor, affine_scale=affine_scale, resample=resample, output_dir=output_dir)
@@ -619,7 +622,7 @@ def create_load_ima_order_map(source):
     return omap_path
 
 
-def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii'):
+def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_filtered.nii.gz'):
     """
     TODO: Still needs some work with regards to nd design matrices.
     :param source:
@@ -680,8 +683,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
             for cond_idx in condition_names.keys():
                 if int(cond_idx) not in clist:
                     print("WARNING: Session", c_name, "does not contain condition", cond_idx, "named",
-                          condition_names[cond_idx], "it will be skipped")
-                    cond_good = False
+                          condition_names[cond_idx], "Analysis including this condition wil be invalid.")
             if cond_good:
                 design_matrices.append(analysis.design_matrix_from_run_list(clist,
                                                                         num_conditions,
@@ -748,23 +750,28 @@ def construct_complete_beta_file(para):
     if len(sessions_dict) == 0:
         print("No Betas Have Been Promoted From Session to Subject Level.")
         return None, None
+    all_beta_runs = []
     for key in sessions_dict:
         session_betas = sessions_dict[key]['beta_file']
-        num_runs = len(sessions_dict[key]['imas_used'])
-        total_runs += num_runs
-        beta = nibabel.load(session_betas)
-        if total_beta is None:
-            total_beta = (np.array(beta.get_fdata()) * num_runs)
-            total_affine = (beta.affine * num_runs)
-            header = beta.header
-        else:
-            total_beta += (np.array(beta.get_fdata()) * num_runs)
-            total_affine += (beta.affine * num_runs)
+        imas = sessions_dict[key]['imas_used']
+        for ima in imas:
+            session_path = os.path.join(os.path.dirname(session_betas), str(ima), "reg_run_beta.nii.gz")
+            try:
+                beta = nibabel.load(session_path)
+            except (FileNotFoundError, FileExistsError):
+                continue
+            local_beta = np.array(beta.get_fdata())
+            local_beta = (local_beta - local_beta[:, :, :, 1:].mean())
+            all_beta_runs.append(local_beta)
+            if total_beta is None:
+                total_affine = beta.affine
+                header = beta.header
+            total_runs += 1
 
     total_path = os.path.relpath(os.path.join(subj_root, 'analysis', para_name + '_subject_betas.nii'), project_root)
-    subject_betas = total_beta / total_runs
-    subject_affine = total_affine / total_runs
-    total_nii = nibabel.Nifti1Image(subject_betas, affine=subject_affine, header=header)
+    subject_betas = np.stack(all_beta_runs)
+    subject_betas = subject_betas.mean(axis=0) / subject_betas[:, :, :, :, 1:].flatten().std()
+    total_nii = nibabel.Nifti1Image(subject_betas, affine=total_affine, header=header)
     nibabel.save(total_nii, total_path)
     print('Constructed subject beta matrix for paradigm', para_name, 'using ', total_runs, ' individual runs')
     return total_path
@@ -1057,6 +1064,8 @@ def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
     os.chdir(project_root)
     best_disp = 9999999
     besp_disp_idx = -1
+    if isinstance(targets, str):
+        targets = [targets]
     for i, t in enumerate(targets):
         preprocess.motion_correction(source, t, check_rms=False, fname=fname, outname='temp_moco.nii.gz')
         sess_dir = os.path.dirname(source[0])
@@ -1076,7 +1085,15 @@ def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
                 os.rename(moco_file, rename_moco)
     print("Best average displacement: ", str(best_disp))
     print("Target chosen: " + targets[besp_disp_idx])
-    return source, targets[besp_disp_idx]
+    print("running final nonlinear warp...")
+    args = []
+    ref = targets[besp_disp_idx]
+    for s in source:
+        mc = os.path.join(s, 'moco.nii.gz')
+        args.append((mc, ref, mc))
+    with multiprocessing.Pool() as p:
+        p.starmap(preprocess.nonlinear_moco, args)
+    return source, ref
 
 
 def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):
@@ -1084,6 +1101,13 @@ def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):
     in_paths = [os.path.abspath(os.path.join(fdir, fname)) for fdir in functional_dirs]
     if use_noise:
         noise_image_path = input_control.dir_input("Enter path to desired thermal noise image.")
+        noise_image = nibabel.load(noise_image_path)
+        if len(noise_image.shape) == 4:
+            data = noise_image.get_fdata()
+            data = np.mean(data, axis=3)
+            avg_noise = nibabel.Nifti1Image(data, affine=noise_image.affine, header=noise_image.header)
+            nibabel.save(avg_noise, noise_image_path)
+
         preprocess.NORDIC(in_paths, noise_image_path, 'f_nordic')
     else:
         preprocess.NORDIC(in_paths, None, 'f_nordic')

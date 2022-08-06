@@ -51,7 +51,6 @@ class Project:
             subject_pipe.load_net(subj_config_path)
         subject_pipe.control_loop(subj_config_path)
         os.chdir(self.abs_base)
-        self.save_project_config()
 
     def _sync_paradigms_to_data_map(self):
         """
