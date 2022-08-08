@@ -116,6 +116,14 @@ def get_epis(*argv):
         SOURCE = preprocess.check_time_series_length(SOURCE, fname='f.nii.gz', expected_length=expected)
     return SOURCE
 
+
+def get_functional_target():
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    path = input_control.dir_input("Enter path to functional data representative image (should be masked): ")
+    shutil.copy(path, os.path.join(subj_root, 'mri', 'functional_target.nii'))
+    return os.path.join(subj_root, 'mri', 'functional_target.nii')
+
+
 def dilate_mask(inpath,outpath=None):
     """
     Simple function to call fslmath's dilM
@@ -444,9 +452,10 @@ def _create_paradigm():
     para_def_dict = {}
     name = input('what is this paradigm called? ')
     para_def_dict['name'] = name
-    if name in proj_data['paradigms']:
+    f_path = os.path.join(para_dir, name + '_experiment_config.json')
+    if name in proj_data['paradigms'] or os.path.exists(f_path):
         print("paradigm already exists.")
-        with open(proj_data['paradigms'][name], 'r') as f:
+        with open(f_path, 'r') as f:
             para_def_dict = json.load(f)
             config_file_path = os.path.relpath(os.path.join(para_dir, name + '_experiment_config.json'), project_root)
         if name not in proj_data['data_map']:

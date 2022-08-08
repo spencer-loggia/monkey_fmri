@@ -15,7 +15,7 @@ function monk_nordic(func_in, phase_in,new_filename)
         func_in = {func_in}
     end
     
-    if all(phase_in == 'None') || phase_in == "None"
+    if strcmp(phase_in, 'None')
         phase_in = func_in;
         ARG_temp.magnitude_only = 1; % 1: do not use phase data; 
     else
@@ -33,10 +33,18 @@ function monk_nordic(func_in, phase_in,new_filename)
 
     ARG = repmat({ARG_temp},length(func_in));
     a = {};
-    for i = 1:length(func_in)
-        [a{i},~,~] = fileparts(func_in{i});
-        ARG{i}.DIROUT = [a{i} '/'];
-        NIFTI_NORDIC(func_in{i},phase_in{i},new_filename,ARG{i})
+    if ARG_temp.magnitude_only == 1
+        for i = 1:length(func_in)
+            [a{i},~,~] = fileparts(func_in{i});
+            ARG{i}.DIROUT = [a{i} '/'];
+            NIFTI_NORDIC(func_in{i},phase_in{i},new_filename,ARG{i})
+        end
+    else
+        for i = 1:length(func_in)
+            [a{i},~,~] = fileparts(func_in{i});
+            ARG{i}.DIROUT = [a{i} '/'];
+            NIFTI_NORDIC(func_in{i},phase_in,new_filename,ARG{i})
+        end
+
     end
 end
-
