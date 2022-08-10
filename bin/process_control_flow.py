@@ -69,6 +69,7 @@ class BaseControlNet:
 
     def interactive_advance(self):
         print("action selection")
+        self.head = sorted(self.head)
         options = [str(n) + '   modified: ' + self.network.nodes[n]['modified']
                    if 'modified' in self.network.nodes[n] else str(n) + '   modified: unknown' for n in self.head]
         choice = select_option_input(options + ['back'])
