@@ -97,7 +97,7 @@ def _apply_binary_mask_3D(in_img: nib.Nifti1Image, mask: nib.Nifti1Image) -> nib
         mask = mask[:, :, :, None]
         mask = np.tile(mask, (1, 1, 1, n_data.shape[-1]))
     print(mask.shape)
-    n_data[mask == 0] = 0
+    n_data[mask <= .5] = 0
     print(n_data.shape)
     new_nifti = nib.Nifti1Image(n_data, affine=in_img.affine, header=in_img.header)
     return new_nifti
@@ -272,7 +272,8 @@ def nonlinear_moco(moving_epi, reference, outfile):
     out_no_ext = outfile.split('.')[0]
     mc_cmd = "antsMotionCorr  -d 3 -o [{output},{output}.nii.gz,{avg}] " \
              " -m MI[ {avg} , {inputB} , 1 , 1 , Random, 0.05  ] -t Affine[ 0.01 ] -i 10 -u 1 -e 1 -s 0 -f 1 " \
-             " -m CC[  {avg}, {inputB} , 1 , 3] -t SyN[0.1, 3, 0] -i 30 -u 1 -e 1 -f 2 -s 0" \
+             " -m CC[  {avg}, {inputB} , 1 , 3] -t SyN[0.1, 3, 0] -i 30 -u 1 -e 1 -f 2 -s 1" \
+             " -m CC[  {avg}, {inputB} , 1 , 3] -t SyN[0.05, 3, 0] -i 10 -u 1 -e 1 -f 1 -s 0" \
              " -v\n".format(output=out_no_ext, inputB=moving_epi, avg=reference)
     subprocess.call(mc_cmd, shell=True)
     return outfile
@@ -524,7 +525,7 @@ def ResampleImageToTarget(in_vol, target_vol, out_path, interp='interpolate'):
 
 def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
               across_modalities=False, outPref='antsReg',
-              run=True, n_jobs=64):
+              run=True, n_jobs=64, full=False):
     """
     From kurts code
     :param fixedP:
@@ -561,7 +562,7 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
     subprocess.call(cmd, shell=True)
 
 
-def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2):
+def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2, full=False):
     """
     From kurks code
     :param fixedP:
@@ -579,7 +580,7 @@ def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2):
         initialTrsnfrmP=None, # we are working on resampled img
         across_modalities=True,
         outPref='antsReg',
-        run=True,n_jobs=n_jobs)
+        run=True,n_jobs=n_jobs, full=full)
     frwdTrnsP = os.path.join(outF, 'Composite.h5')
     invTrnsP = os.path.join(outF, 'InverseComposite.h5')
     return frwdTrnsP, invTrnsP

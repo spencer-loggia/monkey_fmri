@@ -207,7 +207,7 @@ def bandpass_wrapper(functional_dirs, paradigm_path):
     return preprocess.batch_bandpass_functional(functional_dirs, blocklength)
 
 
-def coreg_wrapper(source_space_vol_path, target_space_vol_path):
+def coreg_wrapper(source_space_vol_path, target_space_vol_path, full=False):
     """
 
     :param source_space_vol_path:
@@ -222,7 +222,8 @@ def coreg_wrapper(source_space_vol_path, target_space_vol_path):
                                                                            os.path.abspath(source_space_vol_path),
                                                                            outP=os.path.abspath(out),
                                                                            ltrns=['Affine', 'SyN'],
-                                                                           n_jobs=2)])
+                                                                           n_jobs=2,
+                                                                           full=full)])
 
 
 def _apply_warp_wrapper(s, vol, out, transforms, interp, type_code, dim, invert, project_root):
@@ -281,7 +282,7 @@ def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path
         out = os.path.join(os.path.dirname(vol_in_target_space), 'inverse_trans_' + os.path.basename(source))
     inverse_transforms = [os.path.abspath(forward_gross_transform_path), os.path.abspath(reverse_fine_transform_path)]
     to_invert = [True, False]
-    preprocess.antsApplyTransforms(os.path.abspath(source), os.path.abspath(vol_in_target_space), os.path.abspath(out), inverse_transforms, 'Linear',
+    preprocess.antsApplyTransforms(os.path.abspath(source), os.path.abspath(vol_in_target_space), os.path.abspath(out), inverse_transforms, 'NearestNeighbor',
                                    img_type_code=0, invertTrans=to_invert)
     return os.path.relpath(out, project_root)
 
@@ -321,7 +322,7 @@ def apply_binary_mask_vol(src_vol, mask):
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
-    out = os.path.join(os.path.dirname(src_vol), 'masked_vol.nii')
+    out = os.path.join(os.path.dirname(src_vol), 'masked_' + os.path.basename(src_vol).split('.')[0] + '.nii.gz')
     src_nii = nibabel.load(src_vol)
     mask_nii = nibabel.load(mask)
     masked_nii = preprocess._apply_binary_mask_3D(src_nii, mask_nii)
@@ -1001,8 +1002,14 @@ def load_t1_data():
     t1_mask_name = os.path.basename(cur_t1_mask_path)
     t1_proj_path = os.path.relpath(os.path.join(subj_root, 'mri', t1_name))
     t1_mask_proj_path = os.path.relpath(os.path.join(subj_root, 'mri', t1_mask_name))
-    shutil.copy(cur_t1_path, t1_proj_path)
-    shutil.copy(cur_t1_mask_path, t1_mask_proj_path)
+    try:
+        shutil.copy(cur_t1_path, t1_proj_path)
+    except shutil.SameFileError:
+        pass
+    try:
+        shutil.copy(cur_t1_mask_path, t1_mask_proj_path)
+    except shutil.SameFileError:
+        pass
     return t1_proj_path, t1_mask_proj_path
 
 
