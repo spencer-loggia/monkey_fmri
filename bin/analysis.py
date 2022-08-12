@@ -130,7 +130,7 @@ def average_functional_data(run_dirs, output, fname='normalized.nii', through_ti
                 avg_func += brain_tensor
             count += 1
     avg_func /= count
-    avg_nii = nib.Nifti1Image(avg_func, affine=brain.affine, header=brain.header)
+    avg_nii = nib.Nifti1Image(avg_func, affine=brain.affine)
     nib.save(avg_nii, output)
     return avg_func
 

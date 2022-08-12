@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-plt.ion()
 
 import numpy as np
 from typing import List
@@ -13,6 +12,10 @@ import networkx as nx
 
 import analysis, representation_geometry
 from dataloaders.base import PsychDataloader
+
+from neurotools.models import ReverbNetwork
+
+plt.ion()
 
 
 def _compute_roi_dim(num, dist_from_root, root_spatial_dim):
@@ -80,94 +83,15 @@ def exp_decay(cur_x, start_y, stop_y, stop_x):
 class BrainMimic:
 
     def __init__(self, structure: nx.Graph, input_node,
-                units_per_voxel=10, stimuli_shape=(1, 3, 64, 64), start_lr=.0001):
-        self.brain = nx.DiGraph()
+                 units_per_voxel=10, stimuli_shape=(1, 3, 64, 64), start_lr=.0001):
+        structure = nx.to_directed(structure)
+        # add intra-node connectivity
+        for n in structure.nodes:
+            structure.add_edge(n, n)
+        self.brain = ReverbNetwork(structure, node_shape=stimuli_shape, input_node=input_node)
         self.rdm_loss_fxn = torch.nn.MSELoss()
         self.stim_shape = stimuli_shape
         self.structure = structure
-        self.head_node = input_node  # index of first node in data stream (e.g. corresponds to roi v1 for vision)
-        self.start_lr = start_lr
-        self.default_state = -.1  # node activation states equilibrate here
-        self.resistance = .2
-        self.init_weight_mean = 0.
-        self.init_weight_std = 0.1
-        self.params = []
-
-        # we want to find highest magnitude path with fewest connections
-        max_weight = max([np.abs(data[2]['weight']) for data in structure.edges(data=True)])
-        for s, t, data in structure.edges(data=True):
-            structure.edges[s, t]['weight'] = max_weight - np.abs(data['weight'])
-
-        spatial_bins = int(np.log2(self.stim_shape[2]))
-        path_lengths = nx.single_source_dijkstra_path_length(structure, self.head_node)
-        nodes = np.array(list(path_lengths.keys()))
-        nodes = sorted(nodes)
-        path_lengths = np.array([path_lengths[n] for n in nodes])
-        bin_edges = np.histogram_bin_edges(path_lengths)
-        binned = np.digitize(path_lengths, bins=bin_edges)
-        binned[binned > spatial_bins] = spatial_bins
-        for n in nodes:
-            if n == self.head_node:
-                spatial_bin = 0
-            else:
-                spatial_bin = binned[n]
-            data = self.structure.nodes[n]
-            desired_neurons = data['num_dims'] * units_per_voxel
-            roi_shape = _compute_roi_dim(desired_neurons, spatial_bin, stimuli_shape[2])
-            self.brain.add_node(n,
-                                roi_name=data['roi_name'],
-                                shape=roi_shape,
-                                neurons=None,
-                                rdm=[],
-                                computed=False)
-            print('added computational node', n, data['roi_name'], 'with size', roi_shape)
-        total_edges = len(structure.edges)
-        count = 1
-        for u, v, data in structure.edges(data=True):
-            _, u_channels, u_spatial, _ = self.brain.nodes[u]['shape']  # must be square in spatial dims
-            _, v_channels, v_spatial, _ = self.brain.nodes[v]['shape']
-            u_v_sequence = _compute_convolutional_sequence(u_spatial, v_spatial, u_channels, v_channels, self.init_weight_mean, self.init_weight_std)
-            v_u_sequence = _compute_convolutional_sequence(v_spatial, u_spatial, v_channels, u_channels, self.init_weight_mean, self.init_weight_std)
-            self.params.append(u_v_sequence[0].weight)
-            self.params.append(v_u_sequence[0].weight)
-            self.brain.add_edge(u, v,
-                                sequence=u_v_sequence)
-            self.brain.add_edge(v, u,
-                                sequence=v_u_sequence)
-            print('created edges (', u, ',', v, ') -- ', count, 'of', total_edges)
-            count += 1
-
-        # add stimulus input node
-        self.brain.add_node(-1, roi_name='stimulus', neurons=None, shape=stimuli_shape)
-        _, u_channels, u_spatial, _ = stimuli_shape
-        _, v_channels, v_spatial, _ = self.brain.nodes[self.head_node]['shape']
-        initial_sequence = _compute_convolutional_sequence(u_spatial, v_spatial, u_channels, v_channels)
-        self.params.append(initial_sequence[0].weight)  # append the convolution
-        self.brain.add_edge(-1, self.head_node,
-                            sequence=initial_sequence)
-        self.optimizer = torch.optim.Adam(lr=self.start_lr, params=self.params)
-
-    def weight_regularization(self, l1_weight=.5, var_weight=1., verbose=True):
-        """
-        Want all individual weights to be go to zero, and low variance within a given edge
-        :return:
-        """
-        l1_cost = torch.Tensor([0.0])
-        var_cost = torch.Tensor([0.0])
-        for param in self.params:
-            flat_param = param.flatten()
-            # different from standard l1 (triangle inequality)
-            l1 = torch.abs(torch.sum(flat_param))
-            var = torch.std(flat_param)
-            l1_cost = l1_cost + l1
-            var_cost = var_cost + var * len(flat_param)  # variance cost is scaled by the number of parameters
-        l1_cost = l1_cost / len(self.params)
-        var_cost = var_cost / len(self.params)
-        if verbose:
-            print("L1 cost:", l1_cost.detach().item())
-            print("Var Cost: ", var_cost.detach().item())
-        cost = l1_weight * l1_cost + var_weight * var_cost
-        return cost
 
     def prune_graph(self, prune_factor=.05, min_edges=30, verbose=True):
         """
@@ -198,7 +122,9 @@ class BrainMimic:
                     print("Pruned edge ", self.brain.nodes[s]['roi_name'], '->', self.brain.nodes[t]['roi_name'],
                           "with weight", link_weight.detach().item())
         # remove any edges that become disconnected from stimulus
-        reachable = nx.descendants(self.brain, self.head_node) | {self.head_node, -1}  # all nodes reachable from head, plus head itself and stimuli pseudo-node
+        reachable = nx.descendants(self.brain, self.head_node) | {self.head_node,
+                                                                  -1}  # all nodes reachable from head, plus head
+        # itself and stimuli pseudo-node
         for node in list(self.brain.nodes()):
             if node not in reachable:
                 if verbose:
@@ -250,26 +176,9 @@ class BrainMimic:
         """
         raise NotImplementedError
 
-    def compute_node_update(self, node):
-        """
-        Computes nodes update in network
-        :param node: the node to update.
-        :return:
-        """
-        drift = self.resistance * (self.brain.nodes[node]['neurons'] - self.default_state)
-        node_state = self.brain.nodes[node]['neurons'].clone() - drift  # neurons drift toward defualt state
-        for pred in self.brain.predecessors(node):
-            state = self.brain.nodes[pred]['neurons']
-            # assert len(state.shape) == 4
-            connection_sequence = self.brain.edges[(pred, node)]['sequence']
-            for step in connection_sequence:
-                state = step(state.clone())
-            node_state = node_state + state
-        return node_state
-
-    @torch.utils.hooks.unserializable_hook
-    def fit_rdms(self, stim_gen: List[PsychDataloader], super_epochs=10, epochs=30, stimulus_frames = 20, batch_size=10,
-                 start_lr=.00001, final_lr=.00000001, prune_start=.1, prune_stop=.01, verbose=True, snapshot_out='./', reg_weight=.2):
+    def fit_rdms(self, stim_gen: List[PsychDataloader], super_epochs=10, epochs=30, stimulus_frames=20, batch_size=10,
+                 start_lr=.00001, final_lr=.00000001, prune_start=.1, prune_stop=.01, verbose=True, snapshot_out='./',
+                 reg_weight=.2):
         """
         Attempt to find  structure for the brain network that matches observed geometry.
 
@@ -347,7 +256,7 @@ class BrainMimic:
                     paradigm_dissimilarity_loss = self.beta_dissimilarity_loss(activation_states, run_list,
                                                                                len(cond_presentation_order), para_idx,
                                                                                verbose=verbose)
-                    epoch_loss = epoch_loss + paradigm_dissimilarity_loss # this could cause numerical instability ...
+                    epoch_loss = epoch_loss + paradigm_dissimilarity_loss  # this could cause numerical instability ...
 
                     # save states
                     nx.write_gpickle(self.brain, os.path.join(snapshot_out, 'brain_mimic_epoch_' + str(epoch)))

@@ -97,7 +97,7 @@ def _apply_binary_mask_3D(in_img: nib.Nifti1Image, mask: nib.Nifti1Image) -> nib
         mask = mask[:, :, :, None]
         mask = np.tile(mask, (1, 1, 1, n_data.shape[-1]))
     print(mask.shape)
-    n_data[mask <= .5] = 0
+    n_data[mask <= 0.01] = 0.
     print(n_data.shape)
     new_nifti = nib.Nifti1Image(n_data, affine=in_img.affine, header=in_img.header)
     return new_nifti
