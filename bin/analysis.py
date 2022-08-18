@@ -42,6 +42,9 @@ from typing import List, Union, Tuple, Dict
 
 import torch
 
+from nilearn.glm import first_level
+from nilearn.glm.first_level.hemodynamic_models import mion_hrf, spm_time_derivative
+
 
 def _norm_4d(arr: np.ndarray):
     """
@@ -361,7 +364,8 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
         res = p.starmap(_create_SNR_volume_wrapper, args)
 
 
-def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int], base_conditions_idxs: List[int]):
+def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int],
+                                 base_conditions_idxs: List[int], condition_names: List[str], tr_length=3, mion=True):
     """
     Creates as num_conditions x time onehot encoded matrix from an order number definition
     :param block_length:
@@ -372,17 +376,23 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
     :return: design matrix with constant one on base conditions and linear drift nuisance regressors on cols -1 and -2
     """
     k = len(order)
-    design_matrix = np.zeros((0, num_conditions))
+    timing = {"trial_type": [],
+              "onset": [],
+              "duration": []}
     for i in range(num_blocks):
-        block = np.zeros((block_length, num_conditions), dtype=float)
         active_condition = order[i % k]
-        block[:, active_condition] = 1
-        block[:, base_conditions_idxs] = 1
-        design_matrix = np.concatenate([design_matrix, block], axis=0)
-    pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix), None]
-    exp_drift = np.exp(-1 * np.e * np.arange(0, 1, (1 / len(design_matrix))))[:len(design_matrix), None]
-    design_matrix = np.concatenate([design_matrix, pos_linear_drift, exp_drift], axis=1)
-    return design_matrix
+        cond_name = condition_names[active_condition]
+        timing["trial_type"].append(cond_name)
+        timing["onset"].append(i * block_length * tr_length)
+        timing["duration"].append(block_length)
+    frames = np.arange(num_blocks * block_length) * tr_length
+    time_df = pd.DataFrame.from_dict(timing)
+    if mion:
+        hrf = mion_hrf(float(tr_length))
+    else:
+        hrf = spm_time_derivative(float(tr_length))
+    dm = first_level.make_first_level_design_matrix(frames, time_df, hrf, drift_model="polynomial", drift_order=3)
+    return dm
 
 
 def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_condition_idxs: List[int]):

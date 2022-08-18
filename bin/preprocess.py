@@ -1035,3 +1035,6 @@ def create_functional_mask(input_dirs: List[str], output: str, fname='normalized
                 n_data /= 9999999
                 new_nifti = nib.Nifti1Image(n_data, affine=nifti.affine, header=nifti.header)
                 nib.save(new_nifti, mask_out)
+
+def nilearn_glm(design_matrix):
+
