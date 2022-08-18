@@ -1,7 +1,10 @@
 import copy
 import math
+import multiprocessing
 
 import os
+import pickle
+
 import scipy.ndimage
 import shutil
 from typing import List, Tuple
@@ -509,6 +512,33 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
     fig.show()
     plt.show()
     return beta_paths, avg_hemo
+
+
+def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, tr_length=3.):
+    if mion:
+        hrf = mion_hrf(tr_length)
+    else:
+        hrf = spm_time_derivative(tr_length)
+    tmp_dir = './tmp_glm_cache'
+    if os.path.exists(tmp_dir):
+        shutil.rmtree(tmp_dir)
+    os.mkdir("./tmp_glm_cache")
+    fmri_glm = first_level.FirstLevelModel(
+                minimize_memory=True,
+                hrf_model=hrf,
+                t_r=tr_length,
+                smoothing_fwhm=1.,
+                verbose=True,
+                n_jobs=multiprocessing.cpu_count() - 1,
+                noise_model='ols',
+                memory=tmp_dir
+        )
+    epis = [nib.load(os.path.join(run_dir, fname)) for run_dir in run_dirs]
+    fmri_glm = fmri_glm.fit(epis, design_matrices=design_matrices)
+    glm_path = os.path.join(output_dir, "glm_model")
+    with open(glm_path, "wb") as f:
+        pickle.dump(fmri_glm, f)
+    return glm_path
 
 
 def create_averaged_beta(beta_paths, out_dir=None):
