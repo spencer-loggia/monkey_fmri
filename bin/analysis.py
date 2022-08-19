@@ -431,7 +431,6 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     design_matrix[:, -1] = exp_drift
     return design_matrix
 
-
 def _pipe(d_mat, run, base_condition_idxs, mion, auto_conv, tr, pid):
     """
     Single thread worker dispatch function.

@@ -1,4 +1,6 @@
 import multiprocessing
+import pickle
+import typing
 
 import pandas
 import pandas as pd
@@ -631,29 +633,75 @@ def create_load_ima_order_map(source):
     print("Successfully saved ima to order number mapping json at", omap_path)
     return omap_path
 
+def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
+                                         base_conditions, sess_dir, sess_name, paradigm_data):
+    design_matrices = []
+    print("Stimuli orders are defined manually at runtime for this paradigm. "
+          "Please load order csv file (rows are trs, cols are IMAs)")
+    ima_order = pd.read_csv(input_control.dir_input("Path to csv file: "), sep='\t')
+    for c_name, c in ima_order.iteritems():
+        c_name = c_name.strip()
+        if c_name not in ima_order_map:
+            # this ima wasn't used
+            continue
+        clist = c.tolist()
+        # check if integers
+        if False in [str(item).isnumeric() for item in clist]:
+            cond_int = {v.lower().strip(): k for k, v in condition_names.items()}
+            int_clist = []
+            for cond_name in clist:
+                try:
+                    int_cond = int(cond_int[cond_name.lower().strip()])
+                    int_clist.append(int_cond)
+                except KeyError:
+                    print("condition descriptor", cond_name,
+                          "in the runlist did not match any known condition in the paradigm.")
+                    exit(1)
+            clist = int_clist
+        else:
+            clist = [int(c) for c in clist]
 
-def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_filtered.nii.gz'):
+        cond_good = True
+        # check all conditions are present
+        for cond_idx in condition_names.keys():
+            if int(cond_idx) not in clist:
+                print("WARNING: Session", c_name, "does not contain condition", cond_idx, "named",
+                      condition_names[cond_idx], "Analysis including this condition wil be invalid.")
+        if cond_good:
+            design_matrices.append(analysis.design_matrix_from_run_list(clist,
+                                                                        num_conditions,
+                                                                        base_conditions))
+        if sess_name in paradigm_data['order_number_definitions']:
+            paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
+        else:
+            paradigm_data['order_number_definitions'][os.path.basename(sess_dir)] = {c_name: clist}
+    return design_matrices
+
+
+def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_filtered.nii.gz', out_dir=None):
     """
     TODO: Still needs some work with regards to nd design matrices.
-    :param source:
+    :param source: list of lists of runs for each session
     :param paradigm_path:
-    :param ima_order_map_path:
+    :param ima_order_map_path: list of ima order maps for each session
     :param mion:
     :param fname:
     :return:
     """
+    if not (type(source[0]) in (list, tuple)):
+        source = [source]
+    if not (type(ima_order_map_path) in (list, tuple)):
+        ima_order_map_path = [ima_order_map_path]
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
-    with open(ima_order_map_path, 'r') as f:
-        ima_order_map = json.load(f)
+
     if mion is None:
         mion = False
     assert type(mion) is bool
-    sess_dir = os.path.dirname(source[0])
-    design_matrices = []
+
     base_conditions = [paradigm_data['base_case_condition']]
     condition_names = paradigm_data['condition_integerizer']
     block_length = int(paradigm_data['block_length_trs'])
@@ -661,68 +709,43 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     num_conditions = int(paradigm_data['num_conditions'])
     is_block_design = paradigm_data['is_block']
     runtime_order_defs = paradigm_data['is_runtime_defined']
-    sess_name = os.path.basename(sess_dir)
-    if runtime_order_defs:
-        print("Stimuli orders are defined manually at runtime for this paradigm. "
-              "Please load order csv file (rows are trs, cols are IMAs)")
-        ima_order = pd.read_csv(input_control.dir_input("Path to csv file: "), sep='\t')
-        for c_name, c in ima_order.iteritems():
-            c_name = c_name.strip()
-            if c_name not in ima_order_map:
-                # this ima wasn't used
-                continue
-            clist = c.tolist()
-            # check if integers
-            if False in [str(item).isnumeric() for item in clist]:
-                cond_int = {v.lower().strip(): k for k, v in condition_names.items()}
-                int_clist = []
-                for cond_name in clist:
-                    try:
-                        int_cond = int(cond_int[cond_name.lower().strip()])
-                        int_clist.append(int_cond)
-                    except KeyError:
-                        print("condition descriptor", cond_name,
-                              "in the runlist did not match any known condition in the paradigm.")
-                        exit(1)
-                clist = int_clist
-            else:
-                clist = [int(c) for c in clist]
+    design_matrices = []
+    complete_source = []
+    for i, session_imas in enumerate(ima_order_map_path):
+        with open(session_imas, "r") as f:
+            ima_order_map = json.load(f)
+        sess_dir = os.path.dirname(source[i][0])
+        sess_name = os.path.basename(sess_dir)
+        complete_source += source[i]
+        if runtime_order_defs:
+            sess_dms = _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
+                                                            base_conditions, sess_dir, sess_name, paradigm_data)
+            with open(paradigm_path, 'w') as f:
+                json.dump(paradigm_data, f, indent=4)
+            design_matrices += sess_dms
 
-            cond_good = True
-            # check all conditions are present
-            for cond_idx in condition_names.keys():
-                if int(cond_idx) not in clist:
-                    print("WARNING: Session", c_name, "does not contain condition", cond_idx, "named",
-                          condition_names[cond_idx], "Analysis including this condition wil be invalid.")
-            if cond_good:
-                design_matrices.append(analysis.design_matrix_from_run_list(clist,
-                                                                        num_conditions,
-                                                                        base_conditions))
-            if sess_name in paradigm_data['order_number_definitions']:
-                paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
-            else:
-                paradigm_data['order_number_definitions'][os.path.basename(sess_dir)] = {c_name: clist}
-        with open(paradigm_path, 'w') as f:
-            json.dump(paradigm_data, f, indent=4)
-
-    else:
-        for run_dir in source:
-            ima = os.path.basename(run_dir).strip()
-            order_num = ima_order_map[ima]
-            order = list(paradigm_data['order_number_definitions'][str(order_num)])
-            if is_block_design:
-                design_matrix = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
-                                                                      base_conditions,
-                                                                      condition_names=list(condition_names.values()),
-                                                                      tr_length=3.)
-            else:
-                design_matrix = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions)
-            design_matrices.append(design_matrix)
+        else:
+            sess_dms = []
+            for run_dir in source:
+                ima = os.path.basename(run_dir).strip()
+                order_num = ima_order_map[ima]
+                order = list(paradigm_data['order_number_definitions'][str(order_num)])
+                if is_block_design:
+                    sess_dm = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
+                                                                          base_conditions,
+                                                                          condition_names=list(condition_names.values()),
+                                                                          tr_length=3.)
+                else:
+                    sess_dm = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions)
+                sess_dms.append(sess_dm)
+            design_matrices += sess_dms
 
     print("using mion: ", mion)
     print('source fname: ', fname)
-    glm_path = analysis.nilearn_glm(source, design_matrices, base_conditions,
-                                    output_dir=sess_dir, fname=fname, mion=mion, tr_length=3.)
+    if out_dir is None:
+        out_dir = os.path.dirname(source[0][0])
+    glm_path = analysis.nilearn_glm(complete_source, design_matrices, base_conditions,
+                                    output_dir=out_dir, fname=fname, mion=mion, tr_length=3.)
     # out_paths, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
     #                                                       fname=fname, mion=mion, use_python_mp=False, auto_conv=False,
     #                                                       tr=3)
@@ -748,7 +771,7 @@ def create_contrast(beta_path, paradigm_path, drift_regressors=4):
     return contrast_paths
 
 
-def construct_complete_beta_file(para):
+def construct_subject_glm(para, mion=True):
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
@@ -760,38 +783,29 @@ def construct_complete_beta_file(para):
         proj_config = json.load(f)
     para_name = paradigm_data['name']
     sessions_dict = proj_config['data_map'][paradigm_data['name']][subject]
-    total_runs = 0
-    total_affine = None
-    total_beta = None
-    header = None
+
     if len(sessions_dict) == 0:
-        print("No Betas Have Been Promoted From Session to Subject Level.")
+        print("No Runs Have Been Promoted From Session to Subject Level.")
         return None, None
-    all_beta_runs = []
+    sources = []
+    ima_order_maps = []
+    total_runs = 0
     for key in sessions_dict:
         session_betas = sessions_dict[key]['beta_file']
         imas = sessions_dict[key]['imas_used']
+        sources.append([])
+        ima_order_maps.append([])
         for ima in imas:
-            session_path = os.path.join(os.path.dirname(session_betas), str(ima), "reg_run_beta.nii.gz")
-            try:
-                beta = nibabel.load(session_path)
-            except (FileNotFoundError, FileExistsError):
-                continue
-            local_beta = np.array(beta.get_fdata())
-            local_beta = (local_beta - local_beta[:, :, :, 1:].mean())
-            all_beta_runs.append(local_beta)
-            if total_beta is None:
-                total_affine = beta.affine
-                header = beta.header
+            session_path = os.path.join(os.path.dirname(session_betas), str(ima))
+            ima_map_path = os.path.join(session_path, "ima_order_map.json")
+            sources[-1].append(session_path)
+            ima_order_maps[-1].append(ima_map_path)
             total_runs += 1
-
-    total_path = os.path.relpath(os.path.join(subj_root, 'analysis', para_name + '_subject_betas.nii'), project_root)
-    subject_betas = np.stack(all_beta_runs)
-    subject_betas = subject_betas.mean(axis=0) / subject_betas[:, :, :, :, 1:].flatten().std()
-    total_nii = nibabel.Nifti1Image(subject_betas, affine=total_affine, header=header)
-    nibabel.save(total_nii, total_path)
-    print('Constructed subject beta matrix for paradigm', para_name, 'using ', total_runs, ' individual runs')
-    return total_path
+    total_path = os.path.relpath(os.path.join(subj_root, 'analysis', "subject_glm.pkl"), project_root)
+    glm_path = get_beta_matrix(sources, ima_order_maps, para, mion=mion, fname='reg_epi_masked.nii', out_dir=total_path)
+    print('Constructed subject beta matrix for paradigm', para_name, 'using', len(ima_order_maps), "sessions and",
+          total_runs, ' individual runs')
+    return glm_path
 
 
 def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *argv):
