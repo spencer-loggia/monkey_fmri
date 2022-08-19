@@ -587,6 +587,17 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
     return avg_contrasts, out_paths
 
 
+def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, output_dir):
+    glm = pickle.load(open(glm_model_path, "rb"))
+    out_paths = []
+    for i, contrast in enumerate(contrast_matrix.T):
+        contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type='z_score')
+        out_path = os.path.join(output_dir, contrast_descriptors[i])
+        nib.save(contrast_nii, out_path)
+        out_paths.append(out_path)
+    return out_paths
+
+
 def _find_scale_factor(high_res: np.ndarray, low_res: np.ndarray):
     """
     Computes the amount to scale one matrix to match the dims of another

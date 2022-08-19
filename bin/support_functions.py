@@ -730,17 +730,20 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     return glm_path
 
 
-def create_contrast(beta_path, paradigm_path):
+def create_contrast(beta_path, paradigm_path, drift_regressors=4):
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
     sess_dir = os.path.relpath(os.path.dirname(beta_path), project_root)
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
-        contrast_def = np.array(paradigm_data['desired_contrasts'], dtype=float).T
     contrast_descriptions = paradigm_data['contrast_descriptions']
-
-    _, contrast_paths = analysis.create_contrasts(beta_path, contrast_def, contrast_descriptions, output_dir=sess_dir)
+    base_case = paradigm_data["base_case_condition"]
+    contrast_def = list(zip(*paradigm_data['desired_contrasts']))
+    contrast_def = np.array([c for i, c in enumerate(contrast_def) if i != base_case], dtype=float)
+    print(contrast_def.shape)
+    contrast_def = np.pad(contrast_def, ((0, drift_regressors), (0, 0)), constant_values=((0, 0), (0, 0)))
+    contrast_paths = analysis.nilearn_contrasts(beta_path, contrast_def, contrast_descriptions, output_dir=sess_dir)
     print("contrasts created at: " + str(contrast_paths))
     return contrast_paths
 
