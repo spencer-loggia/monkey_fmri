@@ -712,18 +712,22 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
             order = list(paradigm_data['order_number_definitions'][str(order_num)])
             if is_block_design:
                 design_matrix = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
-                                                                  base_conditions)
+                                                                      base_conditions,
+                                                                      condition_names=list(condition_names.values()),
+                                                                      tr_length=3.)
             else:
                 design_matrix = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions)
             design_matrices.append(design_matrix)
 
     print("using mion: ", mion)
     print('source fname: ', fname)
-    out_paths, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
-                                                          fname=fname, mion=mion, use_python_mp=False, auto_conv=False,
-                                                          tr=3)
+    glm_path = analysis.nilearn_glm(source, design_matrices, base_conditions,
+                                    output_dir=sess_dir, fname=fname, mion=mion, tr_length=3.)
+    # out_paths, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
+    #                                                       fname=fname, mion=mion, use_python_mp=False, auto_conv=False,
+    #                                                       tr=3)
     print("Run Level Beta Coefficient Matrices Created")
-    return out_paths
+    return glm_path
 
 
 def create_contrast(beta_path, paradigm_path):

@@ -368,7 +368,7 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
 
 
 def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int],
-                                 base_conditions_idxs: List[int], condition_names: List[str], tr_length=3, mion=True):
+                                 base_conditions_idxs: List[int], condition_names: List[str], tr_length=3, mion=True, showdm=False):
     """
     Creates as num_conditions x time onehot encoded matrix from an order number definition
     :param block_length:
@@ -384,17 +384,23 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
               "duration": []}
     for i in range(num_blocks):
         active_condition = order[i % k]
+        if active_condition in base_conditions_idxs:
+            # skip conditions that are baseline
+            continue
         cond_name = condition_names[active_condition]
         timing["trial_type"].append(cond_name)
         timing["onset"].append(i * block_length * tr_length)
-        timing["duration"].append(block_length)
+        timing["duration"].append(block_length * 3)
     frames = np.arange(num_blocks * block_length) * tr_length
     time_df = pd.DataFrame.from_dict(timing)
     if mion:
-        hrf = mion_hrf(float(tr_length))
+        hrf = "mion"
     else:
-        hrf = spm_time_derivative(float(tr_length))
+        hrf = "spm + derivative"
     dm = first_level.make_first_level_design_matrix(frames, time_df, hrf, drift_model="polynomial", drift_order=3)
+    if showdm:
+        plt.imshow(dm, aspect=.2)
+        plt.show()
     return dm
 
 
@@ -516,9 +522,9 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
 
 def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, tr_length=3.):
     if mion:
-        hrf = mion_hrf(tr_length)
+        hrf = "mion"
     else:
-        hrf = spm_time_derivative(tr_length)
+        hrf = "spm + derivative"
     tmp_dir = './tmp_glm_cache'
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
