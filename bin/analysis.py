@@ -1,6 +1,7 @@
 import copy
 import math
 import multiprocessing
+import traceback
 
 import os
 import pickle
@@ -397,7 +398,18 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         hrf = "mion"
     else:
         hrf = "spm + derivative"
-    dm = first_level.make_first_level_design_matrix(frames, time_df, hrf, drift_model="polynomial", drift_order=3)
+    svd_converge = False
+    trys = 0
+    while not svd_converge and trys < 4:
+        try:
+            dm = first_level.make_first_level_design_matrix(frames, time_df, hrf, drift_model='polynomial', drift_order=2)
+            svd_converge = True
+        except ValueError:
+            trys += 1
+            continue
+    if not svd_converge:
+        print("DM creation failed")
+        exit(2)
     if showdm:
         plt.imshow(dm, aspect=.2)
         plt.show()
@@ -535,12 +547,12 @@ def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_con
                 smoothing_fwhm=1.,
                 verbose=True,
                 n_jobs=multiprocessing.cpu_count() - 1,
-                noise_model='ols',
+                noise_model='ar1',
                 memory=tmp_dir
         )
     epis = [nib.load(os.path.join(run_dir, fname)) for run_dir in run_dirs]
     fmri_glm = fmri_glm.fit(epis, design_matrices=design_matrices)
-    glm_path = os.path.join(output_dir, "glm_model")
+    glm_path = os.path.join(output_dir, "glm_model.pkl")
     with open(glm_path, "wb") as f:
         pickle.dump(fmri_glm, f)
     return glm_path
@@ -591,7 +603,7 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
     out_paths = []
     for i, contrast in enumerate(contrast_matrix.T):
         contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type='z_score')
-        out_path = os.path.join(output_dir, contrast_descriptors[i])
+        out_path = os.path.join(output_dir, contrast_descriptors[i] + '.nii')
         nib.save(contrast_nii, out_path)
         out_paths.append(out_path)
     return out_paths

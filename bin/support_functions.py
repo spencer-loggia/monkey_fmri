@@ -268,6 +268,11 @@ def apply_warp_4d(source, vol_in_target_space, forward_gross_transform_path=None
                       fine_transform_path=fine_transform_path, type_code=3, dim=3)
 
 
+def apply_warp_4d_refactor(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None, fname='moco.nii.gz'):
+    gg_source = [os.path.join(f, fname) for f in source]
+    apply_warp_4d(gg_source, vol_in_target_space, forward_gross_transform_path, fine_transform_path)
+    return source
+
 def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, out=None):
     """
     :param source:
@@ -311,7 +316,7 @@ def apply_warp_inverse_vol_roi_dir(ds_vol_roi_dict, vol_in_target_space, forward
     return func_space_rois_dict
 
 
-def apply_binary_mask_functional(source, mask, fname='moco.nii.gz'):
+def apply_binary_mask_functional(source, mask, fname='reg_moco.nii.gz'):
     for run_dir in source:
         src_nii = nibabel.load(os.path.join(run_dir, fname))
         mask_nii = nibabel.load(mask)
@@ -633,6 +638,7 @@ def create_load_ima_order_map(source):
     print("Successfully saved ima to order number mapping json at", omap_path)
     return omap_path
 
+
 def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
                                          base_conditions, sess_dir, sess_name, paradigm_data):
     design_matrices = []
@@ -678,9 +684,8 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
     return design_matrices
 
 
-def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_filtered.nii.gz', out_dir=None):
+def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii', out_dir=None):
     """
-    TODO: Still needs some work with regards to nd design matrices.
     :param source: list of lists of runs for each session
     :param paradigm_path:
     :param ima_order_map_path: list of ima order maps for each session
@@ -726,7 +731,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
 
         else:
             sess_dms = []
-            for run_dir in source:
+            for run_dir in source[i]:
                 ima = os.path.basename(run_dir).strip()
                 order_num = ima_order_map[ima]
                 order = list(paradigm_data['order_number_definitions'][str(order_num)])
@@ -753,7 +758,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     return glm_path
 
 
-def create_contrast(beta_path, paradigm_path, drift_regressors=4):
+def create_contrast(beta_path, paradigm_path, drift_regressors=3):
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
@@ -794,18 +799,20 @@ def construct_subject_glm(para, mion=True):
         session_betas = sessions_dict[key]['beta_file']
         imas = sessions_dict[key]['imas_used']
         sources.append([])
-        ima_order_maps.append([])
+        ima_order_maps.append(os.path.join(os.path.dirname(session_betas), "ima_order_map.json"))
         for ima in imas:
             session_path = os.path.join(os.path.dirname(session_betas), str(ima))
-            ima_map_path = os.path.join(session_path, "ima_order_map.json")
             sources[-1].append(session_path)
-            ima_order_maps[-1].append(ima_map_path)
             total_runs += 1
-    total_path = os.path.relpath(os.path.join(subj_root, 'analysis', "subject_glm.pkl"), project_root)
-    glm_path = get_beta_matrix(sources, ima_order_maps, para, mion=mion, fname='reg_epi_masked.nii', out_dir=total_path)
+    total_path = os.path.relpath(os.path.join(subj_root, 'analysis'), project_root)
+    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii', out_dir=total_path)
     print('Constructed subject beta matrix for paradigm', para_name, 'using', len(ima_order_maps), "sessions and",
           total_runs, ' individual runs')
     return glm_path
+
+
+def beta_from_glm():
+    raise NotImplementedError
 
 
 def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *argv):
