@@ -1,4 +1,6 @@
 import multiprocessing
+import pickle
+import typing
 
 import pandas
 import pandas as pd
@@ -20,9 +22,11 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from cycler import cycler
+
 matplotlib.rcParams['axes.prop_cycle'] = cycler(color='brgcmyk')
 
 from subprocess import call
+
 
 # subject support function must be operating with working directory appropriately set
 
@@ -58,10 +62,11 @@ def include_patterns(*patterns):
 
     return _ignore_patterns
 
-def get_images(null,*argv):
+
+def get_images(null, *argv):
     session_id = argv[0]
     subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..','..')
+    project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
     from_dicom = input_control.bool_input("load new images from dicoms?")
     f_dir = preprocess._create_dir_if_needed(subj_root, 'sessions')
@@ -128,7 +133,11 @@ def get_functional_target():
     return os.path.relpath(os.path.join(subj_root, 'mri', 'functional_target.nii'), project_root)
 
 
+<<<<<<< HEAD
 def dilate_mask(inpath,outpath=None, thresh = 0):
+=======
+def dilate_mask(inpath, outpath=None):
+>>>>>>> stable
     """
     Simple function to call fslmath's dilM
     """
@@ -136,12 +145,13 @@ def dilate_mask(inpath,outpath=None, thresh = 0):
     project_root = os.path.join(subj_root, '..', '..')
     if outpath is None:
         filename = os.path.basename(inpath)
-        outname = 'dil_'+filename
-        outpath = os.path.join(os.path.dirname(inpath),outname)
-    cmd = 'fslmaths %s -dilM %s'%(inpath,outpath)
-    call(cmd,shell=True)
+        outname = 'dil_' + filename
+        outpath = os.path.join(os.path.dirname(inpath), outname)
+    cmd = 'fslmaths %s -dilM %s' % (inpath, outpath)
+    call(cmd, shell=True)
     print(cmd)
     if outpath[-3:] != '.gz':
+<<<<<<< HEAD
         outpath = outpath+'.gz'
     mask = nibabel.load(outpath)
     mask_data = np.array(mask.get_fdata())
@@ -150,6 +160,9 @@ def dilate_mask(inpath,outpath=None, thresh = 0):
     mask_data = mask_data.astype(bool)
     new_mask = nibabel.Nifti1Image(dataobj=mask_data, affine=mask.affine, header=mask.header)
     nibabel.save(new_mask, outpath)
+=======
+        outpath = outpath + '.gz'
+>>>>>>> stable
     return outpath
 
 
@@ -179,7 +192,8 @@ def downsample_anatomical(inpath, factor=[2, 2, 2], out_dir=None, affine_scale=N
     return output
 
 
-def downsample_vol_rois(roi_dict, ds_roi_dict, factor=[2, 2, 2], affine_scale=None, resample='nearest', output_dir=None):
+def downsample_vol_rois(roi_dict, ds_roi_dict, factor=[2, 2, 2], affine_scale=None, resample='nearest',
+                        output_dir=None):
     options = list(roi_dict)
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
@@ -189,11 +203,14 @@ def downsample_vol_rois(roi_dict, ds_roi_dict, factor=[2, 2, 2], affine_scale=No
     roi_set_path = roi_dict[roi_set_name]
     factor = input_control.int_list_input("Enter the scale factor (x y z):")
     if output_dir is None:
-        output_dir = os.path.relpath(preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set_name), 'ds_roi_vols'), project_root)
+        output_dir = os.path.relpath(
+            preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set_name), 'ds_roi_vols'),
+            project_root)
     for roi_file in os.listdir(roi_set_path):
         if '.nii' in roi_file:
             out = os.path.join(output_dir, roi_file)
-            preprocess.create_low_res_anatomical(roi_set_path, roi_file, out, factor=factor, affine_scale=affine_scale, resample=resample)
+            preprocess.create_low_res_anatomical(roi_set_path, roi_file, out, factor=factor, affine_scale=affine_scale,
+                                                 resample=resample)
     ds_roi_dict[roi_set_name] = output_dir
     return ds_roi_dict
 
@@ -205,7 +222,8 @@ def downsample_vol_rois_cmdline_wrap(dir, factor=[2, 2, 2], affine_scale=None, r
     factor = input_control.int_list_input("Enter the scale factor (x y z):")
     roi_dict = {os.path.basename(dir): dir}
     out_dict = {}
-    return downsample_vol_rois(roi_dict, out_dict, factor=factor, affine_scale=affine_scale, resample=resample, output_dir=output_dir)
+    return downsample_vol_rois(roi_dict, out_dict, factor=factor, affine_scale=affine_scale, resample=resample,
+                               output_dir=output_dir)
 
 
 def bandpass_wrapper(functional_dirs, paradigm_path):
@@ -230,11 +248,11 @@ def coreg_wrapper(source_space_vol_path, target_space_vol_path, full=False):
     os.chdir(project_root)
     out = os.path.join(os.path.dirname(source_space_vol_path), 'coreg_3df.nii')
     return tuple([os.path.relpath(f, project_root) for f in preprocess.antsCoReg(os.path.abspath(target_space_vol_path),
-                                                                           os.path.abspath(source_space_vol_path),
-                                                                           outP=os.path.abspath(out),
-                                                                           ltrns=['Affine', 'SyN'],
-                                                                           n_jobs=2,
-                                                                           full=full)])
+                                                                                 os.path.abspath(source_space_vol_path),
+                                                                                 outP=os.path.abspath(out),
+                                                                                 ltrns=['Affine', 'SyN'],
+                                                                                 n_jobs=2,
+                                                                                 full=full)])
 
 
 def _apply_warp_wrapper(s, vol, out, transforms, interp, type_code, dim, invert, project_root):
@@ -243,7 +261,12 @@ def _apply_warp_wrapper(s, vol, out, transforms, interp, type_code, dim, invert,
     return os.path.relpath(out, project_root)
 
 
+<<<<<<< HEAD
 def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None, interp='Linear', type_code=0, dim=3):
+=======
+def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None, type_code=0,
+               dim=3, interp='Linear'):
+>>>>>>> stable
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
@@ -252,14 +275,14 @@ def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, f
     transforms = [fine_transform_path, forward_gross_transform_path]
     transforms = [t for t in transforms if t is not None]
     to_invert = [False] * len(transforms)
-    args = [source, [vol_in_target_space]*len(source),
+    args = [source, [vol_in_target_space] * len(source),
             [os.path.join(os.path.dirname(s), 'reg_' + os.path.basename(s)) for s in source],
-            [transforms]*len(source),
-            [interp]*len(source),
-            [type_code]*len(source),
-            [dim]*len(source),
-            [to_invert]*len(source),
-            [project_root]*len(source)
+            [transforms] * len(source),
+            [interp] * len(source),
+            [type_code] * len(source),
+            [dim] * len(source),
+            [to_invert] * len(source),
+            [project_root] * len(source)
             ]
     args = list(zip(*args))
     with multiprocessing.Pool(16) as p:
@@ -277,7 +300,15 @@ def apply_warp_4d(source, vol_in_target_space, forward_gross_transform_path=None
                       fine_transform_path=fine_transform_path, interp=interp, type_code=3, dim=3)
 
 
-def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, out=None):
+def apply_warp_4d_refactor(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None,
+                           fname='moco.nii.gz'):
+    gg_source = [os.path.join(f, fname) for f in source]
+    apply_warp_4d(gg_source, vol_in_target_space, forward_gross_transform_path, fine_transform_path)
+    return source
+
+
+def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path,
+                       out=None):
     """
     :param source:
     :param vol_in_target_space:
@@ -293,12 +324,14 @@ def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path
         out = os.path.join(os.path.dirname(vol_in_target_space), 'inverse_trans_' + os.path.basename(source))
     inverse_transforms = [os.path.abspath(forward_gross_transform_path), os.path.abspath(reverse_fine_transform_path)]
     to_invert = [True, False]
-    preprocess.antsApplyTransforms(os.path.abspath(source), os.path.abspath(vol_in_target_space), os.path.abspath(out), inverse_transforms, 'NearestNeighbor',
+    preprocess.antsApplyTransforms(os.path.abspath(source), os.path.abspath(vol_in_target_space), os.path.abspath(out),
+                                   inverse_transforms, 'NearestNeighbor',
                                    img_type_code=0, invertTrans=to_invert)
     return os.path.relpath(out, project_root)
 
 
-def apply_warp_inverse_vol_roi_dir(ds_vol_roi_dict, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, func_space_rois_dict):
+def apply_warp_inverse_vol_roi_dir(ds_vol_roi_dict, vol_in_target_space, forward_gross_transform_path,
+                                   reverse_fine_transform_path, func_space_rois_dict):
     """
     Slated for removal
     :return:
@@ -315,12 +348,13 @@ def apply_warp_inverse_vol_roi_dir(ds_vol_roi_dict, vol_in_target_space, forward
         if '.nii' in roi_file:
             f = os.path.join(roi_set_path, roi_file)
             out = os.path.join(output_dir, roi_file)
-            apply_warp_inverse(f, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path, out=out)
+            apply_warp_inverse(f, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path,
+                               out=out)
     func_space_rois_dict[roi_set_name] = os.path.relpath(output_dir, project_root)
     return func_space_rois_dict
 
 
-def apply_binary_mask_functional(source, mask, fname='moco.nii.gz'):
+def apply_binary_mask_functional(source, mask, fname='reg_moco.nii.gz'):
     for run_dir in source:
         src_nii = nibabel.load(os.path.join(run_dir, fname))
         mask_nii = nibabel.load(mask)
@@ -354,7 +388,8 @@ def create_slice_overlays(function_reg_vol, anatomical, reg_contrasts):
         reg_contrasts = [reg_contrasts]
     for contrast in reg_contrasts:
         out_paths.append(os.path.relpath(analysis.create_slice_maps(function_reg_vol, anatomical, contrast,
-                                                    sig_thresh=sig_thresh, saturation=sig_sat), project_root))
+                                                                    sig_thresh=sig_thresh, saturation=sig_sat),
+                                         project_root))
     return out_paths
 
 
@@ -404,7 +439,9 @@ def _define_contrasts(condition_integerizers, base_index):
     print(
         "Need to define contrasts to preform to continue with analysis. Enter indexes of positive and negative conditions"
         "for each contrast. If multidexed conditions are being used, may enter tuples of indexes. ")
-    print("Recall: conditions are mapped as follows ", ['condition set ' + str(i) + ' : ' + condition_integerizers[cond_int] for i, cond_int in enumerate(condition_integerizers)])
+    print("Recall: conditions are mapped as follows ",
+          ['condition set ' + str(i) + ' : ' + condition_integerizers[cond_int] for i, cond_int in
+           enumerate(condition_integerizers)])
     add_contrast = True
     contrasts = []
     contrast_descriptions = []
@@ -446,7 +483,7 @@ def _order_def_from_nilearn_timing(condition_integerizer):
             for i, cond_name in enumerate(conds):
                 duration = durs[i]
                 cond_idx = cond_int[cond_name]
-                order_def += [cond_idx]*int(duration)
+                order_def += [cond_idx] * int(duration)
             order_def_map[str(order_num)] = order_def
             print(file, "assigned order number", order_num)
     return order_def_map
@@ -524,8 +561,9 @@ def _create_paradigm():
         para_def_dict['condition_integerizer'] = para_def_dict['condition_integerizer'][0]
     else:
         print("WARNING: n-dimmensional condition sets are not fully stable yet.")
-        print("WARNING: When filling in order numbeer maps with multiple order sets - if order definition lengths are not equal, "
-              "the two sets will be overlayed by repeating provided sequence, ignoring specified base case conditions. ")
+        print(
+            "WARNING: When filling in order numbeer maps with multiple order sets - if order definition lengths are not equal, "
+            "the two sets will be overlayed by repeating provided sequence, ignoring specified base case conditions. ")
     if len(num_orders) > 1:
         condition_map = para_def_dict['condition_integerizer'][0]
     else:
@@ -565,7 +603,8 @@ def _create_paradigm():
                 print("Defining order numbers for condition set " + str(order_set_idx))
                 for i in range(num_order):
                     order_def_map[str(i)] = input_control.int_list_input(
-                        'enter the block order if block design, or event sequence if event related for order number ' + str(i))
+                        'enter the block order if block design, or event sequence if event related for order number ' + str(
+                            i))
                 para_def_dict['order_number_definitions'].append(order_def_map)
             if len(num_orders) == 1:
                 para_def_dict['order_number_definitions'] = para_def_dict['order_number_definitions'][0]
@@ -576,7 +615,8 @@ def _create_paradigm():
     good = False
     while not good:
         try:
-            contrasts_id, contrast_desc = _define_contrasts(para_def_dict['condition_integerizer'], para_def_dict['base_case_condition'])
+            contrasts_id, contrast_desc = _define_contrasts(para_def_dict['condition_integerizer'],
+                                                            para_def_dict['base_case_condition'])
         except Exception:
             print("Caught exception. Trying again.... ")
             continue
@@ -643,28 +683,97 @@ def create_load_ima_order_map(source):
     return omap_path
 
 
-def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_filtered.nii.gz'):
+def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
+                                          base_conditions, sess_dir, sess_name, paradigm_data,
+                                          condition_groups, show_dm=True):
+    design_matrices = []
+    print("Stimuli orders are defined manually at runtime for this paradigm. "
+          "Please load order csv file (rows are trs, cols are IMAs)")
+    runlist = os.path.join(sess_dir, "runlist.txt")
+    if os.path.exists(runlist):
+        print("Reading existing ima runlist at", runlist)
+    else:
+        runlist = input_control.dir_input("Path to csv file: ")
+    ima_order = pd.read_csv(runlist, sep='\t')
+    for c_name, c in ima_order.iteritems():
+        c_name = c_name.strip()
+        if c_name not in ima_order_map:
+            # this ima wasn't used
+            continue
+        clist = c.tolist()
+        # check if integers
+        if False in [str(item).isnumeric() for item in clist]:
+            cond_int = {v.lower().strip(): k for k, v in condition_names.items()}
+            int_clist = []
+            for cond_name in clist:
+                try:
+                    int_cond = int(cond_int[cond_name.lower().strip()])
+                    int_clist.append(int_cond)
+                except KeyError:
+                    print("condition descriptor", cond_name,
+                          "in the runlist did not match any known condition in the paradigm.")
+                    exit(1)
+            clist = int_clist
+        else:
+            clist = [int(c) for c in clist]
+
+        cond_good = True
+        # check all conditions are present
+        missing_conds = []
+        for cond_idx in condition_names.keys():
+            if int(cond_idx) not in clist:
+                print("WARNING: Session", c_name, "does not contain condition", cond_idx, "named",
+                      condition_names[cond_idx], "Analysis including this condition wil be invalid.")
+                missing_conds.append((cond_idx, condition_names[cond_idx]))
+        if cond_good:
+            dm = analysis.design_matrix_from_run_list(clist, num_conditions, base_conditions, condition_names,
+                                                      condition_groups, tr_length=3., mion=True)
+            for idx, name in missing_conds:
+                dm.insert(int(idx), name, 0)
+            # reorder design matrix
+            cols = list(dm.columns)
+            if condition_groups is None:
+                cond_names_list = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_conditions]
+            else:
+                cond_names_list = list(condition_groups.keys())
+            for i, cn in enumerate(cond_names_list):
+                cols[i] = cn
+            dm = dm[cols]
+            if show_dm:
+                plt.imshow(dm, aspect=.1)
+                plt.show()
+            design_matrices.append(dm)
+        if sess_name in paradigm_data['order_number_definitions']:
+            paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
+        else:
+            paradigm_data['order_number_definitions'][os.path.basename(sess_dir)] = {c_name: clist}
+
+    return design_matrices
+
+
+def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii', out_dir=None):
     """
-    TODO: Still needs some work with regards to nd design matrices.
-    :param source:
+    :param source: list of lists of runs for each session
     :param paradigm_path:
-    :param ima_order_map_path:
+    :param ima_order_map_path: list of ima order maps for each session
     :param mion:
     :param fname:
     :return:
     """
+    if not (type(source[0]) in (list, tuple)):
+        source = [source]
+    if not (type(ima_order_map_path) in (list, tuple)):
+        ima_order_map_path = [ima_order_map_path]
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
-    with open(ima_order_map_path, 'r') as f:
-        ima_order_map = json.load(f)
+
     if mion is None:
         mion = False
     assert type(mion) is bool
-    sess_dir = os.path.dirname(source[0])
-    design_matrices = []
+
     base_conditions = [paradigm_data['base_case_condition']]
     condition_names = paradigm_data['condition_integerizer']
     block_length = int(paradigm_data['block_length_trs'])
@@ -672,69 +781,53 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     num_conditions = int(paradigm_data['num_conditions'])
     is_block_design = paradigm_data['is_block']
     runtime_order_defs = paradigm_data['is_runtime_defined']
-    sess_name = os.path.basename(sess_dir)
-    if runtime_order_defs:
-        print("Stimuli orders are defined manually at runtime for this paradigm. "
-              "Please load order csv file (rows are trs, cols are IMAs)")
-        ima_order = pd.read_csv(input_control.dir_input("Path to csv file: "), sep='\t')
-        for c_name, c in ima_order.iteritems():
-            c_name = c_name.strip()
-            if c_name not in ima_order_map:
-                # this ima wasn't used
-                continue
-            clist = c.tolist()
-            # check if integers
-            if False in [str(item).isnumeric() for item in clist]:
-                cond_int = {v.lower().strip(): k for k, v in condition_names.items()}
-                int_clist = []
-                for cond_name in clist:
-                    try:
-                        int_cond = int(cond_int[cond_name.lower().strip()])
-                        int_clist.append(int_cond)
-                    except KeyError:
-                        print("condition descriptor", cond_name,
-                              "in the runlist did not match any known condition in the paradigm.")
-                        exit(1)
-                clist = int_clist
-            else:
-                clist = [int(c) for c in clist]
+    condition_groups = None
+    if 'condition_groups' in paradigm_data:
+        condition_groups = paradigm_data['condition_groups']
+    design_matrices = []
+    complete_source = []
+    for i, session_imas in enumerate(ima_order_map_path):
+        with open(session_imas, "r") as f:
+            ima_order_map = json.load(f)
+        sess_dir = os.path.dirname(source[i][0])
+        sess_name = os.path.basename(sess_dir)
+        complete_source += source[i]
+        if runtime_order_defs:
+            sess_dms = _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
+                                                             base_conditions, sess_dir, sess_name, paradigm_data, condition_groups)
+            with open(paradigm_path, 'w') as f:
+                json.dump(paradigm_data, f, indent=4)
+            design_matrices += sess_dms
 
-            cond_good = True
-            # check all conditions are present
-            for cond_idx in condition_names.keys():
-                if int(cond_idx) not in clist:
-                    print("WARNING: Session", c_name, "does not contain condition", cond_idx, "named",
-                          condition_names[cond_idx], "Analysis including this condition wil be invalid.")
-            if cond_good:
-                design_matrices.append(analysis.design_matrix_from_run_list(clist,
-                                                                        num_conditions,
-                                                                        base_conditions))
-            if sess_name in paradigm_data['order_number_definitions']:
-                paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
-            else:
-                paradigm_data['order_number_definitions'][os.path.basename(sess_dir)] = {c_name: clist}
-        with open(paradigm_path, 'w') as f:
-            json.dump(paradigm_data, f, indent=4)
-
-    else:
-        for run_dir in source:
-            ima = os.path.basename(run_dir).strip()
-            order_num = ima_order_map[ima]
-            order = list(paradigm_data['order_number_definitions'][str(order_num)])
-            if is_block_design:
-                design_matrix = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
-                                                                  base_conditions)
-            else:
-                design_matrix = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions)
-            design_matrices.append(design_matrix)
+        else:
+            sess_dms = []
+            for run_dir in source[i]:
+                ima = os.path.basename(run_dir).strip()
+                order_num = ima_order_map[ima]
+                order = list(paradigm_data['order_number_definitions'][str(order_num)])
+                if is_block_design:
+                    sess_dm = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
+                                                                    base_conditions,
+                                                                    condition_names=condition_names,
+                                                                    tr_length=3.,
+                                                                    mion=mion)
+                else:
+                    sess_dm = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions,
+                                                                   condition_names, tr_length=3., mion=mion)
+                sess_dms.append(sess_dm)
+            design_matrices += sess_dms
 
     print("using mion: ", mion)
     print('source fname: ', fname)
-    out_paths, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
-                                                          fname=fname, mion=mion, use_python_mp=False, auto_conv=False,
-                                                          tr=3)
+    if out_dir is None:
+        out_dir = os.path.dirname(source[0][0])
+    glm_path = analysis.nilearn_glm(complete_source, design_matrices, base_conditions,
+                                    output_dir=out_dir, fname=fname, mion=mion, tr_length=3.)
+    # out_paths, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
+    #                                                       fname=fname, mion=mion, use_python_mp=False, auto_conv=False,
+    #                                                       tr=3)
     print("Run Level Beta Coefficient Matrices Created")
-    return out_paths
+    return glm_path
 
 
 def create_contrast(beta_path, paradigm_path):
@@ -744,15 +837,16 @@ def create_contrast(beta_path, paradigm_path):
     sess_dir = os.path.relpath(os.path.dirname(beta_path), project_root)
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
-        contrast_def = np.array(paradigm_data['desired_contrasts'], dtype=float).T
     contrast_descriptions = paradigm_data['contrast_descriptions']
-
-    _, contrast_paths = analysis.create_contrasts(beta_path, contrast_def, contrast_descriptions, output_dir=sess_dir)
+    base_case = paradigm_data["base_case_condition"]
+    contrast_def = list(zip(*paradigm_data['desired_contrasts']))
+    contrast_def = np.array([c for i, c in enumerate(contrast_def) if i != base_case], dtype=float)
+    contrast_paths = analysis.nilearn_contrasts(beta_path, contrast_def, contrast_descriptions, output_dir=sess_dir)
     print("contrasts created at: " + str(contrast_paths))
     return contrast_paths
 
 
-def construct_complete_beta_file(para):
+def construct_subject_glm(para, mion=True):
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
@@ -764,38 +858,31 @@ def construct_complete_beta_file(para):
         proj_config = json.load(f)
     para_name = paradigm_data['name']
     sessions_dict = proj_config['data_map'][paradigm_data['name']][subject]
-    total_runs = 0
-    total_affine = None
-    total_beta = None
-    header = None
+
     if len(sessions_dict) == 0:
-        print("No Betas Have Been Promoted From Session to Subject Level.")
+        print("No Runs Have Been Promoted From Session to Subject Level.")
         return None, None
-    all_beta_runs = []
+    sources = []
+    ima_order_maps = []
+    total_runs = 0
     for key in sessions_dict:
         session_betas = sessions_dict[key]['beta_file']
         imas = sessions_dict[key]['imas_used']
+        sources.append([])
+        ima_order_maps.append(os.path.join(os.path.dirname(session_betas), "ima_order_map.json"))
         for ima in imas:
-            session_path = os.path.join(os.path.dirname(session_betas), str(ima), "reg_run_beta.nii.gz")
-            try:
-                beta = nibabel.load(session_path)
-            except (FileNotFoundError, FileExistsError):
-                continue
-            local_beta = np.array(beta.get_fdata())
-            local_beta = (local_beta - local_beta[:, :, :, 1:].mean())
-            all_beta_runs.append(local_beta)
-            if total_beta is None:
-                total_affine = beta.affine
-                header = beta.header
+            session_path = os.path.join(os.path.dirname(session_betas), str(ima))
+            sources[-1].append(session_path)
             total_runs += 1
+    total_path = os.path.relpath(os.path.join(subj_root, 'analysis'), project_root)
+    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii', out_dir=total_path)
+    print('Constructed subject beta matrix for paradigm', para_name, 'using', len(ima_order_maps), "sessions and",
+          total_runs, ' individual runs')
+    return glm_path
 
-    total_path = os.path.relpath(os.path.join(subj_root, 'analysis', para_name + '_subject_betas.nii'), project_root)
-    subject_betas = np.stack(all_beta_runs)
-    subject_betas = subject_betas.mean(axis=0) / subject_betas[:, :, :, :, 1:].flatten().std()
-    total_nii = nibabel.Nifti1Image(subject_betas, affine=total_affine, header=header)
-    nibabel.save(total_nii, total_path)
-    print('Constructed subject beta matrix for paradigm', para_name, 'using ', total_runs, ' individual runs')
-    return total_path
+
+def beta_from_glm():
+    raise NotImplementedError
 
 
 def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *argv):
@@ -820,7 +907,8 @@ def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *a
     subject = os.path.basename(subj_root)
     with open(proj_config_path, 'r') as f:
         proj_config = json.load(f)
-    session_net_path = os.path.relpath(os.path.join(subj_root, 'sessions', session_id, 'session_net.json'), project_root)
+    session_net_path = os.path.relpath(os.path.join(subj_root, 'sessions', session_id, 'session_net.json'),
+                                       project_root)
 
     session_info = {'imas_used': [os.path.basename(f) for f in functional],
                     'session_net': session_net_path,
@@ -893,10 +981,10 @@ def generate_subject_overlays(para_path, contrast_paths, white_surfs, t1_path, d
             # freesurfer has the dumbest path lookup schema so we have to be careful here
             print(subj_root)
             out_path = analysis.create_contrast_surface(os.path.abspath(white_surfs[i]),
-                                             os.path.abspath(contrast_path),
-                                             os.path.abspath(ds_t1_path),
-                                             os.path.abspath(t1_path),
-                                             hemi=hemi, subject_id='.')
+                                                        os.path.abspath(contrast_path),
+                                                        os.path.abspath(ds_t1_path),
+                                                        os.path.abspath(t1_path),
+                                                        hemi=hemi, subject_id='.')
             out_paths.append(os.path.relpath(out_path, project_root))
     return out_paths, True
 
@@ -944,9 +1032,12 @@ def manual_volume_rois(ds_t1: str, paradigm_complete: bool, ds_vol_rois: dict):
     preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set), 'ds_vol_rois')
     print("Manual ROI labeling on volumes must be done graphically in freeview. \n"
           "1. Open freeview and load " + os.path.abspath(ds_t1) + "\n"
-          "2. Load desired contrast volumes to guide roi creation"
-          "3. create masks for each roi and give an informative name."
-          "4. save the rois in \'" + os.path.join(subj_root, "rois", roi_set, "ds_vol_rois") + "\'")
+                                                                  "2. Load desired contrast volumes to guide roi creation"
+                                                                  "3. create masks for each roi and give an informative name."
+                                                                  "4. save the rois in \'" + os.path.join(subj_root,
+                                                                                                          "rois",
+                                                                                                          roi_set,
+                                                                                                          "ds_vol_rois") + "\'")
     ds_vol_rois[roi_set] = os.path.relpath(os.path.join(subj_root, 'rois', roi_set, 'ds_vol_rois'), project_root)
     input('done? ')
     return ds_vol_rois
@@ -1038,7 +1129,8 @@ def load_white_surfs():
     return surfs
 
 
-def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, output, deconv_weight, fname='epi_masked') -> np.ndarray:
+def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, output, deconv_weight,
+                               fname='epi_masked') -> np.ndarray:
     """
     This method is not used by current control flow module, but kept cause it kinda cool.
     The defualt maximal dynamic regressor does produce a deconv npy file to be used with this
@@ -1056,7 +1148,8 @@ def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, o
     corrected_arr = torch.zeros((w, h, d, block_length, num_conditions))
     weight = torch.zeros(len(conditions))
     deconv_weight = torch.from_numpy(deconv_weight)
-    deconv = torch.nn.Conv1d(kernel_size=deconv_weight.shape[0], padding=torch.floor(deconv_weight.shape[0] / 2), in_channels=1, out_channels=1, bias=False)
+    deconv = torch.nn.Conv1d(kernel_size=deconv_weight.shape[0], padding=torch.floor(deconv_weight.shape[0] / 2),
+                             in_channels=1, out_channels=1, bias=False)
     deconv.weight = torch.nn.Parameter(deconv_weight, requires_grad=False)
     for func_dir in functional_dirs:
         ima = os.path.basename(func_dir)
@@ -1065,14 +1158,16 @@ def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, o
         func_nii = nibabel.load(os.path.join(func_dir, fname))
         func_data = func_nii.get_fdata()
         shape = func_data.shape
-        func_data = torch.from_numpy(func_data.reshape(w * h * d, 1, -1))  # reshape to voxels (batch), channels, time for use with torch conv operator
+        func_data = torch.from_numpy(func_data.reshape(w * h * d, 1,
+                                                       -1))  # reshape to voxels (batch), channels, time for use with torch conv operator
         func_data = deconv(func_data)
-        func_data = func_data.reshape(list(shape[:3]) + [block_length, len(order)]) # so we can easily index into individual blocks
+        func_data = func_data.reshape(
+            list(shape[:3]) + [block_length, len(order)])  # so we can easily index into individual blocks
         for block, condition in enumerate(order):
             weight[condition] += 1
             corrected_arr[:, :, :, :, condition] += func_data[:, :, :, :, block]
     corrected_arr = (corrected_arr.T / weight[:, None, None, None, None]).T
-    corrected_arr = corrected_arr.reshape((w, h, d, block_length * num_conditions)) # reshape to real functional
+    corrected_arr = corrected_arr.reshape((w, h, d, block_length * num_conditions))  # reshape to real functional
     corrected_arr = corrected_arr.numpy()
     corrected_nii = nibabel.Nifti1Image(corrected_arr, affine=func_nii.affine, header=func_nii.header)
     nibabel.save(corrected_nii, output)
@@ -1166,7 +1261,8 @@ def time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradig
     post_offset_trs = post_offset_blocks * block_length
     para_name = paradigm_data['name']
     output = os.path.relpath(
-        os.path.join(output_dir, para_name + '_condition_' + conditions[str(target_condition)] + '_timecourse_comparison.nii'),
+        os.path.join(output_dir,
+                     para_name + '_condition_' + conditions[str(target_condition)] + '_timecourse_comparison.nii'),
         project_root)
     return analysis.get_condition_time_series_comparision(functional_dirs, block_length, ima_order_data, order_def,
                                                           target_condition, output, fname=fname,
@@ -1210,7 +1306,8 @@ def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
     roi_set_name = options[choice_idx]
     roi_dir = vol_rois[roi_set_name]
     conditions = paradigm_data['condition_integerizer']
-    print('select condition(s) of interest for time series comparison (i.e. conditions where divergence from noise is expected)')
+    print(
+        'select condition(s) of interest for time series comparison (i.e. conditions where divergence from noise is expected)')
     coi = []
     cond_opt = list(conditions.values())
     idxs = list(conditions.keys())
@@ -1227,7 +1324,7 @@ def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
             break
     roi_paths = [os.path.join(roi_dir, f) for f in os.listdir(roi_dir) if '.nii' in f]
 
-    #plt init
+    # plt init
     fig, axs = plt.subplots(len(roi_paths))
 
     cond_descs = [conditions[str(i)] for i in coi]
@@ -1242,9 +1339,12 @@ def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
             manual_transform = os.path.join(sess_dir, 'itkManual.txt')
             fine_forward_transform = os.path.join(sess_dir, 'Composite.h5')
             functional_dirs = [os.path.join(sess_dir, str(ima)) for ima in sessions_dict[session_id]['imas_used']]
-            ts_func_path = time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, condition, sess_dir,
-                                                               fname='epi_masked.nii', pre_onset_blocks=pre_block, post_offset_blocks=post_block)
-            ts_func_path = apply_warp(ts_func_path, ds_t1_path, manual_transform, fine_forward_transform, type_code=3, dim=3)
+            ts_func_path = time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data,
+                                                               condition, sess_dir,
+                                                               fname='epi_masked.nii', pre_onset_blocks=pre_block,
+                                                               post_offset_blocks=post_block)
+            ts_func_path = apply_warp(ts_func_path, ds_t1_path, manual_transform, fine_forward_transform, type_code=3,
+                                      dim=3)
             ts_data = nibabel.load(ts_func_path).get_fdata()
             ts_data = ts_data - np.mean(ts_data, axis=3)[:, :, :, None]
 
@@ -1265,7 +1365,7 @@ def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
                     roi_total_ts[i] += ts
         for i, roi_path in enumerate(roi_paths):
             roi_name = os.path.basename(roi_path).split('.')[0]
-            ts_path = os.path.join(ts_dir,  roi_name + '_'.join(cond_descs) + '_condition_ts.npy')
+            ts_path = os.path.join(ts_dir, roi_name + '_'.join(cond_descs) + '_condition_ts.npy')
             ts = roi_total_ts[i] / len(sessions_dict)
             np.save(ts_path, ts)
     fig.suptitle(' '.join(cond_descs) + ' condition vs all time series')
@@ -1279,7 +1379,8 @@ def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
 
 
 def binary_masks_from_int_atlas(atlas: str,
-                                desired_indices:Union[None, List[Union[int, Tuple[int]]]] = None, index_names = None, out_dir = None):
+                                desired_indices: Union[None, List[Union[int, Tuple[int]]]] = None, index_names=None,
+                                out_dir=None):
     """
     takes a integer indexed atlas nifti path and converts it into seperate binary masks. Creates mask for each index in
     desired_indices, or for all indices in the atlas if desired_indices is None. If a desired index is a tuple these will
@@ -1322,7 +1423,8 @@ def binary_masks_from_int_atlas(atlas: str,
     return out_paths
 
 
-def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map, hrf_file, deconvolution_file,  paradigm_file, fname='epi_masked.nii'):
+def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map, hrf_file, deconvolution_file,
+                                 paradigm_file, fname='epi_masked.nii'):
     out_paths = []
     with open(paradigm_file, 'r') as f:
         para_data = json.load(f)
@@ -1344,7 +1446,8 @@ def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map,
     else:
         imas = [None]
         while False in [ima in ima_data and ima_data[ima] == ima_data[imas[0]] for ima in imas]:
-            imas = input_control.int_list_input("enter IMA number of run(s) to use for timeseries. Must use the same order number. ")
+            imas = input_control.int_list_input(
+                "enter IMA number of run(s) to use for timeseries. Must use the same order number. ")
             imas = [str(ima) for ima in imas]
         if len(imas) > 1:
             func = os.path.join(sess_dir, 'avg_func.nii')

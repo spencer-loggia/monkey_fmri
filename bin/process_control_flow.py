@@ -5,8 +5,6 @@ import datetime
 import networkx as nx
 import time
 
-import networkx.exception
-
 import preprocess
 import support_functions
 import analysis
@@ -94,12 +92,7 @@ class BaseControlNet:
             res = fxn(*data_params, self.network.nodes[action_name]['argv'])
         else:
             res = fxn(*data_params)
-        try:
-            bfs_tree = nx.traversal.bfs_tree(self.network, action_name)
-        except nx.exception.NetworkXError:
-            print("resetting, action state has been destroyed...")
-            self.init_head_states()
-            return True
+        bfs_tree = nx.traversal.bfs_tree(self.network, action_name)
         to_remove = set()
         for node, data in bfs_tree.nodes(data=True):
             if 'complete' in data and data['complete'] is True:
@@ -117,13 +110,18 @@ class BaseControlNet:
             self.network.nodes[s]['modified'] = str(datetime.datetime.now())
             if 'complete' in self.network.nodes[s] and self.network.nodes[s]['complete'] is not None:
                 self.network.nodes[s]['complete'] = True
-            try:
-                self.head += [n for n in self.network.successors(s) if False not in
-                              [self.network.nodes[j]['complete'] for j in
-                               self.network.predecessors(n)]]  # add newly available states if their dependencies are met
-            except KeyError:
-                print(self.network.successors(s))
-                exit(-1)
+            for n in self.network.successors(s):
+                comp = True
+                for j in self.network.predecessors(n):
+                    try:
+                        if not self.network.nodes[j]['complete']:
+                            comp = False
+                            break
+                    except KeyError:
+                        print(j)
+                        exit(1)
+                if comp:
+                    self.head.append(n)
         return True
 
     def serialize(self, out_path):
@@ -157,10 +155,23 @@ class BaseControlNet:
         for g_att in loaded_net.graph.keys():
             self.network.graph[g_att] = loaded_net.graph[g_att]
         for n, data in loaded_net.nodes(data=True):
-            if n not in self.network.nodes or "inherit" not in self.network.nodes[n] or not self.network.nodes[n]["inherit"]:
+            if "generated" in data and data["generated"]:
                 self.network.add_node(n, **data)
+            elif n in self.network.nodes:
+                if 'bipartite' not in self.network.nodes[n]:
+                    print(n)
+                    exit()
+                bip = self.network.nodes[n]['bipartite']
+                if bip == 0:
+                    self.network.nodes[n]['data'] = data['data']
+                    self.network.nodes[n]['complete'] = data['complete']
+                elif bip == 1:
+                    if "modified" in data:
+                        self.network.nodes[n]['modified'] = data['modified']
         for s, t, data in loaded_net.edges(data=True):
-            self.network.add_edge(s, t, **data)
+            if s in self.network.nodes and t in self.network.nodes and \
+                    ("generated" in self.network.nodes[s] or "generated" in self.network.nodes[t]):
+                self.network.add_edge(s, t, **data)
         self.init_head_states()
 
 
@@ -211,64 +222,68 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         para_name = para_def_dict['name']
         subj_root = os.environ.get('FMRI_WORK_DIR')
-        self.network.add_node('paradigm_' + para_name, data=None, complete=True, bipartite=0, type='json')
-        self.network.add_node('beta_' + para_name, data=None, complete=False, bipartite=0, type='4d_volume',
+        self.network.add_node('paradigm_' + para_name, data=para_path, complete=True, bipartite=0,
+                              type='json', generated=True, modified=str(datetime.datetime.now()))
+        self.network.add_node('beta_' + para_name, data=None, generated=True, complete=False, bipartite=0, type='4d_volume',
                               space='ds_t1_native')
-        self.network.add_node('registered_contrasts_' + para_name, data=None, complete=False, bipartite=0, type='volume')
-        self.network.add_node('contrasts_' + para_name, data=[], complete=False, bipartite=0, type='volume',
+        self.network.add_node('glm_' + para_name, data=None, complete=False, generated=True, bipartite=0, type='model_object')
+        self.network.add_node('contrasts_' + para_name, data=[], complete=False, generated=True, bipartite=0, type='volume',
                               space='ds_t1_native')
-        self.network.add_node('sigsurfaces_' + para_name, data=[], complete=False, bipartite=0, type='overlay',
+        self.network.add_node('reg_contrasts_' + para_name, data=[], complete=False, generated=True, bipartite=0, type='volume',
+                              space='ds_t1_native')
+        self.network.add_node('sigsurfaces_' + para_name, data=[], complete=False, generated=True, bipartite=0, type='overlay',
                               space='t1_native')
 
-        self.network.add_node('create_' + para_name + '_betas', bipartite=1,
-                              fxn='support_functions.construct_complete_beta_file',
-                              desc="Gets the beta coefficient matrix files from sessions that use the " + para_name +
-                                   " paradigm and have been promoted to subject level, then combines them "
-                                   "(weighted by nuber of runs) intp a single subject level beta coefficient matrix, "
-                                   "which becomes the basis for many different subject level analysis. The beta matrix "
+        self.network.add_node('create_' + para_name + '_glm', generated=True, bipartite=1,
+                              fxn='support_functions.construct_subject_glm',
+                              desc="Trains a GLM using all promoted runs. The resulting beta matrix "
                                    "is designed to capture the information we care about from this experiment, and "
                                    "satisfies the equation (DesignMatrix * hrf) @ BetaMatrix ~= EpiTimeSeries "
-                                   "where * is the convolution operator and @ is matrix multiplication.")
+                                   "where * is the convolution operator and @ is matrix multiplication. We store the "
+                                   "Betas in the GLM object, which also carries information about experiment design and"
+                                   "variance")
 
-        self.network.add_node('create_' + para_name + '_contrasts', bipartite=1,
+        self.network.add_node('create_' + para_name + '_contrasts', generated=True, bipartite=1,
                               fxn='support_functions.create_contrast',
                               desc="Generates the contrasts requested in the paradigm definition using the subjet level "
                                    "beta matrix. Contrasts are a useful tool for comparing activation to two "
                                    "conditions or linear combinations of conditions on a per voxel level. Contrast "
                                    "values are interpreted as Z-scores here. ")
 
-        self.network.add_node('register_' + para_name + '_contrasts', bipartite=1,
-                              fxn='support_functions.apply_warp_4d',
-                              argv='NearestNeighbor',
-                              desc="take a complete beta matrix from all promoted sessions of this paradigm from the"
-                                   " standard functional space to the anatomical space")
-
-        self.network.add_node('create_' + para_name + '_sigsurface_overlays', bipartite=1,
+        self.network.add_node('register_' + para_name + '_contrasts', generated=True, bipartite=1,
+                              fxn='support_functions.apply_warp', desc="registers the contrasts to the anatomical space.")
+        self.network.add_node('create_' + para_name + '_sigsurface_overlays', generated=True, bipartite=1,
                               fxn='support_functions.generate_subject_overlays')
 
-        self.network.add_node('automatic_' + para_name + '_volume_rois', bipartite=1,
+        self.network.add_node("get_" + para_name + "_subject_betas", generated=True, bipartite=1, fxn='support_functions.beta_from_glm',
+                              desc="gets the beta matrix as a nifti from the GLM")
+
+        self.network.add_node('automatic_' + para_name + '_volume_rois', generated=True, bipartite=1,
                               fxn='support_functions.automatic_volume_rois')
-        self.network.add_node('delete_paradigm_' + para_name, bipartite=1, fxn='self.remove_paradigm_control_set')
+        self.network.add_node('delete_paradigm_' + para_name, generated=True, bipartite=1, fxn='self.remove_paradigm_control_set')
 
         self.network.add_edge('add_new_paradigm', 'paradigm_' + para_name, order=0)  # 10
 
-        self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + '_betas', order=0)  # 01
-        self.network.add_edge('create_' + para_name + '_betas', 'beta_' + para_name, order=0)  # 10
+        self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + '_glm', order=0)  # 01
+        self.network.add_edge('create_' + para_name + '_glm', 'glm_' + para_name, order=0)  # 10
 
         self.network.add_edge('paradigm_' + para_name, 'delete_paradigm_' + para_name, order=0)  # 01
+
+        self.network.add_edge('glm_' + para_name, 'create_' + para_name + '_contrasts', order=0)  # 01
+        self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + '_contrasts', order=1)  # 01
+        self.network.add_edge('create_' + para_name + '_contrasts', 'contrasts_' + para_name, order=0)  # 10
 
         self.network.add_edge('contrasts_' + para_name, 'register_' + para_name + '_contrasts', order=0)
         self.network.add_edge('ds_t1_masked', 'register_' + para_name + '_contrasts', order=1)
         self.network.add_edge('manual_transform', 'register_' + para_name + '_contrasts', order=2)
         self.network.add_edge('auto_composite_transform', 'register_' + para_name + '_contrasts', order=3)
-        self.network.add_edge('register_' + para_name + '_contrasts', 'registered_contrasts_' + para_name, order=0)
+        self.network.add_edge('register_' + para_name + '_contrasts', 'reg_contrasts_' + para_name, order=0)
 
-        self.network.add_edge('beta_' + para_name, 'create_' + para_name + '_contrasts', order=0)  # 01
-        self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + '_contrasts', order=1)  # 01
-        self.network.add_edge('create_' + para_name + '_contrasts', 'contrasts_' + para_name, order=0)  # 10
+        self.network.add_edge("glm_" + para_name, "get_" + para_name + "_subject_betas", order=0)
+        self.network.add_edge("get_" + para_name + "_subject_betas", 'beta_' + para_name)
 
         self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + '_sigsurface_overlays', order=0)
-        self.network.add_edge('contrasts_' + para_name, 'create_' + para_name + '_sigsurface_overlays', order=1)
+        self.network.add_edge('reg_contrasts_' + para_name, 'create_' + para_name + '_sigsurface_overlays', order=1)
         self.network.add_edge('white_surfs', 'create_' + para_name + '_sigsurface_overlays', order=2)
         self.network.add_edge('t1', 'create_' + para_name + '_sigsurface_overlays', order=3)
         self.network.add_edge('ds_t1', 'create_' + para_name + '_sigsurface_overlays', order=4)
@@ -376,13 +391,13 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_node('create_functional_representative_mask', fxn='support_functions.apply_warp_inverse',
                               bipartite=1, desc="invert the t1 mask to create a masked functional image")
 
-        self.network.add_node('create_dilated_functional_representative_mask', fxn='support_functions.dilate_mask',
+        self.network.add_node('create_dilated_functional_representative_mask', fxn='support_functions.apply_warp_inverse',
                               bipartite=1, desc="invert the t1 mask to create a masked functional image")
 
         self.network.add_node('dilate_ds_t1_mask', fxn='support_functions.dilate_mask', bipartite=1, desc='dilate the downsampled t1 mask')
 
         # self.network.add_node('mask_functional_rep', fxn='support_functions.apply_binary_mask_vol',
-        #                       desc="Apply the registered mask to the functional (will probobly need to be corrected manually)")
+        #                       desc="Apply the dilated mask to the functional (will probobly need to be corrected manually)")
 
         self.network.add_node('add_new_paradigm', fxn='self.add_paradigm_control_set', bipartite=1)
 
@@ -463,7 +478,10 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_edge('inverse_auto_composite_transform', 'create_functional_representative_mask', order=3)  # 01
         self.network.add_edge('create_functional_representative_mask', 'functional_representative_mask', order=0)  # 10
 
-        self.network.add_edge('functional_representative_mask', 'create_dilated_functional_representative_mask', order=0) # 01
+        self.network.add_edge('dil_ds_t1_mask', 'create_dilated_functional_representative_mask', order=0)  # 01
+        self.network.add_edge('functional_representative', 'create_dilated_functional_representative_mask', order=1)
+        self.network.add_edge('manual_transform', 'create_dilated_functional_representative_mask', order=2)  # 01
+        self.network.add_edge('inverse_auto_composite_transform', 'create_dilated_functional_representative_mask', order=3)  # 01
         self.network.add_edge('create_dilated_functional_representative_mask', 'functional_representative_dil_mask', order=0)  # 10
 
         self.network.add_edge('functional_representative', 'create_masked_functional_rep', order=0)
@@ -517,10 +535,10 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('3d_epi_rep_sphinx', data=None, type='volume', bipartite=0, complete=False,
                               space='epi_native')
 
-        self.network.add_node('functional_std', **func_rep_node, inherit=True)
-        self.network.add_node('functional_std_dil_mask', **functional_rep_dil_mask_node, inherit=True)
-        self.network.add_node('functional_std_mask', **func_rep_mask_node, inherit=True)
-        self.network.add_node('functional_std_masked', **function_rep_masked_node, inherit=True)
+        self.network.add_node('functional_std', **func_rep_node)
+        self.network.add_node('functional_std_dil_mask', **functional_rep_dil_mask_node)
+        self.network.add_node('functional_std_mask', **func_rep_mask_node)
+        self.network.add_node('functional_std_masked', **function_rep_masked_node)
 
         self.network.add_node('manual_reg_epi_rep', data=None, type='volume', bipartite=0, complete=False,
                               space='epi_std_aprox')
@@ -533,29 +551,20 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('inverse_auto_composite_transform', data=None, type='transform', bipartite=0,
                               complete=False, invertable=False, space=('epi_std', 'epi_std_aprox'))
 
-        self.network.add_node('epi_mask', data=None, type='volume', bipartite=0, complete=False, space='epi_native')
-        self.network.add_node('epi_masked', data=[], fname=None, type='time_series', bipartite=0, complete=False,
+        self.network.add_node('reg_epi', data=[], fname=None, type='time_series', bipartite=0, complete=False,
                               space='epi_native')
 
-        self.network.add_node('epi_masked_filtered', data=[], type='time_series', bipartite=0, complete=False,
-                              space='epi_native')
+        self.network.add_node('reg_epi_masked', data=[], fname=None, type='time_series', bipartite=0, complete=False)
 
         self.network.add_node('paradigm', data=None, type='json', bipartite=0, complete=False)
-        self.network.add_node('ima_order_map', type='json', bipartite=0, complete=False)
+        self.network.add_node('ima_order_map', type='json', bipartite=0, complete=False, data=None)
 
-        self.network.add_node('run_beta_matrices', data=[], type='4D_volume', bipartite=0, complete=False,
-                              space='epi_native')
-        self.network.add_node('reg_beta_matrices', data=None, type='4D_volume', bipartite=0, complete=False,
-                              spece='epi_std_aprox')
-        self.network.add_node('reg_beta_matrix', data=None, type='4D_volume', bipartite=0, complete=False,
-                              spece='epi_std_aprox')
+        self.network.add_node('glm_model', data=[], type='glm_object', bipartite=0, complete=False,
+                              space='epi_std')
 
         # index in path is id of contrast
         self.network.add_node('reg_contrasts', data=[], type='volume', bipartite=0, complete=False,
                               space='epi_std')
-
-        self.network.add_node('reg_3d_epi_rep', data=None, type='volume', bipartite=0, complete=False,
-                              space='epi_std_aprox')
 
         self.network.add_node('slice_contrast_img', data=None, type='std_image', bipartite=0, complete=False, space='')
 
@@ -596,18 +605,15 @@ class DefaultSessionControlNet(BaseControlNet):
                                    'stripped manually aligned epi rep to the downsampled t1. The manual registration got'
                                    ' the brains as overlapping as possible, now this attempts to morph the cortex to correct'
                                    ' differences in white matter boundaries due to field warp in epi acquisition.')
-        self.network.add_node('create_functional_mask', fxn='support_functions.apply_warp_inverse', bipartite=1,
-                              desc='Uses the manual and nonlinear coregistration in inverse to create a brainmask in '
-                                   'the functional space.')
-        self.network.add_node('apply_reg_epi_mask', fxn='support_functions.apply_binary_mask_vol', biprtite=1,
+        self.network.add_node('apply_reg_epi_mask', fxn='support_functions.apply_binary_mask_vol', bipartite=1,
                               desc='Applys the downsampled t1 mask to the epi rep thats been manually registered to the '
                                    'ds t1, so that the epi can be nonlinear coregistered to the t1 without intereference from the skull')
-        self.network.add_node('apply_functional_mask', fxn='support_functions.apply_binary_mask_functional',
-                              bipartite=1,
-                              desc='Apply the brainmask in the functional space to all epi time series.')
-        self.network.add_node('bandpass_filter', fxn='support_functions.bandpass_wrapper', bipartite=1,
-                              desc="Removes high frequency (less than 2 trs) and low frequency "
-                                   "(greater than 2.25 blocks) signal")
+        self.network.add_node('apply_functional_mask', fxn='support_functions.apply_binary_mask_functional', bipartite=1,
+                              desc='Applys the functional std space mask to the session epis warped to the standard functional space')
+
+        # self.network.add_node('bandpass_filter', fxn='support_functions.bandpass_wrapper', bipartite=1,
+        #                       desc="Removes high frequency (less than 2 trs) and low frequency "
+        #                            "(greater than 2.25 blocks) signal")
         self.network.add_node('load_paradigm', fxn='support_functions.create_load_paradigm', bipartite=1,
                               desc='Either load an existing stimuli paradigm json config file, or use the prompt to '
                                    'create a new one.')
@@ -622,13 +628,10 @@ class DefaultSessionControlNet(BaseControlNet):
                                    'about from this experiment, and satisfies the equation (DesignMatrix * hrf) @ BetaMatrix ~= EpiTimeSeries'
                                    ' where * is the convolution operator and @ is matrix multiplication.')
 
-        self.network.add_node('create_session_averaged_beta_matrix', fxn='analysis.create_averaged_beta',
-                              bipartite=1, desc='Average all the individual run betas from this session to construct '
-                                                'session averaged beta matrix.')
-
-        self.network.add_node('register_beta_matrices', fxn='support_functions.apply_warp_4d', bipartite=1,
-                              desc='Use the functional -> working space transform to take the run level beta coefficients to '
+        self.network.add_node('register_epis', fxn='support_functions.apply_warp_4d_refactor', bipartite=1,
+                              desc='Use the functional -> working space transform to take the functional data to '
                                    'the working space. ')
+
         self.network.add_node('create_session_contrast', fxn='support_functions.create_contrast', bipartite=1,
                               desc='Create contrast volumes from the beta matrix.')
 
@@ -636,10 +639,10 @@ class DefaultSessionControlNet(BaseControlNet):
                               fxn='support_functions.promote_session', bipartite=1,
                               desc='This session is marked as complete-ish and will be included by future subject level analysis, and for construction of'
                                    ' the subject level beta matrix. Basically its added to the subject config data index.')
-        self.network.add_node('demote_session', argv=session_id, fxn='support_functions.demote_session',
+        self.network.add_node('demote_session', argv=session_id, fxn='support_functions.demote_session', bipartite=1,
                               desc='Removes this session from subject config data index. It will no longer be included '
                                    'in future subject level analysis.')
-        self.network.add_node('register_3d_rep', fxn='support_functions.apply_warp', bipartite=1)
+        # self.network.add_node('register_3d_rep', fxn='support_functions.apply_warp', bipartite=1)
         self.network.add_node('contrast_slice_overlay', fxn='support_functions.create_slice_overlays', bipartite=1)
 
         # define edges (parameter / return values)
@@ -680,64 +683,51 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('automatic_coregistration', 'auto_composite_transform', order=0)  # 10
         self.network.add_edge('automatic_coregistration', 'inverse_auto_composite_transform', order=1)  # 10
 
-        self.network.add_edge('functional_std_mask', 'create_functional_mask', order=0)  # 01
-        self.network.add_edge('3d_epi_rep_sphinx', 'create_functional_mask', order=1)
-        self.network.add_edge('manual_transform', 'create_functional_mask', order=2)  # 01
-        self.network.add_edge('inverse_auto_composite_transform', 'create_functional_mask', order=3)  # 01
-        self.network.add_edge('create_functional_mask', 'epi_mask', order=0)  # 10
+        # self.network.add_edge('functional_std_mask', 'create_functional_mask', order=0)  # 01
+        # self.network.add_edge('3d_epi_rep_sphinx', 'create_functional_mask', order=1)
+        # self.network.add_edge('manual_transform', 'create_functional_mask', order=2)  # 01
+        # self.network.add_edge('inverse_auto_composite_transform', 'create_functional_mask', order=3)  # 01
+        # self.network.add_edge('create_functional_mask', 'epi_mask', order=0)  # 10
 
-        self.network.add_edge('moco_epi', 'apply_functional_mask', order=0)  # 01
-        self.network.add_edge('epi_mask', 'apply_functional_mask', order=1)  # 01
-        self.network.add_edge('apply_functional_mask', 'epi_masked', order=0)  # 10
+        self.network.add_edge('moco_epi', 'register_epis', order=0)  # 01
+        self.network.add_edge('functional_std', 'register_epis', order=1)
+        self.network.add_edge('manual_transform', 'register_epis', order=2)  # 01
+        self.network.add_edge('auto_composite_transform', 'register_epis', order=3)  # 01
+        self.network.add_edge('register_epis', 'reg_epi', order=0)  # 10
+
+        self.network.add_edge('reg_epi', 'apply_functional_mask', order=0)  # 01
+        self.network.add_edge('functional_std_mask', 'apply_functional_mask', order=1)  # 01
+        self.network.add_edge('apply_functional_mask', 'reg_epi_masked', order=0)  # 10
 
         self.network.add_edge('load_paradigm', 'paradigm', order=0)  # 10
 
-        self.network.add_edge('epi_masked', 'create_load_ima_order_map', order=0)  # 01
+        self.network.add_edge('reg_epi_masked', 'create_load_ima_order_map', order=0)  # 01
         self.network.add_edge('create_load_ima_order_map', 'ima_order_map', order=0)  # 10
 
-        self.network.add_edge('epi_masked', 'bandpass_filter', order=0)
-        self.network.add_edge('paradigm', 'bandpass_filter', order=1)
-        self.network.add_edge('bandpass_filter', 'epi_masked_filtered', order=0)
+        # self.network.add_edge('reg_epi_masked', 'bandpass_filter', order=0)
+        # self.network.add_edge('paradigm', 'bandpass_filter', order=1)
+        # self.network.add_edge('bandpass_filter', 'epi_masked_filtered', order=0)
 
-        self.network.add_edge('epi_masked_filtered', 'create_beta_matrix', order=0)  # 01
+        self.network.add_edge('reg_epi_masked', 'create_beta_matrix', order=0)  # 01
         self.network.add_edge('paradigm', 'create_beta_matrix', order=1)  # 01
         self.network.add_edge('ima_order_map', 'create_beta_matrix', order=2)  # 01
-        self.network.add_edge('create_beta_matrix', 'run_beta_matrices', order=0)  # 10
+        self.network.add_edge('create_beta_matrix', 'glm_model', order=0)  # 10
         self.network.add_edge('create_beta_matrix', 'hrf_estimate', order=1)  # 10
 
-        self.network.add_edge('run_beta_matrices', 'register_beta_matrices', order=0)  # 01
-        self.network.add_edge('functional_std_masked', 'register_beta_matrices', order=1)
-        self.network.add_edge('manual_transform', 'register_beta_matrices', order=2)  # 01
-        self.network.add_edge('auto_composite_transform', 'register_beta_matrices', order=3)  # 01
-        self.network.add_edge('register_beta_matrices', 'reg_beta_matrices', order=0)  # 10
-
-        self.network.add_edge('reg_beta_matrices', 'create_session_averaged_beta_matrix', order=0)
-        self.network.add_edge('create_session_averaged_beta_matrix', 'reg_beta_matrix', order=0)
-
-        self.network.add_edge('reg_beta_matrix', 'promote_session', order=0)  # 01
+        self.network.add_edge('glm_model', 'promote_session', order=0)  # 01
         self.network.add_edge('paradigm', 'promote_session', order=1)  # 01
-        self.network.add_edge('epi_masked', 'promote_session', order=2)  # 01
+        self.network.add_edge('reg_epi_masked', 'promote_session', order=2)  # 01
         self.network.add_edge('ima_order_map', 'promote_session', order=3)  # 01
 
         self.network.add_edge('paradigm', 'demote_session', order=0)  # 01
 
-        self.network.add_edge('reg_beta_matrix', 'create_session_contrast', order=0)  # 01
+        self.network.add_edge('glm_model', 'create_session_contrast', order=0)  # 01
         self.network.add_edge('paradigm', 'create_session_contrast', order=1)  # 01
         self.network.add_edge('create_session_contrast', 'reg_contrasts', order=0)  # 10
 
-        self.network.add_edge('3d_epi_rep_sphinx', 'register_3d_rep', order=0)
-        self.network.add_edge('functional_std_masked', 'register_3d_rep', order=1)
-        self.network.add_edge('manual_transform', 'register_3d_rep', order=2)
-        self.network.add_edge('auto_composite_transform', 'register_3d_rep', order=3)
-        self.network.add_edge('register_3d_rep', 'reg_3d_epi_rep', order=0)
-
-        self.network.add_edge('reg_3d_epi_rep', 'contrast_slice_overlay', order=0)
+        self.network.add_edge('reg_epi_masked', 'contrast_slice_overlay', order=0)
         self.network.add_edge('functional_std_masked', 'contrast_slice_overlay', order=1)
         self.network.add_edge('reg_contrasts', 'contrast_slice_overlay', order=2)
         self.network.add_edge('contrast_slice_overlay', 'slice_contrast_img', order=0)
 
-        self.network.add_edge('reg_3d_epi_rep', 'contrast_slice_overlay', order=0)
-        self.network.add_edge('functional_std_masked', 'contrast_slice_overlay', order=1)
-        self.network.add_edge('reg_contrasts', 'contrast_slice_overlay', order=2)
-        self.network.add_edge('contrast_slice_overlay', 'slice_contrast_img', order=0)
 
