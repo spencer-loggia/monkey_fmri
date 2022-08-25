@@ -1,4 +1,5 @@
 import copy
+import itertools
 import math
 import multiprocessing
 import traceback
@@ -368,8 +369,25 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
         res = p.starmap(_create_SNR_volume_wrapper, args)
 
 
+def _make_nl_dm(frames, time_df, hrf):
+    svd_converge = False
+    trys = 0
+    while not svd_converge and trys < 4:
+        try:
+            dm = first_level.make_first_level_design_matrix(frames, time_df, hrf,
+                                                            drift_model='cosine')
+        except (ValueError, np.linalg.LinAlgError):
+            trys += 1
+            continue
+        svd_converge = True
+    if not svd_converge:
+        print("DM creation failed")
+        exit(2)
+    return dm
+
+
 def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int],
-                                 base_conditions_idxs: List[int], condition_names: List[str], tr_length=3, mion=True, showdm=False):
+                                 base_conditions_idxs: List[int], condition_names: dict, tr_length=3, mion=True):
     """
     Creates as num_conditions x time onehot encoded matrix from an order number definition
     :param block_length:
@@ -388,7 +406,7 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         if active_condition in base_conditions_idxs:
             # skip conditions that are baseline
             continue
-        cond_name = condition_names[active_condition]
+        cond_name = condition_names[str(active_condition)]
         timing["trial_type"].append(cond_name)
         timing["onset"].append(i * block_length * tr_length)
         timing["duration"].append(block_length * 3)
@@ -398,25 +416,18 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         hrf = "mion"
     else:
         hrf = "spm + derivative"
-    svd_converge = False
-    trys = 0
-    while not svd_converge and trys < 4:
-        try:
-            dm = first_level.make_first_level_design_matrix(frames, time_df, hrf, drift_model='polynomial', drift_order=2)
-            svd_converge = True
-        except ValueError:
-            trys += 1
-            continue
-    if not svd_converge:
-        print("DM creation failed")
-        exit(2)
-    if showdm:
-        plt.imshow(dm, aspect=.2)
-        plt.show()
+    dm = _make_nl_dm(frames, time_df, hrf)
+    # reorder
+    cond_names = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_conditions_idxs]
+    cols = list(dm.columns)
+    for i, c in enumerate(cond_names):
+        cols[i] = c
+    dm = dm[cols]
     return dm
 
 
-def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_condition_idxs: List[int]):
+def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_condition_idxs: List[int],
+                                condition_names: dict, condition_groups: dict, tr_length=3.0, mion=True):
     """
     Creates a design matrix from a list of lengths number of trs, holding the stimulus condition at each tr.
     Basically just onehot encodes the run_list, except base case conditions are given a constant value and a
@@ -426,22 +437,41 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     :param base_condition_idxs:
     :return:
     """
-    if type(run_list) is list:
-        run_list = np.array(run_list)
-    elif type(run_list) is torch.Tensor:
-        run_list = run_list.numpy()
+    if type(run_list) is np.ndarray or type(run_list) is torch.Tensor:
+        run_list = run_list.tolist()
+    timing = {"trial_type": [],
+              "onset": [],
+              "duration": []}
     num_trs = len(run_list)
-    design_matrix = np.zeros((num_trs, num_conditions + 2))
-    for i in range(num_conditions):
-        if i in base_condition_idxs:
-            design_matrix[:, i] = 1
-        else:
-            design_matrix[run_list == i, i] = 1
-    pos_linear_drift = np.arange(-.5, .5, (1 / len(design_matrix)))[:len(design_matrix)]
-    exp_drift = np.exp(-1 * np.e * np.arange(0, 1, (1 / len(design_matrix))))[:len(design_matrix)]
-    design_matrix[:, -2] = pos_linear_drift
-    design_matrix[:, -1] = exp_drift
-    return design_matrix
+    runlength_encode = []
+    for _, group in itertools.groupby(run_list):
+        runlength_encode.append(list(group))
+    t = 0
+    for block in runlength_encode:
+        cond = block[0]
+        if cond not in base_condition_idxs:
+            if condition_groups is None:
+                timing['trial_type'].append(condition_names[str(cond)])
+                timing['onset'].append(t * tr_length)
+                timing['duration'].append(len(block) * tr_length)
+            else:
+                for group_name in condition_groups.keys():
+                    group = condition_groups[group_name]
+                    if cond in group:
+                        timing['trial_type'].append(group_name)
+                        timing['onset'].append(t * tr_length)
+                        timing['duration'].append(len(block) * tr_length)
+
+        t += len(block)
+    time_df = pd.DataFrame.from_dict(timing)
+    if mion:
+        hrf = "mion"
+    else:
+        hrf = "spm + derivative"
+    frames = np.arange(num_trs) * tr_length
+    dm = _make_nl_dm(frames, time_df, hrf)
+    return dm
+
 
 def _pipe(d_mat, run, base_condition_idxs, mion, auto_conv, tr, pid):
     """
@@ -544,7 +574,7 @@ def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_con
                 minimize_memory=True,
                 hrf_model=hrf,
                 t_r=tr_length,
-                smoothing_fwhm=1.,
+                smoothing_fwhm=3.,
                 verbose=True,
                 n_jobs=multiprocessing.cpu_count() - 1,
                 noise_model='ar1',
@@ -600,6 +630,9 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
 
 def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, output_dir):
     glm = pickle.load(open(glm_model_path, "rb"))
+    num_cond = glm.design_matrices_[0].shape[1]
+    drift_regressors = num_cond - len(contrast_matrix)
+    contrast_matrix = np.pad(contrast_matrix, ((0, drift_regressors), (0, 0)), constant_values=((0, 0), (0, 0)))
     out_paths = []
     for i, contrast in enumerate(contrast_matrix.T):
         contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type='z_score')

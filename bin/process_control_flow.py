@@ -557,7 +557,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('reg_epi_masked', data=[], fname=None, type='time_series', bipartite=0, complete=False)
 
         self.network.add_node('paradigm', data=None, type='json', bipartite=0, complete=False)
-        self.network.add_node('ima_order_map', type='json', bipartite=0, complete=False)
+        self.network.add_node('ima_order_map', type='json', bipartite=0, complete=False, data=None)
 
         self.network.add_node('glm_model', data=[], type='glm_object', bipartite=0, complete=False,
                               space='epi_std')
