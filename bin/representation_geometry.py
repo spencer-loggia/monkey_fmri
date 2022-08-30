@@ -1,14 +1,28 @@
 from typing import Union, List
 
+import scipy.spatial.distance
 import torch
 from sklearn.metrics import confusion_matrix
 import numpy as np
+from neurotools import util
 import nibabel as nib
 import graspologic as gr
 import sklearn as sk
 from scipy.stats import spearmanr
 
 _distance_metrics_ = ['euclidian', 'pearson', 'spearman', 'dot', 'cosine']
+
+
+def pdist_general(X, metric, **kwargs):
+    n = X.shape[0]
+    out_size = (n * (n - 1)) // 2
+    dm = torch.zeros(out_size).float()
+    k = 0
+    for i in range(X.shape[0] - 1):
+        for j in range(i + 1, X.shape[0]):
+            dm[k] = metric(X[i], X[j], **kwargs)
+            k += 1
+    return dm
 
 
 def _pad_to_cube(arr: np.ndarray, time_axis=3):
@@ -45,12 +59,12 @@ def _dot_pdist(arr: torch.Tensor, normalize=False):
     """
     if len(arr.shape) == 1:
         arr = arr.reshape(1, arr.shape[0])
-    k = arr.shape[1]
+    k = arr.shape[2]
     if normalize:
-        arr = arr / arr.norm(dim=0)[None, :]
-    outer = arr.T @ arr  # k x k
+        arr = arr / arr.norm(dim=1)[:, None, :]
+    outer = torch.matmul(arr.transpose(-1, -2), arr)  # k x k
     indices = torch.triu_indices(k, k, offset=1)
-    return outer[indices[0], indices[1]]
+    return outer[:, indices[0], indices[1]]
 
 
 def _pearson_pdist(arr: torch.Tensor):
@@ -61,8 +75,8 @@ def _pearson_pdist(arr: torch.Tensor):
 
 
 def dissimilarity(beta: torch.Tensor, metric='dot'):
-    if len(beta.shape) != 2:
-        raise IndexError("beta should be 2 dimensional and have observations on dim 0 and conditions on dim 1")
+    if len(beta.shape) != 3:
+        raise IndexError("beta should be 3 dimensional and have batch on dim 0, observations on dim 1 and conditions on dim 2")
     if metric not in _distance_metrics_:
         raise ValueError('metric must be one of ' + str(_distance_metrics_))
     elif metric == 'dot':
@@ -98,10 +112,6 @@ def spearman_correlation(x: torch.Tensor, y: torch.Tensor):
     return 1.0 - (upper / down)
 
 
-def searchlight_net(mean: torch.Tensor, cov: torch.Tensor,):
-    raise NotImplementedError
-
-
 def pairwise_rsa(beta: torch.Tensor, atlas: torch.Tensor, min_roi_dim=5, ignore_atlas_base=True, metric='cosine'):
     if type(beta) is np.ndarray:
         beta = torch.from_numpy(beta)
@@ -115,25 +125,18 @@ def pairwise_rsa(beta: torch.Tensor, atlas: torch.Tensor, min_roi_dim=5, ignore_
     unique_filtered = []
     roi_dissimilarity = []
     for roi_id in unique:
-        roi_betas = beta[atlas == roi_id]
-        if len(roi_betas) > min_roi_dim:
+        roi_betas = beta[atlas == roi_id].unsqueeze(0)
+        if roi_betas.shape[1] > min_roi_dim:
             unique_filtered.append(roi_id)
             rdm = dissimilarity(roi_betas, metric=metric)
             roi_dissimilarity.append(rdm)
     adjacency = torch.zeros([len(unique_filtered), len(unique_filtered)])
-    pvals = torch.zeros([len(unique_filtered), len(unique_filtered)])
-    for i, src in enumerate(unique_filtered):
-        for j, target in enumerate(unique_filtered[i + 1:]):
-            j_t = j + i + 1
-            print("Computed Correlation ", src, ", ", target)
-            spear_corr, pval = spearmanr(roi_dissimilarity[i], roi_dissimilarity[j_t])
-            # dis_i = torch.log_softmax(roi_dissimilarity[j_t], dim=0)[None, :]
-            # dis_j = torch.log_softmax(roi_dissimilarity[i], dim=0)[None, :]
-            adjacency[i, j_t] = spear_corr
-            adjacency[j_t, i] = spear_corr
-            pvals[i, j_t] = pval
-            pvals[j_t, i] = pval
-    return adjacency, unique_filtered, roi_dissimilarity, pvals
+    dissim = torch.cat(roi_dissimilarity, dim=0)
+    corr = pdist_general(dissim, spearman_correlation)
+    ind = torch.triu_indices(len(unique_filtered), len(unique_filtered), offset=1)
+    adjacency[ind[0], ind[1]] = corr
+    adjacency = adjacency.T + adjacency
+    return adjacency, unique_filtered, roi_dissimilarity, None
 
 
 def pca(betas: torch.Tensor, brain_mask=None, n_components=2, noisy=False):
@@ -353,3 +356,40 @@ class SearchLightDecoder:
         yhat = self.softmax(h)
         ce = self.ce_loss(yhat, targets)
         return yhat, ce
+
+
+class SearchlightDissimilarity:
+
+    def __init__(self, betas, desired_kernel_size=5):
+        """
+
+        Parameters
+        ----------
+        betas
+        desired_kernel_size
+
+        Returns
+        -------
+
+        """
+        betas = _pad_to_cube(betas)
+        betas = torch.from_numpy(betas.transpose((3, 0, 1, 2))).float().unsqueeze(0)
+        self.betas = betas
+        self.spatial = self.betas.shape[-1]
+        self.features = self.betas.shape[1]
+        self.kernel, self.pad = util.conv_identity_params(self.spatial, desired_kernel_size)
+        self.rdms = None
+
+    def fit(self, stride=5):
+        unfolded = util.unfold_nd(self.betas, kernel_size=self.kernel, padding=self.pad, spatial_dims=3, stride=stride)
+        unfolded = unfolded.view(self.features, self.kernel**3, unfolded.shape[-1]).transpose(0, 2)  # num folds, fold_size, features
+        self.rdms = torch.nan_to_num(dissimilarity(unfolded, metric='cosine'), nan=0.)  # num_folds, dissim_vec
+
+    def predict(self):
+        """
+        get the pairwise spearman correlation between all examples
+        Returns
+        -------
+        """
+        pairwise_dist = pdist_general(self.rdms, metric=spearman_correlation)
+        return pairwise_dist

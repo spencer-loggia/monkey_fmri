@@ -124,20 +124,12 @@ def get_epis(*argv):
 
 def get_functional_target():
     subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
     path = input_control.dir_input("Enter path to functional data representative image (should be masked): ")
-    try:
-        shutil.copy(path, os.path.join(subj_root, 'mri', 'functional_target.nii'))
-    except shutil.SameFileError:
-        pass
-    return os.path.relpath(os.path.join(subj_root, 'mri', 'functional_target.nii'), project_root)
+    shutil.copy(path, os.path.join(subj_root, 'mri', 'functional_target.nii'))
+    return os.path.join(subj_root, 'mri', 'functional_target.nii')
 
 
-<<<<<<< HEAD
-def dilate_mask(inpath,outpath=None, thresh = 0):
-=======
 def dilate_mask(inpath, outpath=None):
->>>>>>> stable
     """
     Simple function to call fslmath's dilM
     """
@@ -151,18 +143,7 @@ def dilate_mask(inpath, outpath=None):
     call(cmd, shell=True)
     print(cmd)
     if outpath[-3:] != '.gz':
-<<<<<<< HEAD
-        outpath = outpath+'.gz'
-    mask = nibabel.load(outpath)
-    mask_data = np.array(mask.get_fdata())
-    mask_data[mask_data > thresh] = 1
-    mask_data[mask_data <= thresh] = 0
-    mask_data = mask_data.astype(bool)
-    new_mask = nibabel.Nifti1Image(dataobj=mask_data, affine=mask.affine, header=mask.header)
-    nibabel.save(new_mask, outpath)
-=======
         outpath = outpath + '.gz'
->>>>>>> stable
     return outpath
 
 
@@ -261,12 +242,8 @@ def _apply_warp_wrapper(s, vol, out, transforms, interp, type_code, dim, invert,
     return os.path.relpath(out, project_root)
 
 
-<<<<<<< HEAD
-def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None, interp='Linear', type_code=0, dim=3):
-=======
 def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None, type_code=0,
                dim=3, interp='Linear'):
->>>>>>> stable
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
@@ -292,12 +269,12 @@ def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, f
     return out_paths
 
 
-def apply_warp_4d(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None, interp='Linear'):
+def apply_warp_4d(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None):
     subj_root = os.environ.get('FMRI_WORK_DIR')
     project_root = os.path.join(subj_root, '..', '..')
     os.chdir(project_root)
     return apply_warp(source, vol_in_target_space, forward_gross_transform_path=forward_gross_transform_path,
-                      fine_transform_path=fine_transform_path, interp=interp, type_code=3, dim=3)
+                      fine_transform_path=fine_transform_path, type_code=3, dim=3)
 
 
 def apply_warp_4d_refactor(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None,

@@ -2,6 +2,7 @@ import copy
 import itertools
 import math
 import multiprocessing
+import random
 import traceback
 
 import os
@@ -23,8 +24,6 @@ from scipy.stats import norm
 from scipy.ndimage import gaussian_filter, binary_fill_holes, label
 
 from multiprocessing import Pool
-
-from preprocess import _pad_to_cube
 
 from skimage.measure import regionprops
 from sklearn.mixture import GaussianMixture
@@ -138,7 +137,7 @@ def average_functional_data(run_dirs, output, fname='normalized.nii', through_ti
                 avg_func += brain_tensor
             count += 1
     avg_func /= count
-    avg_nii = nib.Nifti1Image(avg_func, affine=brain.affine)
+    avg_nii = nib.Nifti1Image(avg_func, affine=brain.affine, header=brain.header)
     nib.save(avg_nii, output)
     return avg_func
 
@@ -582,7 +581,8 @@ def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_con
         )
     epis = [nib.load(os.path.join(run_dir, fname)) for run_dir in run_dirs]
     fmri_glm = fmri_glm.fit(epis, design_matrices=design_matrices)
-    glm_path = os.path.join(output_dir, "glm_model.pkl")
+    code = random.randint(0, 999999)
+    glm_path = os.path.join(output_dir, "glm_model_" + str(code) + ".pkl")
     with open(glm_path, "wb") as f:
         pickle.dump(fmri_glm, f)
     return glm_path
@@ -630,11 +630,15 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
 
 def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, output_dir):
     glm = pickle.load(open(glm_model_path, "rb"))
-    num_cond = glm.design_matrices_[0].shape[1]
-    drift_regressors = num_cond - len(contrast_matrix)
-    contrast_matrix = np.pad(contrast_matrix, ((0, drift_regressors), (0, 0)), constant_values=((0, 0), (0, 0)))
+    contrast_matrices = [[] for _ in range(contrast_matrix.shape[1])]
+    for dm in glm.design_matrices_:
+        num_cond = dm.shape[1]
+        drift_regressors = num_cond - len(contrast_matrix)
+        cm = np.pad(contrast_matrix, ((0, drift_regressors), (0, 0)), constant_values=((0, 0), (0, 0))).T
+        for i, contrast in enumerate(cm):
+            contrast_matrices[i].append(contrast)
     out_paths = []
-    for i, contrast in enumerate(contrast_matrix.T):
+    for i, contrast in enumerate(contrast_matrices):
         contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type='z_score')
         out_path = os.path.join(output_dir, contrast_descriptors[i] + '.nii')
         nib.save(contrast_nii, out_path)
