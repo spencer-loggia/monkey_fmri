@@ -1,6 +1,7 @@
 ###
 # Macaque anatomical processing pipeline.
 # Authored by Kurt Braunlich 2021
+# Edited and refined by Stuart Duffield 2021-2022
 # Added option to use macaque template to define white matter, put into
 # Python notebook format, added additional comments--Stuart Duffield 2022
 # DEPENDENCIES
@@ -8,6 +9,7 @@
 # Freesurfer: https://surfer.nmr.mgh.harvard.edu
 # Precon_all: https://github.com/neurabenn/precon_all
 # PREEMACS: https://github.com/pGarciaS/PREEMACS
+# DCM2NIIX: https://github.com/rordenlab/dcm2niix
 # Need to set up paths past functions
 ###
 #%% Imports
@@ -21,7 +23,20 @@ import shutil
 import nibabel as nib
 import gzip
 import nilearn.image as nli
+from nilearn.masking import compute_background_mask as _compute_background_mask
+from nilearn.masking import compute_epi_mask as _compute_epi_mask
+import matplotlib.pyplot as _plt
+from nilearn.masking import apply_mask as _apply_mask
+from nilearn.masking import unmask as _unmask
+from scipy import stats as _stats
+from nipype.interfaces.fsl import Info as _Info
+import time
+monkeyDeepBrainF = '/Users/duffieldsj/Documents/GitHub/PREEMACS/monkey_deepbrain'
 
+try:
+    import tkFileDialog as _tkFileDialog
+except:
+    pass
 #%% Set up the class fmri_data that many functions are dependent on
 class fmri_data:
     '''General class for handling fmri data.
@@ -142,7 +157,7 @@ class fmri_data:
 
 
 
-        if _np.any(imgs.affine!=self.mask['niimg'].affine):
+        if np.any(imgs.affine!=self.mask['niimg'].affine):
             self.mask['niimg'] = nli.resample_img(self.mask['niimg'],
                         target_affine=self.volInfo['affine'],
                         target_shape=self.volInfo['dim'][:3],
@@ -222,39 +237,188 @@ class fmri_data:
         detrend=False,standardizeRun=False,standardizeVox=False,confounds=None,
                         low_pass=None,high_pass=None,plot=0'''
         from nilearn.signal import clean
-        assert(not(_np.logical_and(standardizeRun,standardizeVox)))
+        assert(not(np.logical_and(standardizeRun,standardizeVox)))
 
-        if len(_np.unique(self.sessions))<=1:
+        if len(np.unique(self.sessions))<=1:
             print('dat.sessions is empty or contains 1 unique value. Will clean dat.dat by entire columns ''')
             self.history.append(("dat.dat cleaned: detrend=%s,standardizeRun=%s"
                             "standardizeVox=%s, confounds=%s,"
                             "low_pass=%s, high_pass=%s"%(detrend,standardizeRun,
-                            standardizeVox,_np.all(confounds is not None),low_pass,high_pass)))
+                            standardizeVox,np.all(confounds is not None),low_pass,high_pass)))
         else:
             print('dat.dat cleaned by run')
             self.history.append(("dat.dat cleaned by run: detrend=%s,"
                             "standardizeRun=%s, standardizeVox=%s, confounds=%s,"
                             "low_pass=%s, high_pass=%s"%(detrend,standardizeRun,
-                            standardizeVox,_np.all(confounds is not None),low_pass,high_pass)))
+                            standardizeVox,np.all(confounds is not None),low_pass,high_pass)))
         if plot:
             _plt.figure()
             _plt.subplot(211)
-            _plt.plot(self.dat[:,_np.arange(0,self.dat.shape[1],self.dat.shape[1]/4)])
+            _plt.plot(self.dat[:,np.arange(0,self.dat.shape[1],self.dat.shape[1]/4)])
 
         self.dat = clean(self.dat,sessions=self.sessions, detrend=detrend, \
                         standardize=standardizeVox, confounds=confounds, \
                         low_pass=low_pass, high_pass=high_pass)
         if standardizeRun:
-            for run in _np.unique(self.sessions):
+            for run in np.unique(self.sessions):
                 idxRun = self.sessions==run
                 X = self.dat[idxRun==1,:]
                 X = zAllAxes(X)
                 self.dat[idxRun==1,:] = X
         if plot:
             _plt.subplot(212)
-            _plt.plot(self.dat[:,_np.arange(0,self.dat.shape[1],self.dat.shape[1]/4)])
+            _plt.plot(self.dat[:,np.arange(0,self.dat.shape[1],self.dat.shape[1]/4)])
             _plt.pause(.01)
+            
+
+
 #%% functions
+def antsWarpFunc(t1F,funcP,anatPrefix,toMni=1,outPath=None,
+                 mniTemplate='mask',namePrefix='ants_',d=3):
+    ''' assumes that the affine and warpNii have already been estimated, and
+    are in the t1F.
+
+    Input:
+    -------
+    t1F: the directory where the normalized T1 image & the displacement
+    fields (etc.) reside
+    funcP: path of the functional imagef to be warped (can handle 4d)
+
+    Output:
+    ---------
+    normalized images in the funcP Fldr, prepended with [namePrefix]'''
+
+    if 'mask' in mniTemplate:
+        mniTemplate = _Info.standard_image('MNI152_T1_2mm_brain.nii.gz')
+    else:
+        mniTemplate = _Info.standard_image('MNI152_T1_2mm.nii.gz')
+
+    if toMni==0:
+        try:
+            invWarpNii      = glob.glob(os.path.join(t1F,namePrefix+'*InverseWarp*.nii.gz'))[0]
+        except:
+            print('InverseWarp*.nii.gz not found')
+        genericAffine   = glob.glob(os.path.join(t1F,'*GenericAffine.mat'))[0]
+        roiImage        = funcP
+        p,n             = os.path.split(os.path.realpath(roiImage))
+        if outPath is None:
+            outPath     = os.path.join(p,'w'+n)
+        fixedIm         = glob.glob(os.path.join(t1F,'%s*.nii*'%anatPrefix))[0]#'rhires.nii'))[0]
+#        fixedIm         = _glob.glob(_os.path.join(t1F,'rmasked*.nii'))[0]
+
+        # the reference image defines the spacing, origin, size, and direction of the output warped image
+        cmd = ('antsApplyTransforms --default-value 0 --dimensionality 3'
+            + ' --input '+roiImage
+            + ' --interpolation NearestNeighbor'
+            + ' --output ' +outPath
+            + ' --reference-image ' + fixedIm
+            + ' --transform ['+genericAffine+',1]'
+            + ' --transform %s'%invWarpNii
+            )
+    else:
+        warpNii = glob.glob(os.path.join(t1F,namePrefix+'*Warp.nii.gz'))[0]
+        affmat  = glob.glob(os.path.join(t1F,namePrefix+'*GenericAffine.mat'))[0]
+        p,n     = os.path.split(os.path.realpath(funcP))
+        if outPath=='None':
+            outPath = os.path.join(p,namePrefix+n)
+
+        cmd = ('antsApplyTransforms -d %d'%d
+            + ' -r '+mniTemplate
+            + ' -i '+funcP
+            + ' -e 3'
+            + ' -t '+warpNii
+            + ' -t '+affmat
+            + ' -o '+outPath
+            )
+    print(cmd+'\n')
+    call(cmd,shell=True)
+def zAllAxes(m):
+    '''standardize across all axes at once, while ignoring nans:
+    input:
+
+        - m: np.array
+
+    - 1) mask nans
+    - 2) reshape non-nans to vector
+    - 3) z-score
+    - 4) reshape z-scored vector to non-nan locs in og matrix'''
+    nNanOg = np.sum(np.isnan(m))
+    m[~np.isnan(m)] = np.reshape(_stats.zscore(m[~np.isnan(m)].ravel()),m[~np.isnan(m)].shape)
+    assert(np.isclose(np.nanmean(m),0))
+    assert(np.isclose(np.nanstd(m),1))
+    nNan = np.sum(np.isnan(m))
+    assert(nNanOg==nNan)
+    return m
+def _guiLoad(title=None,fldr=None):
+    if fldr is None:
+        fldr = '.'
+    return np.sort(_tkFileDialog.askopenfilenames(title=title,initialdir=fldr))
+def pullRoi(dat,clusterIm,slowAndMni=1):
+    '''General method for pulling information from an roi.
+    Automatically resamples clusterIm (or mask) to space of dat.
+
+    Parameters
+    ----------
+    - dat: fmri_data object
+    - clusterIm: Nifti1Image object (simple binary mask, or cluster image with different rois indicated by unique integers)
+    - slowAndMni: if==1 (the default), roiSummary.keys include aal atlas labels. Image must be in MNI space.
+
+    Returns
+    -------
+    - roiSummary: a dictionary with key = AAL region name. Fields:
+        - subRoiMeans: mean (across voxels) of the roi, 1 value per image
+        - maskNib: binary Nifti1Image roi mask
+        - clusterMapNumb
+        - roiDat: data from all roi voxels
+        '''
+
+    if isinstance(clusterIm,str):
+        clusterIm = nib.load(clusterIm)
+    if np.any(clusterIm.affine!=dat.volInfo['affine']):
+            clusterIm = nli.resample_img(clusterIm,target_affine=dat.volInfo['affine'], \
+                            target_shape=dat.volInfo['dim'][:3],interpolation='nearest')
+    if slowAndMni:
+        atlasPath = os.path.join(atlasF,'aal_MNI_V4.nii')
+        dfAtlas = pd.read_csv(os.path.join(_atlasF,'aalLabels.csv'),
+                                index_col=False)
+
+        # resample atlas to funcs:
+        atlasIm = nib.load(atlasPath)
+        atlasIm = nli.resample_img(atlasIm,target_affine=dat.volInfo['affine'], \
+                                    target_shape=dat.volInfo['dim'][:3],interpolation='nearest')
+
+        if np.any(atlasIm.affine!=dat.volInfo['affine']):
+            raise ValueError('atlas and functional affines do not match.')
+
+        cAtlas = np.squeeze(dat.masker(atlasIm))
+
+    cClusters = np.squeeze(dat.masker(clusterIm))
+    cMask = np.squeeze(dat.masker(dat.mask['niimg']))
+    clusters = np.unique(cClusters)
+    clusters = clusters[clusters!=0]
+    roiSummary = {}
+    for iClstr in clusters:
+        # pull roi mode from atlasIm
+        if slowAndMni:
+            try:
+                nRoi = int(_stats.mode(cAtlas[cClusters==iClstr][cAtlas[cClusters==iClstr]!=0],axis=0).mode)
+                label = dfAtlas.loc[np.array(dfAtlas['nRoi']==nRoi),'label'].values[0]
+            except:
+                label='unknown'
+        else:
+            label=''
+
+        cutMask = np.squeeze(np.logical_and(cClusters==iClstr,cMask==1).astype(int))
+        if cutMask.sum()>10:
+            roiData = np.squeeze(dat.dat[:,cutMask==1])
+            roiSummary['clstr_%3.3d_'%iClstr+label] = {
+                    #'label'     : label,
+                    'timeseries'     : np.mean(roiData,axis=1),
+                    'maskNib'        : dat.unmasker(cutMask),#(cClusters==iClstr),
+                    'clusterMapNumb' : iClstr,
+                    'roiData'        : roiData,
+                    }
+    return roiSummary
 def freeview(volPs,surfPs=None):
     cmd = 'freeview '
     for p in volPs:
@@ -479,22 +643,80 @@ def antsApplyTransforms(inP,refP,outP,lTrns,interp='Linear',dim=3,invertTrans=Fa
     at.inputs.invert_transform_flags = [invertTrans for i in lTrns]
     print(at.cmdline)
     at.run()
+    
+def unpackDicoms(dicomF, imageF):
+    '''
+    
 
-#%% Set up paths
+    Parameters
+    ----------
+    dicomF : TYPE
+        DESCRIPTION.
+    imageF : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    None.
+
+    '''
+    cmd = 'dcm2niix -f %n_%p_%z_%u -z y -o {} {}'.format(imageF,dicomF)
+    call(cmd,shell=True)
+    print(cmd)
+    
+def sphinx_fix(inP,toStd=False,outP=None,pos_string='LPS',visualize=False):
+    '''from https://surfer.nmr.mgh.harvard.edu/fswiki/MonkeyData
+
+    this uses mri_convert, and thgewn fslorient2std to correct sphinx
+        '''
+    if outP == None:
+        f,n = os.path.split(inP)
+        outP = f+'/%s_%s'%('sphnx',n)
+    cmd='mri_convert -i %s -o %s --in_orientation %s --sphinx'%(inP,outP,pos_string)
+#    print(cmd)
+    call(cmd,shell=True)
+
+    if toStd: # if we run this, fsleyes has labelled correctly, but upside down
+        f,n = os.path.split(outP)
+        cmd = 'fslreorient2std %s/%s %s/%s'%(f,n,f,n)
+#        print(cmd)
+        call(cmd,shell=True)
+    if visualize:
+#        cmd = 'mri_info %s'%outP
+        print(image_orientation(outP))
+        call(cmd,shell=True)
+        freeview([outP])
+    return outP
+
+def image_orientation(p):
+    im = nib.load(p)
+    return ''.join(nib.aff2axcodes(im.affine))
+#%% Set up environment
 os.environ["OMP_NUM_THREADS"] = "12" # This sets the number of threads needed
 os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "12"
-anatF = '/Volumes/bc7/projects/mTurk_FMRI/anatproc/images' # Where are the T1s
-subj = '' # what is the subject name
 
+#%% Set up paths. Some are not needed if you don't need to unpack DICOMS
+subj = 'jeeves' # what is the subject name
+anatF = '/Volumes/bc7/projects/mTurk_FMRI/anatproc_jeeves/images' # Where are the T1s
+dicomF = '/Volumes/bc7/raw_data/monkey_fmri_2/Jeeves_20220504_093718.062000'
+
+#%% Do you need to unpack DICOMS?
+unpackDicoms(dicomF, anatF)
+sphinx_convert = True
+#%% Do you need to convert to sphinx?
+if sphinx_convert:
+    images = glob.glob(os.path.join(anatF,'*.nii*')) # Get images
+    for image in images:
+        sphinx_fix(image,pos_string='LPS',visualize=False)
 #%% Find necessary starting files
 t1Ps = list(np.sort(glob.glob(os.path.join(anatF, '*MPR*.nii.gz')))) # Find T1s. You need T1s
 t2Ps = list(np.sort(glob.glob(os.path.join(anatF, '*T2*.nii.gz')))) # Find T2s, if they exist
+if sphinx_convert:
+    t1Ps = [img for img in t1Ps if 'sphnx' in img]
+    t2Ps = [img for img in t2Ps if 'sphnx' in img]
 print('\nOriginal images found:')
 for p in t1Ps+t2Ps:
     print('%s: %.2f MB'%(os.path.basename(p),os.path.getsize(p)*1e-6))
-
-roPs = glob.glob(anatF+'/ro_*.nii.gz')
-print(roPs)
 
 #%%  Basic Quality Control:
 # check that the individual images look ok (e.g., signal from both coils).
@@ -502,10 +724,12 @@ print(roPs)
 # Look for basic image quality. If you have a very high quality T1,
 # you probably don't want to average in noisy images. If you have several
 # noisy images, more data will probably be better.
-for i in range(len(t1Ps)):
-    mp.freeview([t1Ps[i]])
-for i in range(len(t2Ps)):
-    mp.freeview([t2Ps[i]])
+view = False
+if view:
+    for i in range(len(t1Ps)):
+        freeview([t1Ps[i]])
+    for i in range(len(t2Ps)):
+        freeview([t2Ps[i]])
 
 avgT1P = combine_wInModality(t1Ps,
                                 nuCorrect=True,
@@ -535,9 +759,21 @@ avgT2_niiP = os.path.join(anatF,'avT2.nii')
 antsRegistrationSynQuick(avgT1_niiP,avgT2_niiP,transforms='r')
 freeview([avgT1_niiP, avgT2_niiP])
 
+#%% Rotate in space
+# If the anatomical was not taken in sterotax, rotate it
+# Maybe we rigidly align it to the macaque template
+# No code here,  just open itk-snap and align it
+# and save the new image as avT1stx.nii
+# The problem is that you need to reslice the image to the target image--this 
+# will result in some resampling. For Jeeves, for example, I resliced the brain
+# from 0.35 0.4 0.35 voxels to 0.25 0.25 0.25 to match the NMT template.
+# This will make it hard for me,  however, to do manual edits if the white 
+# matter fill does not work or the skull stripping is inaccurate
+
+avgT1stxP = os.path.join(os.path.split(avgT1_niiP)[0],'avT1stx.nii')
 #%% Skullstrip
 # Edit the p parameter to your liking for skull stripping
-dnnBrainP,dnnMaskP = mp.dnn_skull_strip(avgT1_niiP, anatF, p=0.8)
+dnnBrainP,dnnMaskP = dnn_skull_strip(avgT1stxP, anatF, p=0.95)
 # After skullstripping, you will want to manually inspect and edit the brainmask.
 # You need to remove all of the mask outside of the brain, which will take about
 # 30 minutes or so depending on the resolution of the image.
@@ -547,7 +783,7 @@ dnnBrainP,dnnMaskP = mp.dnn_skull_strip(avgT1_niiP, anatF, p=0.8)
 # set maskP as (usually anatF/brainmask.nii)
 
 #%% Edit
-freeview([avgT1_niiP,dnnMaskP,dnnBrainP])
+freeview([avgT1stxP,dnnMaskP,dnnBrainP])
 
 #%% What did you save the edited mask as?
 maskP = anatF+'/brainmask.nii'
