@@ -47,6 +47,8 @@ from typing import List, Union, Tuple, Dict
 import torch
 
 from nilearn.glm import first_level
+from nilearn.image import high_variance_confounds
+from nilearn.plotting import plot_design_matrix
 from nilearn.glm.first_level.hemodynamic_models import mion_hrf, spm_time_derivative
 
 
@@ -86,6 +88,10 @@ def _create_dir_if_needed(base: str, name: str):
     except FileExistsError:
         pass
     return out_dir
+
+
+def _confound(epi):
+    return pd.DataFrame(high_variance_confounds(epi, percentile=1))
 
 
 def ts_smooth(input_ts: np.ndarray, kernel_std=1., temporal_smoothing=True):
@@ -573,14 +579,22 @@ def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_con
                 minimize_memory=True,
                 hrf_model=hrf,
                 t_r=tr_length,
-                smoothing_fwhm=3.,
+                smoothing_fwhm=1.,
                 verbose=True,
                 n_jobs=multiprocessing.cpu_count() - 1,
-                noise_model='ar1',
+                noise_model='ols',
                 memory=tmp_dir
         )
     epis = [nib.load(os.path.join(run_dir, fname)) for run_dir in run_dirs]
+
+    # estimate high variance confounds
+    with Pool() as p:
+        confounds = p.map(_confound, epis)
+    index = design_matrices[0].index
+    design_matrices = [pd.concat([dm, confounds[i].set_index(index)], axis=1) for i, dm in enumerate(design_matrices)]
     fmri_glm = fmri_glm.fit(epis, design_matrices=design_matrices)
+    plot_design_matrix(fmri_glm.design_matrices_[0])
+    plt.show()
     code = random.randint(0, 999999)
     glm_path = os.path.join(output_dir, "glm_model_" + str(code) + ".pkl")
     with open(glm_path, "wb") as f:

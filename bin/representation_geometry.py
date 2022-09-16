@@ -154,7 +154,7 @@ def pca(betas: torch.Tensor, brain_mask=None, n_components=2, noisy=False):
     sort_idx = torch.argsort(eig_vals, descending=True)
     eig_vecs = eig_vecs[:, sort_idx]
     eig_vals = eig_vals[sort_idx]
-    eig_vecs = eig_vecs * eig_vals
+    # eig_vecs = eig_vecs * eig_vals
     if noisy:
         proj_mat = eig_vecs[:, 1:n_components+1]
     else:

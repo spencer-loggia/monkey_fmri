@@ -697,22 +697,18 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
         cond_good = True
         # check all conditions are present
         missing_conds = []
-        for cond_idx in condition_names.keys():
-            if int(cond_idx) not in clist:
-                print("WARNING: Session", c_name, "does not contain condition", cond_idx, "named",
-                      condition_names[cond_idx], "Analysis including this condition wil be invalid.")
-                missing_conds.append((cond_idx, condition_names[cond_idx]))
+        if condition_groups is None:
+            cond_names_list = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_conditions]
+        else:
+            cond_names_list = list(condition_groups.keys())
         if cond_good:
             dm = analysis.design_matrix_from_run_list(clist, num_conditions, base_conditions, condition_names,
                                                       condition_groups, tr_length=3., mion=True)
-            for idx, name in missing_conds:
-                dm.insert(int(idx), name, 0)
+            for cond in cond_names_list:
+                if cond not in dm.columns:
+                    dm.insert(0, cond, 0)
             # reorder design matrix
             cols = list(dm.columns)
-            if condition_groups is None:
-                cond_names_list = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_conditions]
-            else:
-                cond_names_list = list(condition_groups.keys())
             for i, cn in enumerate(cond_names_list):
                 cols[i] = cn
             dm = dm[cols]
