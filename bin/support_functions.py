@@ -694,28 +694,9 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
         else:
             clist = [int(c) for c in clist]
 
-        cond_good = True
-        # check all conditions are present
-        missing_conds = []
-        if condition_groups is None:
-            cond_names_list = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_conditions]
-        else:
-            cond_names_list = list(condition_groups.keys())
-        if cond_good:
-            dm = analysis.design_matrix_from_run_list(clist, num_conditions, base_conditions, condition_names,
-                                                      condition_groups, tr_length=3., mion=True)
-            for cond in cond_names_list:
-                if cond not in dm.columns:
-                    dm.insert(0, cond, 0)
-            # reorder design matrix
-            cols = list(dm.columns)
-            for i, cn in enumerate(cond_names_list):
-                cols[i] = cn
-            dm = dm[cols]
-            if show_dm:
-                plt.imshow(dm, aspect=.1)
-                plt.show()
-            design_matrices.append(dm)
+        dm = analysis.design_matrix_from_run_list(clist, num_conditions, base_conditions, condition_names,
+                                                  condition_groups, tr_length=3., mion=True)
+        design_matrices.append(dm)
         if sess_name in paradigm_data['order_number_definitions']:
             paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
         else:
@@ -754,6 +735,11 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     num_conditions = int(paradigm_data['num_conditions'])
     is_block_design = paradigm_data['is_block']
     runtime_order_defs = paradigm_data['is_runtime_defined']
+    if "tr_length" in paradigm_data:
+        tr_length = paradigm_data["tr_length"]
+    else:
+        tr_length = input_control.numeric_input("No tr length defined in paradigm. What tr length (secs) should we use?")
+
     condition_groups = None
     if 'condition_groups' in paradigm_data:
         condition_groups = paradigm_data['condition_groups']
@@ -782,11 +768,11 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
                     sess_dm = analysis.design_matrix_from_order_def(block_length, num_blocks, num_conditions, order,
                                                                     base_conditions,
                                                                     condition_names=condition_names,
-                                                                    tr_length=3.,
+                                                                    tr_length=tr_length,
                                                                     mion=mion)
                 else:
                     sess_dm = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions,
-                                                                   condition_names, tr_length=3., mion=mion)
+                                                                   condition_names, condition_groups, tr_length=tr_length, mion=mion)
                 sess_dms.append(sess_dm)
             design_matrices += sess_dms
 
@@ -795,7 +781,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     if out_dir is None:
         out_dir = os.path.dirname(source[0][0])
     glm_path = analysis.nilearn_glm(complete_source, design_matrices, base_conditions,
-                                    output_dir=out_dir, fname=fname, mion=mion, tr_length=3.)
+                                    output_dir=out_dir, fname=fname, mion=mion, tr_length=tr_length)
     # out_paths, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
     #                                                       fname=fname, mion=mion, use_python_mp=False, auto_conv=False,
     #                                                       tr=3)

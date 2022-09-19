@@ -475,6 +475,18 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
         hrf = "spm + derivative"
     frames = np.arange(num_trs) * tr_length
     dm = _make_nl_dm(frames, time_df, hrf)
+    if condition_groups is None:
+        cond_names_list = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_condition_idxs]
+    else:
+        cond_names_list = list(condition_groups.keys())
+    for cond in cond_names_list:
+        if cond not in dm.columns:
+            dm.insert(0, cond, 0)
+    # reorder design matrix
+    cols = list(dm.columns)
+    for i, cn in enumerate(cond_names_list):
+        cols[i] = cn
+    dm = dm[cols]
     return dm
 
 

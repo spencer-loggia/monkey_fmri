@@ -17,6 +17,17 @@ def bool_input(msg: str):
     return tkn == 'y'
 
 
+def numeric_input(msg: str):
+    tkn = ''
+    while not tkn.isnumeric():
+        tkn = input("msg")
+    return float(tkn)
+
+
+def int_input(msg: str):
+    return int(numeric_input(msg))
+
+
 def int_list_input(msg: str):
     grammatical = False
     nums = []
