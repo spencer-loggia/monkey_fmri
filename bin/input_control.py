@@ -20,7 +20,7 @@ def bool_input(msg: str):
 def numeric_input(msg: str):
     tkn = ''
     while not tkn.isnumeric():
-        tkn = input("msg")
+        tkn = input(msg)
     return float(tkn)
 
 

@@ -91,7 +91,7 @@ def _create_dir_if_needed(base: str, name: str):
 
 
 def _confound(epi):
-    return pd.DataFrame(high_variance_confounds(epi, percentile=1))
+    return pd.DataFrame(high_variance_confounds(epi, percentile=.5, n_confounds=3))
 
 
 def ts_smooth(input_ts: np.ndarray, kernel_std=1., temporal_smoothing=True):
@@ -380,7 +380,7 @@ def _make_nl_dm(frames, time_df, hrf):
     while not svd_converge and trys < 4:
         try:
             dm = first_level.make_first_level_design_matrix(frames, time_df, hrf,
-                                                            drift_model='cosine')
+                                                            drift_model='cosine', high_pass=.003)
         except (ValueError, np.linalg.LinAlgError):
             trys += 1
             continue
@@ -591,7 +591,7 @@ def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_con
                 minimize_memory=True,
                 hrf_model=hrf,
                 t_r=tr_length,
-                smoothing_fwhm=1.,
+                smoothing_fwhm=2.,
                 verbose=True,
                 n_jobs=multiprocessing.cpu_count() - 1,
                 noise_model='ols',
@@ -600,12 +600,18 @@ def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_con
     epis = [nib.load(os.path.join(run_dir, fname)) for run_dir in run_dirs]
 
     # estimate high variance confounds
+    print("TRY: HIGH VAR CONFOUND ESTIMATION")
     with Pool() as p:
         confounds = p.map(_confound, epis)
     index = design_matrices[0].index
     design_matrices = [pd.concat([dm, confounds[i].set_index(index)], axis=1) for i, dm in enumerate(design_matrices)]
     fmri_glm = fmri_glm.fit(epis, design_matrices=design_matrices)
-    plot_design_matrix(fmri_glm.design_matrices_[0])
+    fig, axs = plt.subplots(2)
+    dm = fmri_glm.design_matrices_[0]
+    dms = np.stack([dm.to_numpy() for dm in fmri_glm.design_matrices_], axis=0).mean(axis=0)
+    dms = pd.DataFrame(data=dms, index=dm.index, columns=dm.columns)
+    plot_design_matrix(dms, ax=axs[0])
+    plot_design_matrix(dm, ax=axs[1])
     plt.show()
     code = random.randint(0, 999999)
     glm_path = os.path.join(output_dir, "glm_model_" + str(code) + ".pkl")

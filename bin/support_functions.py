@@ -498,6 +498,9 @@ def _create_paradigm():
                                                 "future convenience and reproducibility, unless your orders are in "
                                                 "someway stochastic)")
     para_def_dict['is_runtime_defined'] = not predefine_orders
+    tr_len = input_control.numeric_input("How many seconds per TR? (Enter -1 if can be variable.)")
+    if tr_len > 0:
+        para_def_dict['lr_length'] = tr_len
 
     if predefine_orders:
         block_design = input_control.bool_input('Define stimuli order using standard block definitions? Otherwise must '
@@ -662,7 +665,7 @@ def create_load_ima_order_map(source):
 
 def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
                                           base_conditions, sess_dir, sess_name, paradigm_data,
-                                          condition_groups, show_dm=True):
+                                          condition_groups, tr_length):
     design_matrices = []
     print("Stimuli orders are defined manually at runtime for this paradigm. "
           "Please load order csv file (rows are trs, cols are IMAs)")
@@ -695,7 +698,7 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
             clist = [int(c) for c in clist]
 
         dm = analysis.design_matrix_from_run_list(clist, num_conditions, base_conditions, condition_names,
-                                                  condition_groups, tr_length=3., mion=True)
+                                                  condition_groups, tr_length=tr_length, mion=True)
         design_matrices.append(dm)
         if sess_name in paradigm_data['order_number_definitions']:
             paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
@@ -753,7 +756,8 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
         complete_source += source[i]
         if runtime_order_defs:
             sess_dms = _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
-                                                             base_conditions, sess_dir, sess_name, paradigm_data, condition_groups)
+                                                             base_conditions, sess_dir, sess_name, paradigm_data,
+                                                             condition_groups, tr_length)
             with open(paradigm_path, 'w') as f:
                 json.dump(paradigm_data, f, indent=4)
             design_matrices += sess_dms
@@ -782,9 +786,6 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
         out_dir = os.path.dirname(source[0][0])
     glm_path = analysis.nilearn_glm(complete_source, design_matrices, base_conditions,
                                     output_dir=out_dir, fname=fname, mion=mion, tr_length=tr_length)
-    # out_paths, _ = analysis.get_beta_coefficent_matrix(source, design_matrices, base_conditions, output_dir=sess_dir,
-    #                                                       fname=fname, mion=mion, use_python_mp=False, auto_conv=False,
-    #                                                       tr=3)
     print("Run Level Beta Coefficient Matrices Created")
     return glm_path
 
