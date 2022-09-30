@@ -799,6 +799,8 @@ def create_contrast(beta_path, paradigm_path):
         paradigm_data = json.load(f)
     contrast_descriptions = paradigm_data['contrast_descriptions']
     base_case = paradigm_data["base_case_condition"]
+    if 'condition_groups' in paradigm_data and len(paradigm_data['condition_groups']) > 0:
+        base_case = None
     contrast_def = list(zip(*paradigm_data['desired_contrasts']))
     contrast_def = np.array([c for i, c in enumerate(contrast_def) if i != base_case], dtype=float)
     contrast_paths = analysis.nilearn_contrasts(beta_path, contrast_def, contrast_descriptions, output_dir=sess_dir)

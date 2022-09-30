@@ -380,7 +380,7 @@ def _make_nl_dm(frames, time_df, hrf):
     while not svd_converge and trys < 4:
         try:
             dm = first_level.make_first_level_design_matrix(frames, time_df, hrf,
-                                                            drift_model='cosine', high_pass=.003)
+                                                            drift_model='cosine', high_pass=.0075)
         except (ValueError, np.linalg.LinAlgError):
             trys += 1
             continue
@@ -578,7 +578,7 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
     return beta_paths, avg_hemo
 
 
-def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, tr_length=3.):
+def nilearn_glm(run_dirs: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, tr_length=3.):
     if mion:
         hrf = "mion"
     else:
@@ -591,7 +591,7 @@ def nilearn_glm(run_dirs: List[str], design_matrices: List[np.ndarray], base_con
                 minimize_memory=True,
                 hrf_model=hrf,
                 t_r=tr_length,
-                smoothing_fwhm=2.,
+                smoothing_fwhm=1.,
                 verbose=True,
                 n_jobs=multiprocessing.cpu_count() - 1,
                 noise_model='ols',
