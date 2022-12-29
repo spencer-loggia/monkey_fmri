@@ -1,3 +1,4 @@
+import copy
 import multiprocessing
 import pickle
 import typing
@@ -29,6 +30,12 @@ from subprocess import call
 
 
 # subject support function must be operating with working directory appropriately set
+
+def _env_setup():
+    subj_root = os.environ.get('FMRI_WORK_DIR')
+    project_root = os.path.join(subj_root, '..', '..')
+    os.chdir(project_root)
+    return subj_root, project_root
 
 
 def include_patterns(*patterns):
@@ -65,9 +72,7 @@ def include_patterns(*patterns):
 
 def get_images(null, *argv):
     session_id = argv[0]
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     from_dicom = input_control.bool_input("load new images from dicoms?")
     f_dir = preprocess._create_dir_if_needed(subj_root, 'sessions')
     if from_dicom:
@@ -85,10 +90,8 @@ def get_images(null, *argv):
 
 def get_epis(*argv):
     session_id = argv[0]
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
-    from_dicom = input_control.bool_input("load new session dicoms? (otherwise must import niftis from folder)")
+    subj_root, project_root = _env_setup()
+    from_dicom = input_control.bool_input("load new session dicoms? (otherwise must import niftis from exp)")
     f_dir = preprocess._create_dir_if_needed(subj_root, 'sessions')
     if from_dicom:
         dicom_dir = input_control.dir_input('Enter directory containing DICOMS from scans we are trying to analyze')
@@ -129,6 +132,18 @@ def get_functional_target():
     return os.path.join(subj_root, 'mri', 'functional_target.nii')
 
 
+def get_fixation_csv(source):
+    path = input_control.dir_input("Path to fixation csv file (length trs, header with IMAs)")
+    fix_data = pd.read_csv(path)
+    for run_dir in source:
+        ima = os.path.basename(run_dir)
+        try:
+            ima_fix_data = fix_data[ima]
+            ima_fix_data.to_csv(os.path.join(run_dir, "fixation.csv"))
+        except KeyError:
+            pass
+
+
 def dilate_mask(inpath, outpath=None):
     """
     Simple function to call fslmath's dilM
@@ -156,9 +171,7 @@ def downsample_anatomical(inpath, factor=[2, 2, 2], out_dir=None, affine_scale=N
     :param resample:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     source_dir = os.path.dirname(inpath)
     name = os.path.basename(inpath)
     out_name = 'ds_' + name.split('.')[0] + '.nii'
@@ -176,9 +189,7 @@ def downsample_anatomical(inpath, factor=[2, 2, 2], out_dir=None, affine_scale=N
 def downsample_vol_rois(roi_dict, ds_roi_dict, factor=[2, 2, 2], affine_scale=None, resample='nearest',
                         output_dir=None):
     options = list(roi_dict)
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     choice = input_control.select_option_input(options)
     roi_set_name = options[choice]
     roi_set_path = roi_dict[roi_set_name]
@@ -208,9 +219,7 @@ def downsample_vol_rois_cmdline_wrap(dir, factor=[2, 2, 2], affine_scale=None, r
 
 
 def bandpass_wrapper(functional_dirs, paradigm_path):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
     blocklength = paradigm_data['block_length_trs']
@@ -224,9 +233,7 @@ def coreg_wrapper(source_space_vol_path, target_space_vol_path, full=False):
     :param target_space_vol_path:
     :return: forward_transform_path, inverse_transform_path
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     out = os.path.join(os.path.dirname(source_space_vol_path), 'coreg_3df.nii')
     return tuple([os.path.relpath(f, project_root) for f in preprocess.antsCoReg(os.path.abspath(target_space_vol_path),
                                                                                  os.path.abspath(source_space_vol_path),
@@ -244,9 +251,7 @@ def _apply_warp_wrapper(s, vol, out, transforms, interp, type_code, dim, invert,
 
 def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None, type_code=0,
                dim=3, interp='Linear'):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     if type(source) is not list:
         source = [source]
     transforms = [fine_transform_path, forward_gross_transform_path]
@@ -270,9 +275,7 @@ def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, f
 
 
 def apply_warp_4d(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     return apply_warp(source, vol_in_target_space, forward_gross_transform_path=forward_gross_transform_path,
                       fine_transform_path=fine_transform_path, type_code=3, dim=3)
 
@@ -285,7 +288,7 @@ def apply_warp_4d_refactor(source, vol_in_target_space, forward_gross_transform_
 
 
 def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path,
-                       out=None):
+                       out=None, type_code=0, dim=3, interp='NearestNeighbor'):
     """
     :param source:
     :param vol_in_target_space:
@@ -294,16 +297,14 @@ def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path
     :param out:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     if out is None:
         out = os.path.join(os.path.dirname(vol_in_target_space), 'inverse_trans_' + os.path.basename(source))
     inverse_transforms = [os.path.abspath(forward_gross_transform_path), os.path.abspath(reverse_fine_transform_path)]
     to_invert = [True, False]
     preprocess.antsApplyTransforms(os.path.abspath(source), os.path.abspath(vol_in_target_space), os.path.abspath(out),
-                                   inverse_transforms, 'NearestNeighbor',
-                                   img_type_code=0, invertTrans=to_invert)
+                                   inverse_transforms, interp,
+                                   img_type_code=type_code, dim=dim, invertTrans=to_invert)
     return os.path.relpath(out, project_root)
 
 
@@ -313,9 +314,7 @@ def apply_warp_inverse_vol_roi_dir(ds_vol_roi_dict, vol_in_target_space, forward
     Slated for removal
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     options = list(ds_vol_roi_dict)
     choice = input_control.select_option_input(options)
     roi_set_name = options[choice]
@@ -341,9 +340,7 @@ def apply_binary_mask_functional(source, mask, fname='reg_moco.nii.gz'):
 
 
 def apply_binary_mask_vol(src_vol, mask):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     out = os.path.join(os.path.dirname(src_vol), 'masked_' + os.path.basename(src_vol).split('.')[0] + '.nii.gz')
     src_nii = nibabel.load(src_vol)
     mask_nii = nibabel.load(mask)
@@ -353,9 +350,7 @@ def apply_binary_mask_vol(src_vol, mask):
 
 
 def create_slice_overlays(function_reg_vol, anatomical, reg_contrasts):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     out_paths = []
     sig_thresh = float(input("enter significance threshold (std. dev.): "))
     sig_sat = float(input("enter significance saturation point (std. dev.): "))
@@ -375,9 +370,7 @@ def get_3d_rep(src: Union[List[str], str]):
     :param src:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     return [os.path.relpath(f, project_root) for f in preprocess.sample_frames(src, 5)]
 
 
@@ -405,9 +398,7 @@ def itk_manual(source_vol, template):
     :param template: target vol
     :return: tuple(transform_path, transformed_nii_path)
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     out_dir = os.path.dirname(source_vol)
     return tuple([os.path.relpath(p, project_root) for p in preprocess._itkSnapManual(template, source_vol, out_dir)])
 
@@ -467,9 +458,7 @@ def _order_def_from_nilearn_timing(condition_integerizer):
 
 
 def _create_paradigm():
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     proj_config = 'config.json'
     with open(proj_config, 'r') as f:
         proj_data = json.load(f)
@@ -617,9 +606,7 @@ def _create_paradigm():
 
 
 def create_load_paradigm(add_new_option=True):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     proj_config = os.path.abspath(os.path.join(project_root, 'config.json'))
     with open(proj_config, 'r') as f:
         config = json.load(f)
@@ -641,9 +628,7 @@ def create_load_paradigm(add_new_option=True):
 
 
 def create_load_ima_order_map(source):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     sess_dir = os.path.dirname(source[0])
     omap_path = os.path.relpath(os.path.join(sess_dir, 'ima_order_map.json'), project_root)
     if os.path.exists(omap_path):
@@ -665,8 +650,9 @@ def create_load_ima_order_map(source):
 
 def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
                                           base_conditions, sess_dir, sess_name, paradigm_data,
-                                          condition_groups, tr_length):
+                                          condition_groups, tr_length, run_wise=False):
     design_matrices = []
+
     print("Stimuli orders are defined manually at runtime for this paradigm. "
           "Please load order csv file (rows are trs, cols are IMAs)")
     runlist = os.path.join(sess_dir, "runlist.txt")
@@ -698,7 +684,7 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
             clist = [int(c) for c in clist]
 
         dm = analysis.design_matrix_from_run_list(clist, num_conditions, base_conditions, condition_names,
-                                                  condition_groups, tr_length=tr_length, mion=True)
+                                                  condition_groups, tr_length=tr_length, mion=True, reorder=(not run_wise))
         design_matrices.append(dm)
         if sess_name in paradigm_data['order_number_definitions']:
             paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
@@ -708,28 +694,14 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
     return design_matrices
 
 
-def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii', out_dir=None):
-    """
-    :param source: list of lists of runs for each session
-    :param paradigm_path:
-    :param ima_order_map_path: list of ima order maps for each session
-    :param mion:
-    :param fname:
-    :return:
-    """
+def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True,
+                        run_wise=False, use_cond_groups=True):
     if not (type(source[0]) in (list, tuple)):
         source = [source]
     if not (type(ima_order_map_path) in (list, tuple)):
         ima_order_map_path = [ima_order_map_path]
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
-
-    if mion is None:
-        mion = False
-    assert type(mion) is bool
 
     base_conditions = [paradigm_data['base_case_condition']]
     condition_names = paradigm_data['condition_integerizer']
@@ -744,7 +716,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
         tr_length = input_control.numeric_input("No tr length defined in paradigm. What tr length (secs) should we use?")
 
     condition_groups = None
-    if 'condition_groups' in paradigm_data:
+    if 'condition_groups' in paradigm_data and use_cond_groups:
         condition_groups = paradigm_data['condition_groups']
     design_matrices = []
     complete_source = []
@@ -757,7 +729,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
         if runtime_order_defs:
             sess_dms = _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
                                                              base_conditions, sess_dir, sess_name, paradigm_data,
-                                                             condition_groups, tr_length)
+                                                             condition_groups, tr_length, run_wise=run_wise)
             with open(paradigm_path, 'w') as f:
                 json.dump(paradigm_data, f, indent=4)
             design_matrices += sess_dms
@@ -777,29 +749,62 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
                 else:
                     sess_dm = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions,
                                                                    condition_names, condition_groups, tr_length=tr_length, mion=mion)
+                fix_path = os.path.join(ima, "fixation.csv")
+                if os.path.exists(fix_path):
+                    fix_data = pd.read_csv(fix_path).to_numpy(dtype=float).view((-1, 1))
+                    sess_dm = np.concatenate([sess_dm, fix_data], axis=1)
+                else:
+                    print("WARN: No fixation data provided for session", sess_name, "ima", ima)
                 sess_dms.append(sess_dm)
             design_matrices += sess_dms
+    return design_matrices, complete_source, tr_length
+
+
+def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii', out_dir=None, run_wise=False, smooth=3., use_cond_groups=True):
+    """
+    :param source: list of lists of runs for each session
+    :param paradigm_path:
+    :param ima_order_map_path: list of ima order maps for each session
+    :param mion:
+    :param fname:
+    :return:
+
+    """
+    if not (type(source[0]) in (list, tuple)):
+        source = [source]
+    if not (type(ima_order_map_path) in (list, tuple)):
+        ima_order_map_path = [ima_order_map_path]
+    subj_root, project_root = _env_setup()
+    with open(paradigm_path, 'r') as f:
+        paradigm_data = json.load(f)
+
+    if mion is None:
+        mion = False
+    assert type(mion) is bool
+
+    base_conditions = [paradigm_data['base_case_condition']]
+
+    design_matrices, complete_source, tr_length = get_design_matrices(paradigm_path, ima_order_map_path, source, mion,
+                                                                      run_wise=run_wise, use_cond_groups=use_cond_groups)
 
     print("using mion: ", mion)
     print('source fname: ', fname)
     if out_dir is None:
         out_dir = os.path.dirname(source[0][0])
     glm_path = analysis.nilearn_glm(complete_source, design_matrices, base_conditions,
-                                    output_dir=out_dir, fname=fname, mion=mion, tr_length=tr_length)
+                                    output_dir=out_dir, fname=fname, mion=mion, tr_length=tr_length, smooth=smooth)
     print("Run Level Beta Coefficient Matrices Created")
     return glm_path
 
 
-def create_contrast(beta_path, paradigm_path):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+def create_contrast(beta_path, paradigm_path, use_cond_groups=True):
+    subj_root, project_root = _env_setup()
     sess_dir = os.path.relpath(os.path.dirname(beta_path), project_root)
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
     contrast_descriptions = paradigm_data['contrast_descriptions']
     base_case = paradigm_data["base_case_condition"]
-    if 'condition_groups' in paradigm_data and len(paradigm_data['condition_groups']) > 0:
+    if 'condition_groups' in paradigm_data and len(paradigm_data['condition_groups']) > 0 and use_cond_groups:
         base_case = None
     contrast_def = list(zip(*paradigm_data['desired_contrasts']))
     contrast_def = np.array([c for i, c in enumerate(contrast_def) if i != base_case], dtype=float)
@@ -808,10 +813,8 @@ def create_contrast(beta_path, paradigm_path):
     return contrast_paths
 
 
-def construct_subject_glm(para, mion=True):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+def construct_subject_glm(para, mion=True, run_wise=False, use_cond_groups=True):
+    subj_root, project_root = _env_setup()
     proj_config_path = 'config.json'
     with open(para, 'r') as f:
         paradigm_data = json.load(f)
@@ -837,10 +840,87 @@ def construct_subject_glm(para, mion=True):
             sources[-1].append(session_path)
             total_runs += 1
     total_path = os.path.relpath(os.path.join(subj_root, 'analysis'), project_root)
-    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii', out_dir=total_path)
+    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii', out_dir=total_path, run_wise=run_wise, use_cond_groups=True)
     print('Constructed subject beta matrix for paradigm', para_name, 'using', len(ima_order_maps), "sessions and",
           total_runs, ' individual runs')
     return glm_path
+
+
+def get_run_betas(para, mion=True):
+    import warnings
+    warnings.filterwarnings("ignore")
+    subj_root, project_root = _env_setup()
+    proj_config_path = 'config.json'
+    with open(para, 'r') as f:
+        paradigm_data = json.load(f)
+    subject = os.path.basename(subj_root)
+    with open(proj_config_path, 'r') as f:
+        proj_config = json.load(f)
+    para_name = paradigm_data['name']
+    sessions_dict = proj_config['data_map'][paradigm_data['name']][subject]
+    base_conditions = [paradigm_data['base_case_condition']]
+    condition_groups = paradigm_data['condition_groups']
+
+    if len(sessions_dict) == 0:
+        print("No Runs Have Been Promoted From Session to Subject Level.")
+        return None, None
+    data_log = {"condition_name": [],
+                "condition_integer": [],
+                "condition_group": [],
+                "beta_path": [],
+                "session": [],
+                "ima": []}
+    # creates condition for every stimuli type instead of every stimuli group
+    full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False)
+
+    full_cond_glm = pickle.load(open(full_cond_glm_path, "rb"))
+    contrast_matrix_template = [np.zeros((len(full_cond_glm.design_matrices_[0].columns),))
+                                for _ in range(len(full_cond_glm.design_matrices_))]
+    lindex = 0
+    for key in sessions_dict:
+        imas = sessions_dict[key]['imas_used']
+        sess_path = os.path.dirname(sessions_dict[key]['session_net'])
+        sess = os.path.basename(sess_path)
+        args = []
+        for ima in imas:
+            run_dir = os.path.join(sess_path, str(ima))
+            np_dm = full_cond_glm.design_matrices_[lindex].to_numpy()
+            if mion:
+                conds = np.nonzero(np_dm.sum(axis=0) < 0)[0]  # what conditions are present in this dm??
+            else:
+                conds = np.nonzero(np_dm.sum(axis=0) > 0)[0]
+            constant_idx = list(full_cond_glm.design_matrices_[lindex].columns).index("constant")
+            for cond in conds:
+                para_index = cond
+                if base_conditions[0] <= cond < constant_idx:
+                    para_index += 1
+                parent_group = None
+                for group in condition_groups.keys():
+                    if int(para_index) in condition_groups[group]:
+                        parent_group = group
+                if parent_group is None:
+                    continue
+                local_contrast_matrix = copy.deepcopy(contrast_matrix_template)
+                local_contrast_matrix[lindex][cond] = 1
+                local_contrast_matrix[lindex][constant_idx] = -1
+                args.append((local_contrast_matrix, full_cond_glm))
+                cond_name = paradigm_data['condition_integerizer'][str(para_index)]
+                out_path = os.path.join(run_dir, cond_name + "_instance_beta.nii.gz")
+                # sess_out_paths.append(out_path)
+                data_log["condition_name"].append(cond_name)
+                data_log["condition_group"].append(parent_group)
+                data_log["condition_integer"].append(int(para_index))
+                data_log["beta_path"].append(out_path)
+                data_log["session"].append(sess)
+                data_log["ima"].append(ima)
+                instance_beta = full_cond_glm.compute_contrast(local_contrast_matrix, stat_type='t', output_type='effect_size')
+                nibabel.save(instance_beta, out_path)
+            lindex += 1
+
+    data_log_out = os.path.join(subj_root, "analysis", para_name + "_stimulus_response_data_key.csv")
+    data_log = pandas.DataFrame.from_dict(data_log, orient='columns')
+    data_log.to_csv(data_log_out)
+    return data_log_out
 
 
 def beta_from_glm():
@@ -858,9 +938,7 @@ def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *a
     :param argv:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     session_id = str(argv[0])
     with open(paradigm_path, 'r') as f:
         paradigm_data = json.load(f)
@@ -882,9 +960,7 @@ def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *a
 
 
 def delete_paradigm(paradigm_path):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     proj_config_path = 'config.json'
     with open(proj_config_path, 'r') as f:
         proj_config = json.load(f)
@@ -930,8 +1006,7 @@ def generate_subject_overlays(para_path, contrast_paths, white_surfs, t1_path, d
     :param ds_t1_path:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
+    subj_root, project_root = _env_setup()
     with open(para_path, 'r') as f:
         para_data = json.load(f)
     os.chdir(project_root)
@@ -958,9 +1033,7 @@ def define_surface_rois(surface_overlays: list, surf_labels: dict):
     :param surf_labels:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     preprocess._create_dir_if_needed(subj_root, 'rois')
     roi_set = input("Name the roi set you are creating. e.g. face-areas: ")
     preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois'), roi_set)
@@ -985,9 +1058,7 @@ def manual_volume_rois(ds_t1: str, paradigm_complete: bool, ds_vol_rois: dict):
     if paradigm_complete is False:
         print("Please create subject contrasts for at least one paradigm before defining functional ROIs.")
         return None
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     preprocess._create_dir_if_needed(subj_root, 'rois')
     roi_set = input("Name the roi set you are creating. e.g. face-areas: ")
     preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois'), roi_set)
@@ -1006,9 +1077,7 @@ def manual_volume_rois(ds_t1: str, paradigm_complete: bool, ds_vol_rois: dict):
 
 
 def automatic_volume_rois(paradigm_file, paradigm_contrasts: List[str], ds_vol_rois):
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     preprocess._create_dir_if_needed(subj_root, 'rois')
     with open(paradigm_file, 'r') as f:
         paradigm_data = json.load(f)
@@ -1041,9 +1110,7 @@ def surf_labels_to_vol_mask(surf_labels: dict, white_surface, t1, ds_t1, vol_roi
     :param ds_t1:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     roi_options = list(surf_labels.keys())
     choice = input_control.select_option_input(roi_options)
     roi_set_name = roi_options[choice]
@@ -1057,9 +1124,7 @@ def surf_labels_to_vol_mask(surf_labels: dict, white_surface, t1, ds_t1, vol_roi
 
 
 def load_t1_data():
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     cur_t1_path = input_control.dir_input("enter path to t1: ")
     cur_t1_mask_path = input_control.dir_input("enter path to t1 mask: ")
     t1_name = os.path.basename(cur_t1_path)
@@ -1078,9 +1143,7 @@ def load_t1_data():
 
 
 def load_white_surfs():
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     surfs = []
     for hemi in ['left', 'right']:
         cur_surf_path = input_control.dir_input("enter path to " + hemi + " surf: ")
@@ -1143,9 +1206,7 @@ def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
     :param fname:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     best_disp = 9999999
     besp_disp_idx = -1
     if isinstance(targets, str):
@@ -1213,9 +1274,7 @@ def time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradig
     :param post_offset_blocks:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     conditions = paradigm_data['condition_integerizer']
     order_def = paradigm_data['order_number_definitions']
     block_length = paradigm_data['block_length_trs']
@@ -1247,9 +1306,7 @@ def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
     :return:
     """
     options = list(vol_rois.keys())
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     subj = os.path.basename(subj_root)
     config_path = 'config.json'
     with open(config_path, 'r') as f:
@@ -1353,9 +1410,7 @@ def binary_masks_from_int_atlas(atlas: str,
     :param desired_indices:
     :return:
     """
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
-    os.chdir(project_root)
+    subj_root, project_root = _env_setup()
     atlas_nii = nibabel.load(atlas)
     atlas_data = np.array(atlas_nii.get_fdata())
     out_paths = []

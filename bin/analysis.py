@@ -2,6 +2,10 @@ import copy
 import itertools
 import math
 import multiprocessing
+
+if multiprocessing.get_start_method(allow_none=True) is None:
+    multiprocessing.set_start_method("spawn", force=True)
+
 import random
 import traceback
 
@@ -91,7 +95,7 @@ def _create_dir_if_needed(base: str, name: str):
 
 
 def _confound(epi):
-    return pd.DataFrame(high_variance_confounds(epi, percentile=.5, n_confounds=3))
+    return pd.DataFrame(high_variance_confounds(epi, percentile=2, n_confounds=4))
 
 
 def ts_smooth(input_ts: np.ndarray, kernel_std=1., temporal_smoothing=True):
@@ -380,7 +384,7 @@ def _make_nl_dm(frames, time_df, hrf):
     while not svd_converge and trys < 4:
         try:
             dm = first_level.make_first_level_design_matrix(frames, time_df, hrf,
-                                                            drift_model='cosine', high_pass=.0075)
+                                                            drift_model='cosine', high_pass=.01)
         except (ValueError, np.linalg.LinAlgError):
             trys += 1
             continue
@@ -432,7 +436,8 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
 
 
 def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_condition_idxs: List[int],
-                                condition_names: dict, condition_groups: dict, tr_length=3.0, mion=True):
+                                condition_names: dict, condition_groups: dict, tr_length=3.0, mion=True,
+                                reorder=True):
     """
     Creates a design matrix from a list of lengths number of trs, holding the stimulus condition at each tr.
     Basically just onehot encodes the run_list, except base case conditions are given a constant value and a
@@ -440,6 +445,8 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     :param run_list:
     :param num_conditions:
     :param base_condition_idxs:
+    :param reorder: if true will make all features in paradigm present in dm. Otherwise, only present features will be
+                    in dm
     :return:
     """
     if type(run_list) is np.ndarray or type(run_list) is torch.Tensor:
@@ -475,18 +482,20 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
         hrf = "spm + derivative"
     frames = np.arange(num_trs) * tr_length
     dm = _make_nl_dm(frames, time_df, hrf)
-    if condition_groups is None:
+    if condition_groups is None or reorder is False:
         cond_names_list = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_condition_idxs]
     else:
         cond_names_list = list(condition_groups.keys())
-    for cond in cond_names_list:
-        if cond not in dm.columns:
-            dm.insert(0, cond, 0)
+
     # reorder design matrix
-    cols = list(dm.columns)
-    for i, cn in enumerate(cond_names_list):
-        cols[i] = cn
-    dm = dm[cols]
+    if reorder:
+        for cond in cond_names_list:
+            if cond not in dm.columns:
+                dm.insert(0, cond, 0)
+        cols = list(dm.columns)
+        for i, cn in enumerate(cond_names_list):
+            cols[i] = cn
+        dm = dm[cols]
     return dm
 
 
@@ -578,11 +587,13 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
     return beta_paths, avg_hemo
 
 
-def nilearn_glm(run_dirs: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, tr_length=3.):
+def nilearn_glm(run_dirs: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, tr_length=3., smooth=3):
     if mion:
         hrf = "mion"
+        min_onset = -40
     else:
         hrf = "spm + derivative"
+        min_onset = -24
     tmp_dir = './tmp_glm_cache'
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
@@ -591,7 +602,10 @@ def nilearn_glm(run_dirs: List[str], design_matrices: List[pd.DataFrame], base_c
                 minimize_memory=True,
                 hrf_model=hrf,
                 t_r=tr_length,
-                smoothing_fwhm=1.,
+                min_onset=min_onset,
+                slice_time_ref=.5,
+                smoothing_fwhm=smooth,
+                signal_scaling=False,
                 verbose=True,
                 n_jobs=multiprocessing.cpu_count() - 1,
                 noise_model='ols',
@@ -678,6 +692,7 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
     return out_paths
 
 
+
 def _find_scale_factor(high_res: np.ndarray, low_res: np.ndarray):
     """
     Computes the amount to scale one matrix to match the dims of another
@@ -721,7 +736,7 @@ def create_contrast_surface(anatomical_white_surface: str,
                                     version or the full version.
     :param orig_high_res_anatomical: The original high resolution anatomical scan image
     :param hemi: The hemisphere to process. (make sure surface file matches)
-    :param subject_id: name of subject (project folder)
+    :param subject_id: name of subject (project exp)
     """
     if hemi not in ['rh', 'lh']:
         raise ValueError('Hemi must be one of rh or lh.')
