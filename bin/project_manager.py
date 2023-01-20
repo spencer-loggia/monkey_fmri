@@ -2,6 +2,8 @@ import json
 import os
 import input_control
 from process_control_flow import DefaultSubjectControlNet
+import multiprocessing
+multiprocessing.set_start_method('spawn', force=True)
 
 
 def _create_dir_if_needed(base: str, name: str):

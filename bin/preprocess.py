@@ -202,6 +202,16 @@ def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
     mcflt.inputs.save_rms = True
     mcflt.cmdline
     return mcflt.run()
+    
+def _NORDIC_NOISE_MERGE(input_dirs: List[str], noise_path, filename='f_noise'):
+    """concatenates the noise image to the end of the timeseries"""
+    out_dirs = [os.path.join(os.path.dirname(input_dir), filename+'.nii.gz') for input_dir in input_dirs]
+
+    for input_dir,out_dir in zip(input_dirs,out_dirs):
+        cmd = 'fslmerge -t {} {} {}'.format(out_dir,input_dir,noise_path)
+        print(cmd)
+        subprocess.run(cmd, shell=True)
+    return out_dirs
 
 
 def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
@@ -218,14 +228,24 @@ def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
     print(b_path)
     os.chdir(b_path)
     if noise_path is None:
-        noise_path = 'None' # Matlab needs a text/char input, not None
+        noise_option = 0
+    else:
+        input_dirs = _NORDIC_NOISE_MERGE(input_dirs,noise_path) 
+        noise_img = nib.load(noise_path) 
+        if len(noise_img.shape) < 4:
+            noise_length = 1 
+        else:
+            noise_length = noise_img.shape[3]  
+        noise_option = noise_length	 
+    	
     cmd = '$MATLAB -nojvm -r '
-    fun = ' "monk_nordic({},{},{}); exit;"'.format("{'"+"','".join(input_dirs)+"'}", "'" + noise_path + "'", "'"+filename+"'")
+    fun = ' "monk_nordic({},{},{}); exit;"'.format("{'"+"','".join(input_dirs)+"'}",noise_option, "'"+filename+"'")
     cmd = cmd + fun
     print(cmd)
     subprocess.run(cmd, shell=True)
     os.chdir('..')
     out_dirs = [os.path.join(os.path.dirname(input_dir), filename+'.nii') for input_dir in input_dirs]
+    
     return out_dirs
 
 
@@ -684,7 +704,7 @@ def preform_nifti_registration(functional_input_dirs: List[str], transform_input
     :param functional_input_dirs: Directories where we expect to find scan directories containing 4D input niftis.
     :param transform_input_dir: (default: None) Directories where we expect to find scan directories containing combined lin,
                             non-lin transforms. If None assumed to be the same as input directories.
-    :param output:  (default: None) Parent folder to place scan directories containing transformed 4D niftis. If None
+    :param output:  (default: None) Parent exp to place scan directories containing transformed 4D niftis. If None
                     same as source.
     :param input_fname:  (default: 'moco.nii.gz') expected base filename for input 4D niftis.
     :param transform_fname:  (default: 'register.dat'):  expected base filename for registration transforms.

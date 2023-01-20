@@ -225,14 +225,16 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_node('paradigm_' + para_name, data=para_path, complete=True, bipartite=0,
                               type='json', generated=True, modified=str(datetime.datetime.now()))
         self.network.add_node('beta_' + para_name, data=None, generated=True, complete=False, bipartite=0, type='4d_volume',
-                              space='ds_t1_native')
+                              space='std_functional')
         self.network.add_node('glm_' + para_name, data=None, complete=False, generated=True, bipartite=0, type='model_object')
         self.network.add_node('contrasts_' + para_name, data=[], complete=False, generated=True, bipartite=0, type='volume',
-                              space='ds_t1_native')
+                              space='std_functional')
         self.network.add_node('reg_contrasts_' + para_name, data=[], complete=False, generated=True, bipartite=0, type='volume',
                               space='ds_t1_native')
         self.network.add_node('sigsurfaces_' + para_name, data=[], complete=False, generated=True, bipartite=0, type='overlay',
                               space='t1_native')
+        self.network.add_node('run_beta_log' + para_name, data=[], complete=False, generated=True, bipartite=0, type='overlay',
+                              space='std_functional')
 
         self.network.add_node('create_' + para_name + '_glm', generated=True, bipartite=1,
                               fxn='support_functions.construct_subject_glm',
@@ -260,6 +262,9 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         self.network.add_node('automatic_' + para_name + '_volume_rois', generated=True, bipartite=1,
                               fxn='support_functions.automatic_volume_rois')
+
+        self.network.add_node('create_' + para_name + 'run_betas', generated=True, bipartite=1, fxn='support_functions.get_run_betas')
+
         self.network.add_node('delete_paradigm_' + para_name, generated=True, bipartite=1, fxn='self.remove_paradigm_control_set')
 
         self.network.add_edge('add_new_paradigm', 'paradigm_' + para_name, order=0)  # 10
@@ -294,6 +299,9 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_edge('contrasts_' + para_name, 'automatic_' + para_name + '_volume_rois', order=1)
         self.network.add_edge('ds_volume_rois', 'automatic_' + para_name + '_volume_rois', order=2)
         self.network.add_edge('automatic_' + para_name + '_volume_rois', 'ds_volume_rois', order=0)
+
+        self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + 'run_betas', order=0)
+        self.network.add_edge('create_' + para_name + 'run_betas', 'run_beta_log' + para_name, order=0)
 
         self.serialize(os.path.join(subj_root, 'subject_net.json'))
         return para_path
@@ -572,7 +580,7 @@ class DefaultSessionControlNet(BaseControlNet):
 
         # Define functional data processing nodes
         self.network.add_node('get_images', argv=session_id, fxn='support_functions.get_images', bipartite=1,
-                              desc='Accept user input for path to session directory, load images into a dump folder')
+                              desc='Accept user input for path to session directory, load images into a dump exp')
         self.network.add_node('get_epi', argv=session_id, fxn='support_functions.get_epis', bipartite=1,
                               desc='Accept user input for path to session directory containing directories of dicoms or'
                                    ' a nifti, and load the data into project format (freesurfer convention)')

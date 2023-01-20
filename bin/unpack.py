@@ -18,7 +18,7 @@ def unpack(inDir,outDir,adj=False,dirdepth=5, nifti_name='f', ts_only=False):
     :param nifti_name: what to name output nifti
     :param inDir: Input directory where the dicom files live.
     :param outDir: Directory where the NIFTI files will go.
-    :param adj: True/False. Are images from the same series always in the same folder? Default False
+    :param adj: True/False. Are images from the same series always in the same exp? Default False
     :param dirdepth: 1-9. How many folders of depth to convert NIFTI files? Default 5.
     :return: 'Completed'
     """

@@ -1207,6 +1207,10 @@ def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
     :return:
     """
     subj_root, project_root = _env_setup()
+    config_path = 'config.json'
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    moco_mode = config["reg_settings"]["moco"]
     best_disp = 9999999
     besp_disp_idx = -1
     if isinstance(targets, str):
@@ -1230,14 +1234,15 @@ def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
                 os.rename(moco_file, rename_moco)
     print("Best average displacement: ", str(best_disp))
     print("Target chosen: " + targets[besp_disp_idx])
-    print("running final nonlinear warp...")
-    args = []
     ref = targets[besp_disp_idx]
-    for s in source:
-        mc = os.path.join(s, 'moco.nii.gz')
-        args.append((mc, ref, mc))
-    with multiprocessing.Pool() as p:
-        p.starmap(preprocess.nonlinear_moco, args)
+    if moco_mode == "nonlinear":
+        print("running final nonlinear warp...")
+        args = []
+        for s in source:
+            mc = os.path.join(s, 'moco.nii.gz')
+            args.append((mc, ref, mc))
+        with multiprocessing.Pool() as p:
+            p.starmap(preprocess.nonlinear_moco, args)
     return source, ref
 
 

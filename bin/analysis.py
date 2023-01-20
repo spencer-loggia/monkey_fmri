@@ -692,7 +692,6 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
     return out_paths
 
 
-
 def _find_scale_factor(high_res: np.ndarray, low_res: np.ndarray):
     """
     Computes the amount to scale one matrix to match the dims of another

@@ -113,7 +113,7 @@ class BrainMimic:
         cutoff = total_weights[cutoff_idx]
         for s, t, data in list(self.brain.edges(data=True)):
             if s == -1:
-                # cant disconnect stim
+                # cant disconnect exp
                 continue
             link_weight = torch.mean(torch.abs(data['sequence'][0].weight).flatten())
             if abs(link_weight) <= cutoff:
