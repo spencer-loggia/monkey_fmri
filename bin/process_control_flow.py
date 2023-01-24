@@ -549,6 +549,9 @@ class DefaultSessionControlNet(BaseControlNet):
                               space='epi_native')
         self.network.add_node('moco_epi', data=[], type='time_series', bipartite=0, complete=False, space='epi_native')
 
+        self.network.add_node('slice_time_motion_corrected_epi', data=[], type='time_series', bipartite=0,
+                              complete=False, space='epi_native')
+
         self.network.add_node('3d_epi_rep', data=None, type='volume', bipartite=0, complete=False, space='epi_native')
         self.network.add_node('3d_epi_rep_sphinx', data=None, type='volume', bipartite=0, complete=False,
                               space='epi_native')
@@ -607,6 +610,11 @@ class DefaultSessionControlNet(BaseControlNet):
                                    'or ANTs motion correction under the hood depending on package availability. FSL is '
                                    'preferred due to faster runtimes with similar results. If multiple targets are provided,'
                                    'returns motion correction that resulted in lowest displacement')
+
+        self.network.add_node('slice_time_correction', fxn='preprocess.slice_time_correction', bipartie=1,
+                              desc="Preforms slice timing correction on motion corrected functional data. Uses slice 0 "
+                                   "as reference. In current version assumes axial slices and interleaved acquisition.")
+
         self.network.add_node('select_3d_rep', fxn='support_functions.get_3d_rep', bipartite=1,
                               desc='Selects a frame from the middle of the run to use as the functional 3d '
                                    'representative volume. This volume defines the functional space. '
@@ -687,6 +695,9 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('3d_epi_rep_sphinx', 'motion_correction', order=1)  # 01
         self.network.add_edge('motion_correction', 'moco_epi', order=0)  # 10
         self.network.add_edge('motion_correction', '3d_epi_rep_sphinx', order=1)  # 10
+
+        self.network.add_edge('moco_epi', 'slice_timing_correction', order=0)
+        self.network.add_edge('slice_timing_correction', 'slice_time_motion_corrected_epi', order=0)
 
         self.network.add_edge('3d_epi_rep_sphinx', 'manual_registration', order=0)  # 01
         self.network.add_edge('functional_std', 'manual_registration', order=1)  # 01
