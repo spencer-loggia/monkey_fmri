@@ -180,6 +180,11 @@ class DefaultSubjectControlNet(BaseControlNet):
     def __init__(self, subject_name):
         super().__init__()
         self.network.graph['subject_name'] = subject_name
+        proj_config = 'config.json'
+        with open(proj_config, 'r') as f:
+            proj_data = json.load(f)
+        func2anat_is_nonlinear = proj_data["reg_settings"]["nonlinear_functional_rep_2_anat"]
+        self.network.graph['func2anat_nonlinear'] = func2anat_is_nonlinear
         self.initialize_processing_structure()
         self.init_head_states()
 
@@ -194,7 +199,7 @@ class DefaultSubjectControlNet(BaseControlNet):
         :return: path to session json
         """
         session_id = input("enter date of session")
-        subj_root = os.environ.get('FMRI_WORK_DIR')
+        subj_root, project_root = support_functions._env_setup()
         path = os.path.join(subj_root, 'sessions', session_id, 'session_net.json')
         session = DefaultSessionControlNet(session_id, self.network.nodes['functional_representative'],
                                            self.network.nodes['functional_representative_mask'],
@@ -207,7 +212,7 @@ class DefaultSubjectControlNet(BaseControlNet):
             mion = bool_input("Is this session using MION?")
             session.network.graph['is_mion'] = mion
         if 'scan_pos' not in session.network.graph or session.network.graph['scan_pos'] is None:
-            is_hfp = bool_input("Is the scan acquasition position Head-First-Prone (y) or Head-First-Suppine (n)? ")
+            is_hfp = bool_input("Is the scan acquisition position Head-First-Prone (y) or Head-First-Suppine (n)? ")
             if is_hfp:
                 session.network.graph['scan_pos'] = 'HFP'
             else:
@@ -394,7 +399,8 @@ class DefaultSubjectControlNet(BaseControlNet):
                               desc='Use ants coregistration to create a fine grained nonlinear mapping from the skull '
                                    'stripped manually aligned std epi rep to the downsampled t1. The manual registration got'
                                    ' the brains as overlapping as possible, now this attempts to morph the cortex to correct'
-                                   ' differences in white matter boundaries due to field warp in epi acquisition.')
+                                   ' differences in white matter boundaries due to field warp in epi acquisition.',
+                              argv=self.network.graph["func2anat_nonlinear"])
 
         self.network.add_node('create_functional_representative_mask', fxn='support_functions.apply_warp_inverse',
                               bipartite=1, desc="invert the t1 mask to create a masked functional image")
@@ -509,15 +515,19 @@ class DefaultSubjectControlNet(BaseControlNet):
 
 class DefaultSessionControlNet(BaseControlNet):
     """
-    In essensce, a wrapper for a wrapper for a directed bipartite networkx (nx) graph that defines the relationship
+    In essence, a wrapper for a wrapper for a directed bipartite networkx (nx) graph that defines the relationship
     between input or intermediate data files (bipartite=0) and data processing nodes (bipartite=1) the node attribute
-    "bipartite" is reserved by nx for defining graphs with more than one distict nodes sets without internel edges,
+    "bipartite" is reserved by nx for defining graphs with more than one distinct nodes sets without internel edges,
     and is used by algorithms that operate on such datastructures. This data structure describes how a session of fmri
     data must be processed to get different desired products
     """
 
     def __init__(self, session_id, func_rep_node, func_rep_masked_node, func_rep_mask_node, func_rep_dil_mask_node):
         super().__init__()
+        proj_config = 'config.json'
+        with open(proj_config, 'r') as f:
+            proj_data = json.load(f)
+        self.network.graph['sess2func_nonlinear'] = proj_data["reg_settings"]["nonlinear_session_2_functional_rep"]
         self.initialize_proccessing_structure(session_id, func_rep_node, func_rep_masked_node,
                                               func_rep_mask_node, func_rep_dil_mask_node)
         self.init_head_states()
@@ -612,7 +622,8 @@ class DefaultSessionControlNet(BaseControlNet):
                               desc='Use ants coregistration to create a fine grained nonlinear mapping from the skull '
                                    'stripped manually aligned epi rep to the downsampled t1. The manual registration got'
                                    ' the brains as overlapping as possible, now this attempts to morph the cortex to correct'
-                                   ' differences in white matter boundaries due to field warp in epi acquisition.')
+                                   ' differences in white matter boundaries due to field warp in epi acquisition.',
+                              argv=self.network.graph['sess2func_nonlinear'])
         self.network.add_node('apply_reg_epi_mask', fxn='support_functions.apply_binary_mask_vol', bipartite=1,
                               desc='Applys the downsampled t1 mask to the epi rep thats been manually registered to the '
                                    'ds t1, so that the epi can be nonlinear coregistered to the t1 without intereference from the skull')

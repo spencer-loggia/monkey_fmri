@@ -226,7 +226,7 @@ def bandpass_wrapper(functional_dirs, paradigm_path):
     return preprocess.batch_bandpass_functional(functional_dirs, blocklength)
 
 
-def coreg_wrapper(source_space_vol_path, target_space_vol_path, full=False):
+def coreg_wrapper(source_space_vol_path, target_space_vol_path, full=False, nonlinear=True):
     """
 
     :param source_space_vol_path:
@@ -235,10 +235,14 @@ def coreg_wrapper(source_space_vol_path, target_space_vol_path, full=False):
     """
     subj_root, project_root = _env_setup()
     out = os.path.join(os.path.dirname(source_space_vol_path), 'coreg_3df.nii')
+    if nonlinear:
+        ltrns = ['Affine', 'SyN']
+    else:
+        ltrns = ['Affine']
     return tuple([os.path.relpath(f, project_root) for f in preprocess.antsCoReg(os.path.abspath(target_space_vol_path),
                                                                                  os.path.abspath(source_space_vol_path),
                                                                                  outP=os.path.abspath(out),
-                                                                                 ltrns=['Affine', 'SyN'],
+                                                                                 ltrns=ltrns,
                                                                                  n_jobs=2,
                                                                                  full=full)])
 
@@ -1210,7 +1214,7 @@ def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
     config_path = 'config.json'
     with open(config_path, 'r') as f:
         config = json.load(f)
-    moco_mode = config["reg_settings"]["moco"]
+    moco_is_nonlinear = config["reg_settings"]["moco"]
     best_disp = 9999999
     besp_disp_idx = -1
     if isinstance(targets, str):
@@ -1235,7 +1239,7 @@ def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
     print("Best average displacement: ", str(best_disp))
     print("Target chosen: " + targets[besp_disp_idx])
     ref = targets[besp_disp_idx]
-    if moco_mode == "nonlinear":
+    if moco_is_nonlinear:
         print("running final nonlinear warp...")
         args = []
         for s in source:

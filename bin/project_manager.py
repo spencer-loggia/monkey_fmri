@@ -28,6 +28,12 @@ class Project:
             self.project_config['paradigms'] = {}
             self.project_config['subjects'] = []
             self.project_config['data_map'] = {}  # paradigms -> subjects ->  session_ids / run nums
+            self.project_config['reg_settings'] = {"nonlinear_moco": input_control.bool_input(
+                                                       "Use nonlinear motion correction?"),
+                                                   "nonlinear_session_2_functional_rep": input_control.bool_input(
+                                                       "Use nonlinear session to function target registration?"),
+                                                   "nonlinear_functional_rep_2_anat": input_control.bool_input(
+                                                       "Use nonlinear function target to anatomical registration?")}
             self.save_project_config()
 
     def add_subject_interactive(self):

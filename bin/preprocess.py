@@ -544,7 +544,7 @@ def ResampleImageToTarget(in_vol, target_vol, out_path, interp='interpolate'):
 
 
 def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
-              across_modalities=False, outPref='antsReg',
+              across_modalities=False, outPref='antsReg', nonlinear=True,
               run=True, n_jobs=64, full=False):
     """
     From kurts code
@@ -569,8 +569,9 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
           " --transform Affine[ 0.1 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
           " --convergence [1000x500,1e-9,10 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox" \
           " --transform Affine[ 0.01 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
-          " --convergence [500,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
-          " --transform SyN[ .1,4,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,6 ]" \
+          " --convergence [500,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
+    if nonlinear:
+        cmd = cmd + " --transform SyN[ .1,4,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,6 ]" \
           " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
           " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,5 ]" \
           " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
@@ -582,7 +583,7 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
     subprocess.call(cmd, shell=True)
 
 
-def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2, full=False):
+def antsCoReg(fixedP, movingP, outP, ltrns=('Affine', 'SyN'), n_jobs=2, full=False):
     """
     From kurks code
     :param fixedP:
@@ -594,13 +595,18 @@ def antsCoReg(fixedP, movingP, outP, ltrns=['Affine', 'SyN'], n_jobs=2, full=Fal
     """
     outF = os.path.dirname(outP)
     os.chdir(outF)
+    if 'Syn' in ltrns:
+        nonlinear = True
+    else:
+        nonlinear = False
     antsCoreg(fixedP,
         movingP,
         outP,
         initialTrsnfrmP=None, # we are working on resampled img
         across_modalities=True,
         outPref='antsReg',
-        run=True,n_jobs=n_jobs, full=full)
+        nonlinear=nonlinear,
+        run=True, n_jobs=n_jobs, full=full)
     frwdTrnsP = os.path.join(outF, 'Composite.h5')
     invTrnsP = os.path.join(outF, 'InverseComposite.h5')
     return frwdTrnsP, invTrnsP
