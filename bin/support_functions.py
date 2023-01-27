@@ -654,7 +654,8 @@ def create_load_ima_order_map(source):
 
 def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
                                           base_conditions, sess_dir, sess_name, paradigm_data,
-                                          condition_groups, tr_length, run_wise=False):
+                                          condition_groups, tr_length, run_wise=False, mion=True,
+                                          fir=True):
     design_matrices = []
 
     print("Stimuli orders are defined manually at runtime for this paradigm. "
@@ -688,7 +689,8 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
             clist = [int(c) for c in clist]
 
         dm = analysis.design_matrix_from_run_list(clist, num_conditions, base_conditions, condition_names,
-                                                  condition_groups, tr_length=tr_length, mion=True, reorder=(not run_wise))
+                                                  condition_groups, tr_length=tr_length, mion=mion, fir=fir,
+                                                  reorder=(not run_wise))
         design_matrices.append(dm)
         if sess_name in paradigm_data['order_number_definitions']:
             paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
@@ -698,7 +700,7 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
     return design_matrices
 
 
-def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True,
+def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fir=True,
                         run_wise=False, use_cond_groups=True):
     if not (type(source[0]) in (list, tuple)):
         source = [source]
@@ -733,7 +735,7 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True,
         if runtime_order_defs:
             sess_dms = _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
                                                              base_conditions, sess_dir, sess_name, paradigm_data,
-                                                             condition_groups, tr_length, run_wise=run_wise)
+                                                             condition_groups, tr_length, run_wise=run_wise, fir=fir)
             with open(paradigm_path, 'w') as f:
                 json.dump(paradigm_data, f, indent=4)
             design_matrices += sess_dms
@@ -749,10 +751,12 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True,
                                                                     base_conditions,
                                                                     condition_names=condition_names,
                                                                     tr_length=tr_length,
-                                                                    mion=mion)
+                                                                    mion=mion,
+                                                                    fir=fir)
                 else:
                     sess_dm = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions,
-                                                                   condition_names, condition_groups, tr_length=tr_length, mion=mion)
+                                                                   condition_names, condition_groups,
+                                                                   tr_length=tr_length, mion=mion, fir=fir)
                 fix_path = os.path.join(ima, "fixation.csv")
                 if os.path.exists(fix_path):
                     fix_data = pd.read_csv(fix_path).to_numpy(dtype=float).view((-1, 1))

@@ -378,13 +378,14 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
         res = p.starmap(_create_SNR_volume_wrapper, args)
 
 
-def _make_nl_dm(frames, time_df, hrf):
+def _make_nl_dm(frames, time_df, hrf, stim_min_onset, delay_periods):
     svd_converge = False
     trys = 0
     while not svd_converge and trys < 4:
         try:
             dm = first_level.make_first_level_design_matrix(frames, time_df, hrf,
-                                                            drift_model='cosine', high_pass=.01)
+                                                            drift_model='cosine', high_pass=.01,
+                                                            min_onset=min_onset, fir_delays=delay)
         except (ValueError, np.linalg.LinAlgError):
             trys += 1
             continue
@@ -396,7 +397,8 @@ def _make_nl_dm(frames, time_df, hrf):
 
 
 def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int],
-                                 base_conditions_idxs: List[int], condition_names: dict, tr_length=3, mion=True):
+                                 base_conditions_idxs: List[int], condition_names: dict, tr_length=3, mion=True,
+                                 fir=True):
     """
     Creates as num_conditions x time onehot encoded matrix from an order number definition
     :param block_length:
@@ -421,11 +423,17 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         timing["duration"].append(block_length * 3)
     frames = np.arange(num_blocks * block_length) * tr_length
     time_df = pd.DataFrame.from_dict(timing)
-    if mion:
-        hrf = "mion"
+
+    if fir:
+        hrf = 'fir'
     else:
-        hrf = "spm + derivative"
+        if mion:
+            hrf = "mion"
+        else:
+            hrf = "spm + derivative"
     dm = _make_nl_dm(frames, time_df, hrf)
+    if fir and mion:
+        dm *= -1
     # reorder
     cond_names = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_conditions_idxs]
     cols = list(dm.columns)
@@ -449,44 +457,80 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
                     in dm
     :return:
     """
+    # convert runlist to python list if it's some numerical datatype
     if type(run_list) is np.ndarray or type(run_list) is torch.Tensor:
         run_list = run_list.tolist()
-    timing = {"trial_type": [],
-              "onset": [],
-              "duration": []}
+    # set up nilearn default timing specification
+    # construct separate timing dicts for hemodynamic
+    # and fir mode conditions.
+    hrf_timing = {"trial_type": [],
+                  "onset": [],
+                  "duration": []}
+
+    fir_timing = {"trial_type": [],
+                  "onset": [],
+                  "duration": []}
+    global_fir_delay = 0
+
     num_trs = len(run_list)
     runlength_encode = []
+    # separate each time runlist changes so we can get the length of each continuous block.
     for _, group in itertools.groupby(run_list):
         runlength_encode.append(list(group))
+    # iterate through the blocks
     t = 0
     for block in runlength_encode:
-        cond = block[0]
+        cond = block[0]  # the integer representation for the condition of this block
         if cond not in base_condition_idxs:
+            # if this condition doesn't belong to a group, it's assigned its own regression using standard hrf (not fir)
             if condition_groups is None:
-                timing['trial_type'].append(condition_names[str(cond)])
-                timing['onset'].append(t * tr_length)
-                timing['duration'].append(len(block) * tr_length)
+                hrf_timing['trial_type'].append(condition_names[str(cond)])
+                hrf_timing['onset'].append(t * tr_length)
+                hrf_timing['duration'].append(len(block) * tr_length)
             else:
                 for group_name in condition_groups.keys():
-                    group = condition_groups[group_name]
+                    group = condition_groups[group_name]['conds']
+                    fir_delay = condition_groups[group_name]['fir']
                     if cond in group:
-                        timing['trial_type'].append(group_name)
-                        timing['onset'].append(t * tr_length)
-                        timing['duration'].append(len(block) * tr_length)
+                        if fir_delay is not None:
+                            fir_timing['trial_type'].append(group_name)
+                            fir_timing['onset'].append(t * tr_length)
+                            fir_timing['duration'].append(len(block) * tr_length)
+                            global_fir_delay = fir_delay
+                        else:
+                            hrf_timing['trial_type'].append(group_name)
+                            hrf_timing['onset'].append(t * tr_length)
+                            hrf_timing['duration'].append(len(block) * tr_length)
 
         t += len(block)
-    time_df = pd.DataFrame.from_dict(timing)
+    hrf_time_df = pd.DataFrame.from_dict(hrf_timing)
+    fir_time_df = pd.DataFrame.from_dict(fir_timing)
     if mion:
         hrf = "mion"
     else:
         hrf = "spm + derivative"
     frames = np.arange(num_trs) * tr_length
-    dm = _make_nl_dm(frames, time_df, hrf)
+    # make seperate design matrix for FIR and HRF
+    fir_dm = _make_nl_dm(frames, fir_time_df, "fir", delay_periods=list(range(global_fir_delay)), stim_min_onset=-32)
+    hrf_dm = _make_nl_dm(frames, hrf_time_df, hrf, delay_periods=[0], stim_min_onset=-32)
+    # if we use mion, invert the fir dm
+    if mion:
+        fir_dm *= -1
+    # get our condition names
     if condition_groups is None or reorder is False:
         cond_names_list = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_condition_idxs]
     else:
-        cond_names_list = list(condition_groups.keys())
-
+        # for fir we have to generate additional conditions for each delay regressor matching nilearn nomenclature
+        cond_names_set = list(condition_groups.keys())
+        cond_names_list = []
+        for cond_name in cond_names_set:
+            fir_delay = condition_groups[cond_name]['fir']
+            if fir_delay is None:
+                cond_names_list.append(cond_name)
+            else:
+                cond_names_list += [cond_name + "_delay_" + str(delay) for delay in range(fir_delay)]
+    # merge the two dms
+    dm = pd.concat[fir_dm, hrf_dm]
     # reorder design matrix
     if reorder:
         for cond in cond_names_list:
@@ -587,13 +631,14 @@ def get_beta_coefficent_matrix(run_dirs: List[str], design_matrices: List[np.nda
     return beta_paths, avg_hemo
 
 
-def nilearn_glm(run_dirs: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, tr_length=3., smooth=3):
-    if mion:
-        hrf = "mion"
-        min_onset = -40
+def nilearn_glm(run_dirs: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, fir=True, tr_length=3., smooth=3):
+    if fir:
+        if mion:
+            hrf = "mion"
+        else:
+            hrf = "spm + derivative"
     else:
-        hrf = "spm + derivative"
-        min_onset = -24
+        hrf = 'fir'
     tmp_dir = './tmp_glm_cache'
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
@@ -602,8 +647,7 @@ def nilearn_glm(run_dirs: List[str], design_matrices: List[pd.DataFrame], base_c
                 minimize_memory=True,
                 hrf_model=hrf,
                 t_r=tr_length,
-                min_onset=min_onset,
-                slice_time_ref=.5,
+                slice_time_ref=0,
                 smoothing_fwhm=smooth,
                 signal_scaling=False,
                 verbose=True,
