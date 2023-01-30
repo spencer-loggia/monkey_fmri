@@ -160,7 +160,7 @@ class BaseControlNet:
             elif n in self.network.nodes:
                 if 'bipartite' not in self.network.nodes[n]:
                     print(n)
-                    exit()
+                    exit(2)
                 bip = self.network.nodes[n]['bipartite']
                 if bip == 0:
                     self.network.nodes[n]['data'] = data['data']
@@ -611,7 +611,7 @@ class DefaultSessionControlNet(BaseControlNet):
                                    'preferred due to faster runtimes with similar results. If multiple targets are provided,'
                                    'returns motion correction that resulted in lowest displacement')
 
-        self.network.add_node('slice_time_correction', fxn='preprocess.slice_time_correction', bipartie=1,
+        self.network.add_node('slice_timing_correction', fxn='preprocess.slice_time_correction', bipartite=1,
                               desc="Preforms slice timing correction on motion corrected functional data. Uses slice 0 "
                                    "as reference. In current version assumes axial slices and interleaved acquisition.")
 

@@ -689,7 +689,7 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
             clist = [int(c) for c in clist]
 
         dm = analysis.design_matrix_from_run_list(clist, num_conditions, base_conditions, condition_names,
-                                                  condition_groups, tr_length=tr_length, mion=mion, fir=fir,
+                                                  condition_groups, tr_length=tr_length, mion=mion,
                                                   reorder=(not run_wise))
         design_matrices.append(dm)
         if sess_name in paradigm_data['order_number_definitions']:
@@ -756,11 +756,11 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
                 else:
                     sess_dm = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions,
                                                                    condition_names, condition_groups,
-                                                                   tr_length=tr_length, mion=mion, fir=fir)
+                                                                   tr_length=tr_length, mion=mion)
                 fix_path = os.path.join(ima, "fixation.csv")
                 if os.path.exists(fix_path):
                     fix_data = pd.read_csv(fix_path).to_numpy(dtype=float).view((-1, 1))
-                    sess_dm = np.concatenate([sess_dm, fix_data], axis=1)
+                    sess_dm = pd.concatenate([sess_dm, fix_data], axis=1)
                 else:
                     print("WARN: No fixation data provided for session", sess_name, "ima", ima)
                 sess_dms.append(sess_dm)
@@ -1218,7 +1218,7 @@ def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
     config_path = 'config.json'
     with open(config_path, 'r') as f:
         config = json.load(f)
-    moco_is_nonlinear = config["reg_settings"]["moco"]
+    moco_is_nonlinear = config["reg_settings"]["nonlinear_moco"]
     best_disp = 9999999
     besp_disp_idx = -1
     if isinstance(targets, str):

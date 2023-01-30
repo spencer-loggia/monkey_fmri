@@ -385,7 +385,7 @@ def _make_nl_dm(frames, time_df, hrf, stim_min_onset, delay_periods):
         try:
             dm = first_level.make_first_level_design_matrix(frames, time_df, hrf,
                                                             drift_model='cosine', high_pass=.01,
-                                                            min_onset=min_onset, fir_delays=delay)
+                                                            min_onset=stim_min_onset, fir_delays=delay_periods)
         except (ValueError, np.linalg.LinAlgError):
             trys += 1
             continue
@@ -473,12 +473,14 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     global_fir_delay = 0
 
     num_trs = len(run_list)
+    frames = np.arange(num_trs) * tr_length
     runlength_encode = []
     # separate each time runlist changes so we can get the length of each continuous block.
     for _, group in itertools.groupby(run_list):
         runlength_encode.append(list(group))
     # iterate through the blocks
     t = 0
+    block_lengths = {}
     for block in runlength_encode:
         cond = block[0]  # the integer representation for the condition of this block
         if cond not in base_condition_idxs:
@@ -492,11 +494,20 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
                     group = condition_groups[group_name]['conds']
                     fir_delay = condition_groups[group_name]['fir']
                     if cond in group:
+                        block_lengths[group_name] = len(block)
                         if fir_delay is not None:
-                            fir_timing['trial_type'].append(group_name)
-                            fir_timing['onset'].append(t * tr_length)
-                            fir_timing['duration'].append(len(block) * tr_length)
-                            global_fir_delay = fir_delay
+                            if fir_delay < 0:
+                                # ok, code says we want to use single TR fir regressors, with 0 delay
+                                for j in range(len(block)):
+                                    fir_timing['trial_type'].append(group_name + "_r" + str(j))
+                                    fir_timing['onset'].append((t + j) * tr_length)
+                                    fir_timing['duration'].append(tr_length)
+                                    global_fir_delay = len(block)
+                            else:
+                                fir_timing['trial_type'].append(group_name)
+                                fir_timing['onset'].append(t * tr_length)
+                                fir_timing['duration'].append(tr_length * len(block))
+                                global_fir_delay = fir_delay
                         else:
                             hrf_timing['trial_type'].append(group_name)
                             hrf_timing['onset'].append(t * tr_length)
@@ -509,10 +520,21 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
         hrf = "mion"
     else:
         hrf = "spm + derivative"
-    frames = np.arange(num_trs) * tr_length
+    
     # make seperate design matrix for FIR and HRF
-    fir_dm = _make_nl_dm(frames, fir_time_df, "fir", delay_periods=list(range(global_fir_delay)), stim_min_onset=-32)
+    fir_dm = _make_nl_dm(frames, fir_time_df, "fir", delay_periods=[0], stim_min_onset=-32)
     hrf_dm = _make_nl_dm(frames, hrf_time_df, hrf, delay_periods=[0], stim_min_onset=-32)
+
+    # fix naming
+    cols = []
+    for i, cname in enumerate(fir_dm.columns):
+        if "_r" in cname:
+            trunc = cname[:-8]
+            cols.append(trunc.replace("_r", "_delay_"))
+        else:
+            cols.append(cname)
+    fir_dm.columns = cols
+
     # if we use mion, invert the fir dm
     if mion:
         fir_dm *= -1
@@ -528,18 +550,21 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
             if fir_delay is None:
                 cond_names_list.append(cond_name)
             else:
-                cond_names_list += [cond_name + "_delay_" + str(delay) for delay in range(fir_delay)]
+                cond_names_list += [cond_name + "_delay_" + str(delay) for delay in range(block_lengths[cond_name])]
     # merge the two dms
-    dm = pd.concat[fir_dm, hrf_dm]
+    dm = pd.concat([fir_dm, hrf_dm], axis=1)
+    dupes = dm.columns.duplicated()
+    dm = dm.loc[:, ~dupes]
     # reorder design matrix
     if reorder:
         for cond in cond_names_list:
             if cond not in dm.columns:
                 dm.insert(0, cond, 0)
         cols = list(dm.columns)
-        for i, cn in enumerate(cond_names_list):
-            cols[i] = cn
-        dm = dm[cols]
+        for cn in cols:
+            if cn not in cond_names_list:
+                cond_names_list.append(cn)
+        dm = dm[cond_names_list]
     return dm
 
 
