@@ -545,6 +545,9 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('nordic_epi', data=None, type='time_series', bipartite=0, complete=False,
                               space='epi_native')
 
+        self.network.add_node('topup_epi', data=None,type='time_series',bipartite=0, complete=False,
+                                space='epi_native')
+
         self.network.add_node('sphinx_epi', data=[], type='time_series', bipartite=0, complete=False,
                               space='epi_native')
         self.network.add_node('moco_epi', data=[], type='time_series', bipartite=0, complete=False, space='epi_native')
@@ -602,6 +605,9 @@ class DefaultSessionControlNet(BaseControlNet):
                                    "our raw epis. Need to provide a thermal noise image path, ideally collected in the "
                                    "same session or otherwise a close of one as possible. Must have cloned the "
                                    "SteenMoeller/NORDIC_raw github and added it to matlab path.")
+        self.network.add_node('topup', fxn='support_functions.topup_wrapper',bipartite=1,
+                                desc='Use two reverse phase encoded Spin-Echo images to correct the magnetic field distortions '
+                                'in the functional image. ')
         self.network.add_node('sphinx_correct', fxn='preprocess.convert_to_sphinx', bipartite=1,
                               desc='Preform Sphinx orientation correction on the 4d raw epi data')
         self.network.add_node('motion_correction', fxn='support_functions.motion_correction_wrapper', bipartite=1,
@@ -682,7 +688,10 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('raw_epi', 'noise_correct', order=0)
         self.network.add_edge('noise_correct', 'nordic_epi', order=0)
 
-        self.network.add_edge('nordic_epi', 'sphinx_correct', order=0)  # 01
+        self.network.add_edge('nordic_epi','topup',order=0)
+        self.network.add_edge('topup','topup_epi',order=0)
+
+        self.network.add_edge('topup_epi', 'sphinx_correct', order=0)  # 01
         self.network.add_edge('sphinx_correct', 'sphinx_epi', order=0)  # 10
 
         self.network.add_edge('nordic_epi', 'select_3d_rep', order=0)  # 01

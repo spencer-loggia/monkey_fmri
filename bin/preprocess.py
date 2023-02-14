@@ -31,7 +31,7 @@ import nipype.pipeline.engine as pe  # pypeline engine
 import nipype.algorithms.modelgen as model  # model generation
 import nipype.algorithms.rapidart as ra  # artifact detection
 import nibabel as nib
-
+import datetime
 # don't require nilearn
 try:
     from nilearn import image as nimg
@@ -152,7 +152,7 @@ def _clean_img_wrapper(in_file, out_file, low_pass, high_pass, TR):
     nib.save(clean_img, out_file)
 
 
-def convert_to_sphinx(input_dirs: List[str], scan_pos='HFP', output: Union[None, str] = None, fname='f_nordic.nii'):
+def convert_to_sphinx(input_dirs: List[str], scan_pos='HFP', output: Union[None, str] = None, fname='f_topup.nii.gz'):
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION or BOLD dir)
@@ -212,6 +212,117 @@ def _NORDIC_NOISE_MERGE(input_dirs: List[str], noise_path, filename='f_noise'):
         print(cmd)
         subprocess.run(cmd, shell=True)
     return out_dirs
+
+def create_warp_field(image_1,image_2,image_1_enc='HF',image_2_enc='FH',number_images=None):
+    dirpath = os.path.dirname(image_1)
+    image_1_img = nib.load(image_1)
+    image_2_img = nib.load(image_2)
+    image_1_len = image_1_img.header.get_data_shape()[3]
+    image_2_len = image_2_img.header.get_data_shape()[3]
+    max_image_length = np.maximum(image_1_len,image_2_len)
+    if number_images==None:
+        number_images = max_image_length
+    elif number_images > max_image_length:
+        number_images = max_image_length
+
+    if number_images == max_image_length and image_1_len == image_2_len:
+        merged_image = nib.Nifti1Image(np.concatenate((image_1_img.get_fdata(),image_2_img.get_fdata()),axis=3),image_1_img.affine)
+    else:
+        merged_image = nib.Nifti1Image(np.concatenate((image_1_img.get_fdata()[:,:,:,0:number_images],image_2_img.get_fdata()[:,:,:,0:number_images]),axis=3),image_1_img.affine)
+
+    merged_filepath = os.path.join(dirpath,'merged_SE_%s_images.nii.gz'%(number_images))
+    nib.save(merged_image,merged_filepath)
+
+    scan_param_filepath = os.path.join(dirpath,'scan_encode_params_%s_images.txt'%(number_images))
+
+    out_buf = ""
+
+    if 'HF' in image_1_enc:
+        out_buf = out_buf + '0 1 0 0.0371245 \n'*number_images
+    elif 'FH' in image_1_enc:
+        out_buf = out_buf + '0 -1 0 0.0371245 \n'*number_images
+    elif 'LR' in image_1_enc:
+        out_buf = out_buf + '1 0 0 0.0371245 \n'*number_images
+    elif 'RL' in image_1_enc:
+        out_buf = out_buf + '-1 0 0 0.0371245 \n'*number_images
+
+    if 'HF' in image_2_enc:
+        out_buf = out_buf + '0 1 0 0.0371245 \n'*number_images
+    elif 'FH' in image_2_enc:
+        out_buf = out_buf + '0 -1 0 0.0371245 \n'*number_images
+    elif 'LR' in image_2_enc:
+        out_buf = out_buf + '1 0 0 0.0371245 \n'*number_images
+    elif 'RL' in image_2_enc:
+        out_buf = out_buf + '-1 0 0 0.0371245 \n'*number_images
+
+    with open(scan_param_filepath, 'w') as f:
+        f.write(out_buf)
+
+
+
+    topup_prefix_out = os.path.join(dirpath,'topup_%s_images'%(number_images))
+
+    topup_field_out = os.path.join(dirpath,'topup_field_%s_images'%(number_images))
+
+    topup_unwarped_out = os.path.join(dirpath,'topup_unwarped_%s_images'%(number_images))
+
+    cmd = 'topup --imain={} --datain={} --config=b02b0_macaque.txt --out={} --fout={} --iout={}'.format(merged_filepath,scan_param_filepath,topup_prefix_out,topup_field_out,topup_unwarped_out)
+
+    t1 = datetime.datetime.now()
+
+    print(cmd)
+    subprocess.call(cmd,shell=True)
+    t2 = datetime.datetime.now()
+    delta = t2-t1
+    print("topup with %s images finished in %s.%s seconds" %(number_images,delta.seconds,delta.microseconds))
+
+    return topup_prefix_out
+
+def applytopup(func_in,topup_basename,func_dir = 'HF'):
+
+    out_buf = ""
+
+    if 'HF' in func_dir:
+        out_buf = out_buf + '0 1 0 0.0371245 \n'
+    elif 'FH' in func_dir:
+        out_buf = out_buf + '0 -1 0 0.0371245 \n'
+    elif 'LR' in func_dir:
+        out_buf = out_buf + '1 0 0 0.0371245 \n'
+    elif 'RL' in func_dir:
+        out_buf = out_buf + '-1 0 0 0.0371245 \n'
+
+    scan_param_filepath = os.path.join(func_in,'scan_encode_params.txt')
+    with open(scan_param_filepath, 'w') as f:
+        f.write(out_buf)
+
+    func_out = os.path.join(func_in,'f_topup.nii.gz')
+
+    f_in = os.path.join(func_in,'f_nordic.nii')
+
+    cmd = 'applytopup --imain={} --inindex={} --datain={} --topup={} --out={} --method=jac'.format(f_in,1,scan_param_filepath,topup_basename,func_out)
+    
+    print(cmd)
+    subprocess.call(cmd,shell=True)
+
+
+    return func_out 
+
+
+def topup(input_dirs: List[str], image_1_path, image_2_path, image_1_enc, image_2_enc, number_images, func_enc, filename='f_topup'):
+    """
+    Perform topup of the images.
+    """
+
+    topup_prefix_out = create_warp_field(image_1_path,image_2_path,image_1_enc,image_2_enc,number_images)
+
+    args = []
+
+    for funcP in input_dirs:
+        args.append((funcP,topup_prefix_out,func_enc))
+
+    with Pool() as p:
+        res = p.starmap(applytopup, args)
+
 
 
 def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):

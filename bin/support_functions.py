@@ -1272,6 +1272,20 @@ def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):
     return functional_dirs
 
 
+def topup_wrapper(functional_dirs, fname='f_nordic.nii.gz'):
+    in_paths = [os.path.abspath(os.path.join(fdir, fname)) for fdir in functional_dirs]
+    image_1_path = input_control.dir_input('Enter the path to the first spin echo image.')
+    image_1_enc = input_control.str_list_input('What phase encoding is this image? (HF, FH, RL, LR)')[0]
+    image_2_path = input_control.dir_input('Enter the path to the second spin echo image.')
+    image_2_enc = input_control.str_list_input('What phase encoding is this image? (HF, FH, RL, LR)')[0]
+    number_images = input_control.int_input('How many images do you want to use topup with? (Recommended 2-3)')
+    func_enc = input_control.str_list_input('What phase encoding are the functional images in? (HF, FH, RL, LR)')[0]
+
+    preprocess.topup(functional_dirs,image_1_path,image_2_path,image_1_enc,image_2_enc,number_images,func_enc)
+
+    return functional_dirs
+
+
 def time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, target_condition, output_dir,
                                         fname='epi_masked', pre_onset_blocks=1, post_offset_blocks=3):
     """

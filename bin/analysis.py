@@ -52,7 +52,7 @@ import torch
 
 from nilearn.glm import first_level
 from nilearn.image import high_variance_confounds
-from nilearn.plotting import plot_design_matrix
+from nilearn.plotting import plot_design_matrix, plot_contrast_matrix
 from nilearn.glm.first_level.hemodynamic_models import mion_hrf, spm_time_derivative
 
 
@@ -746,14 +746,40 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
 def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, output_dir):
     glm = pickle.load(open(glm_model_path, "rb"))
     contrast_matrices = [[] for _ in range(contrast_matrix.shape[1])]
+    dm_cols = list(glm.design_matrices_[0].columns)
+    n_reg_dex = dm_cols.index("drift_1")
+    cm = contrast_matrix.tolist()
+    expanded_cm = []
+    cur = None
+    count = 0
+    c_idx = 0
+    for i, cname in enumerate(dm_cols[:n_reg_dex]):
+        if "delay" in cname:
+            cond = cname[:-8]
+        else:
+            cond = cname
+        if cur is None:
+            cur = cond
+        elif cur != cond:
+            # count is the number of times this contrast repeats
+            expanded_cm += [cm[c_idx]] * (count + 1)
+            count = 0
+            c_idx += 1
+            cur = cond
+        else:
+            count += 1
+    contrast_matrix = np.array(expanded_cm, dtype=float)
     for dm in glm.design_matrices_:
         num_cond = dm.shape[1]
-        drift_regressors = num_cond - len(contrast_matrix)
+        drift_regressors = num_cond - n_reg_dex + 1
         cm = np.pad(contrast_matrix, ((0, drift_regressors), (0, 0)), constant_values=((0, 0), (0, 0))).T
         for i, contrast in enumerate(cm):
             contrast_matrices[i].append(contrast)
     out_paths = []
     for i, contrast in enumerate(contrast_matrices):
+        for dm in glm.design_matrices_[:4]:
+            plot_contrast_matrix(contrast, design_matrix=dm)
+            plt.show()
         contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type='z_score')
         out_path = os.path.join(output_dir, contrast_descriptors[i] + '.nii')
         nib.save(contrast_nii, out_path)
