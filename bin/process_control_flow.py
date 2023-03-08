@@ -35,13 +35,6 @@ class BaseControlNet:
                     if 'complete' not in self.network.nodes[d]:
                         raise ValueError(d + " : " + str(self.network.nodes[d]))
                     if self.network.nodes[d]['complete'] or self.network.nodes[d]['complete'] is None:
-                        # TODO: Needs fixin'
-                        # if 'modified' in self.network.nodes[n] and 'modified' in self.network.nodes[d] and self.network.nodes[d]['complete'] is not None:
-                        #     if datetime.datetime.fromisoformat(self.network.nodes[d]['modified']) > \
-                        #        datetime.datetime.fromisoformat(self.network.nodes[n]['modified']) \
-                        #             and 'always_show' not in self.network.nodes[n]:
-                        #         good_head = False
-                        #         break
                         good_head = True
                     else:
                         good_head = False
@@ -344,10 +337,10 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         self.network.add_node('sessions', data=[], type='net_json', complete=None, bipartite=0, always_show=True)
 
-        self.network.add_node('functional_representative', data=None, type='volume', bipartite=0, complete=False, space='epi_std')
-        self.network.add_node('functional_representative_mask', data=None, type='volume', bipartite=0, complete=False, space='epi_std')
-        self.network.add_node('functional_representative_masked', data=None, type='volume', bipartite=0, complete=False, space='epi_std')
-        self.network.add_node('functional_representative_dil_mask', data=None, type='volume', bipartite=0, complete=False, space='epi_std')
+        self.network.add_node('functional_representative', data=None, type='volume', bipartite=0, complete=None, space='epi_std')
+        self.network.add_node('functional_representative_mask', data=None, type='volume', bipartite=0, complete=None, space='epi_std')
+        self.network.add_node('functional_representative_masked', data=None, type='volume', bipartite=0, complete=None, space='epi_std')
+        self.network.add_node('functional_representative_dil_mask', data=None, type='volume', bipartite=0, complete=None, space='epi_std')
 
         self.network.add_node('manual_reg_epi_rep', data=None, type='volume', bipartite=0, complete=False,
                               space='ds_t1_aprox')

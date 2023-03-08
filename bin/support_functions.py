@@ -1207,7 +1207,7 @@ def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, o
     return output
 
 
-def motion_correction_wrapper(source, targets, fname='f_nordic_sphinx.nii'):
+def motion_correction_wrapper(source, targets, fname='f_topup_sphinx.nii'):
     """
     :param source:
     :param targets:

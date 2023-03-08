@@ -324,7 +324,6 @@ def topup(input_dirs: List[str], image_1_path, image_2_path, image_1_enc, image_
         res = p.starmap(applytopup, args)
 
 
-
 def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
     """
     Perform NORDIC denoising of images. Should be done before any other manipulation of images that might disrupt the
@@ -347,8 +346,7 @@ def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
             noise_length = 1 
         else:
             noise_length = noise_img.shape[3]  
-        noise_option = noise_length	 
-    	
+        noise_option = noise_length
     cmd = '$MATLAB -nojvm -r '
     fun = ' "monk_nordic({},{},{}); exit;"'.format("{'"+"','".join(input_dirs)+"'}",noise_option, "'"+filename+"'")
     cmd = cmd + fun
@@ -360,7 +358,7 @@ def NORDIC(input_dirs: List[str], noise_path=None, filename='f_nordic'):
     return out_dirs
 
 
-def motion_correction(input_dirs: List[str], ref_path: str, outname='moco.nii.gz', output: Union[None, str] = None, fname='f_sphinx.nii',
+def motion_correction(input_dirs: List[str], ref_path: str, outname='moco.nii.gz', output: Union[None, str] = None, fname='f_topup_sphinx.nii',
                       check_rms=True, abs_threshold=3, var_threshold=1) -> Union[List[str], None]:
     """
     preform fsl motion correction. If check rms is enabled will remove data where too much motion is detected.
