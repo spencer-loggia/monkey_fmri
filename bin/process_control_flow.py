@@ -152,8 +152,8 @@ class BaseControlNet:
                 self.network.add_node(n, **data)
             elif n in self.network.nodes:
                 if 'bipartite' not in self.network.nodes[n]:
-                    print(n)
-                    exit(2)
+                    print("bipartite set not defined by node " + str(n))
+                    exit(1)
                 bip = self.network.nodes[n]['bipartite']
                 if bip == 0:
                     self.network.nodes[n]['data'] = data['data']
@@ -590,6 +590,9 @@ class DefaultSessionControlNet(BaseControlNet):
         # Define functional data processing nodes
         self.network.add_node('get_images', argv=session_id, fxn='support_functions.get_images', bipartite=1,
                               desc='Accept user input for path to session directory, load images into a dump exp')
+
+        self.network.add_node('get_fixation_data', fxn='support_functions.get_fixation_csv', bipartite=1, desc="")
+
         self.network.add_node('get_epi', argv=session_id, fxn='support_functions.get_epis', bipartite=1,
                               desc='Accept user input for path to session directory containing directories of dicoms or'
                                    ' a nifti, and load the data into project format (freesurfer convention)')
@@ -675,6 +678,8 @@ class DefaultSessionControlNet(BaseControlNet):
 
         self.network.add_edge('raw_epi', 'get_images', order=0)
         self.network.add_edge('get_images', 'other_images', order=0)
+
+        self.network.add_edge("raw_epi", "get_fixation_data", order=0)
 
         self.network.add_edge('get_epi', 'raw_epi', order=0)  # 10
 

@@ -141,6 +141,7 @@ def get_fixation_csv(source):
             ima_fix_data = fix_data[ima]
             ima_fix_data.to_csv(os.path.join(run_dir, "fixation.csv"))
         except KeyError:
+            print("WARN: no fixation data found for IMA " + str(ima))
             pass
 
 
@@ -369,13 +370,30 @@ def create_slice_overlays(function_reg_vol, anatomical, reg_contrasts):
     return out_paths
 
 
-def get_3d_rep(src: Union[List[str], str]):
+def get_3d_rep(src: Union[List[str], str], fname="f_topup.nii.gz"):
     """
     :param src:
     :return:
     """
     subj_root, project_root = _env_setup()
-    return [os.path.relpath(f, project_root) for f in preprocess.sample_frames(src, 5)]
+    data_arr = []
+    sess_dir = os.path.dirname(src[0])
+    affine = None
+    header = None
+    for path in src:
+        f_path = os.path.join(path, fname)
+        nii = nibabel.load(f_path)
+        if affine is None:
+            header = nii.header
+            affine = nii.affine
+        data_arr.append(np.median(nii.get_fdata(), axis=3))
+        print(data_arr[-1].shape)
+    data_arr = np.stack(data_arr, axis=0)
+    data_arr = np.median(data_arr, axis=0)
+    target_nii = nibabel.Nifti1Image(data_arr, header=header, affine=affine)
+    out = os.path.join(sess_dir, "3d_epi_rep.nii.gz")
+    nibabel.save(target_nii, out)
+    return [os.path.relpath(out, project_root)]
 
 
 def convert_to_sphinx_vol_wrap(src, *argv):
@@ -722,7 +740,7 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
         tr_length = input_control.numeric_input("No tr length defined in paradigm. What tr length (secs) should we use?")
 
     condition_groups = None
-    if 'condition_groups' in paradigm_data and use_cond_groups:
+    if 'condition_groups' in paradigm_data:
         condition_groups = paradigm_data['condition_groups']
     design_matrices = []
     complete_source = []
@@ -738,7 +756,6 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
                                                              condition_groups, tr_length, run_wise=run_wise, fir=fir)
             with open(paradigm_path, 'w') as f:
                 json.dump(paradigm_data, f, indent=4)
-            design_matrices += sess_dms
 
         else:
             sess_dms = []
@@ -757,14 +774,20 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
                     sess_dm = analysis.design_matrix_from_run_list(order, num_conditions, base_conditions,
                                                                    condition_names, condition_groups,
                                                                    tr_length=tr_length, mion=mion)
-                fix_path = os.path.join(ima, "fixation.csv")
-                if os.path.exists(fix_path):
-                    fix_data = pd.read_csv(fix_path).to_numpy(dtype=float).view((-1, 1))
-                    sess_dm = pd.concatenate([sess_dm, fix_data], axis=1)
-                else:
-                    print("WARN: No fixation data provided for session", sess_name, "ima", ima)
                 sess_dms.append(sess_dm)
-            design_matrices += sess_dms
+
+        for j, sess_dm in enumerate(sess_dms):
+            ima = source[i][j]
+            fix_path = os.path.join(ima, "fixation.csv")
+            if os.path.exists(fix_path):
+                fix_data = pd.read_csv(fix_path, index_col=0)
+                fix_data.columns = ["fixation"]
+                fix_data.set_index(sess_dms[j].index, inplace=True)
+                sess_dms[j] = pd.concat([sess_dm, fix_data], axis=1)
+            else:
+                print("WARN: No fixation data provided for session", sess_name, "ima", ima)
+
+        design_matrices += sess_dms
     return design_matrices, complete_source, tr_length
 
 
@@ -848,7 +871,7 @@ def construct_subject_glm(para, mion=True, run_wise=False, use_cond_groups=True)
             sources[-1].append(session_path)
             total_runs += 1
     total_path = os.path.relpath(os.path.join(subj_root, 'analysis'), project_root)
-    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii', out_dir=total_path, run_wise=run_wise, use_cond_groups=True)
+    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii', out_dir=total_path, run_wise=run_wise, use_cond_groups=use_cond_groups)
     print('Constructed subject beta matrix for paradigm', para_name, 'using', len(ima_order_maps), "sessions and",
           total_runs, ' individual runs')
     return glm_path
@@ -907,6 +930,7 @@ def get_run_betas(para, mion=True):
                     if int(para_index) in condition_groups[group]:
                         parent_group = group
                 if parent_group is None:
+                    print("Undefined parent group for leaf condition", cond)
                     continue
                 local_contrast_matrix = copy.deepcopy(contrast_matrix_template)
                 local_contrast_matrix[lindex][cond] = 1

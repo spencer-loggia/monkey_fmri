@@ -95,7 +95,7 @@ def _create_dir_if_needed(base: str, name: str):
 
 
 def _confound(epi):
-    return pd.DataFrame(high_variance_confounds(epi, percentile=2, n_confounds=4))
+    return pd.DataFrame(high_variance_confounds(epi, percentile=2, n_confounds=2))
 
 
 def ts_smooth(input_ts: np.ndarray, kernel_std=1., temporal_smoothing=True):
@@ -454,7 +454,7 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     :param num_conditions:
     :param base_condition_idxs:
     :param reorder: if true will make all features in paradigm present in dm. Otherwise, only present features will be
-                    in dm
+                    in dm.
     :return:
     """
     # convert runlist to python list if it's some numerical datatype
@@ -780,7 +780,7 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
         for dm in glm.design_matrices_[:4]:
             plot_contrast_matrix(contrast, design_matrix=dm)
             plt.show()
-        contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type='z_score')
+        contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type='effect_size')
         out_path = os.path.join(output_dir, contrast_descriptors[i] + '.nii')
         nib.save(contrast_nii, out_path)
         out_paths.append(out_path)

@@ -525,7 +525,6 @@ def plot_moco_rms_displacement(transform_file_dirs: List[str], save_loc: str, ab
     return good_moco
 
 
-
 def _flirt_wrapper(in_file, out_file, mat_out_file, temp_file, flt, dof=12):
     flt.inputs.in_file = in_file
     flt.inputs.reference = temp_file
