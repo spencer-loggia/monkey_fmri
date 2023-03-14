@@ -1,4 +1,5 @@
 import copy
+import itertools
 import multiprocessing
 import pickle
 import typing
@@ -908,12 +909,31 @@ def get_run_betas(para, mion=True):
                 "session": [],
                 "ima": []}
     # creates condition for every stimuli type instead of every stimuli group
-    # full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False)
-    full_cond_glm_path = "/home/ssbeast/Projects/SS/monkey_fmri/MTurk1/subjects/wooster/analysis/glm_model_374992.pkl"
+    full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False)
     full_cond_glm = pickle.load(open(full_cond_glm_path, "rb"))
-    contrast_matrix_template = [np.zeros((len(condition_names)))
-                                for _ in range(len(full_cond_glm.design_matrices_))]
+
     lindex = 0
+    cond2group = {}
+    for key in condition_groups.keys():
+        for cond_idx in condition_groups[key]["conds"]:
+            cond2group[cond_idx] = key
+    dm_cols = list(full_cond_glm.design_matrices_[lindex].columns)
+    contrast_matrix_template = [np.zeros((len(dm_cols)))
+                                for _ in range(len(full_cond_glm.design_matrices_))]
+    drift_dex = dm_cols.index("drift_1")
+    constant_idx = dm_cols.index("constant")
+    dm_base_conds = []
+    for cond in dm_cols[:drift_dex]:
+        cond = str(cond)
+        if "delay" in cond:
+            dm_base_conds.append(cond[:-8])
+        else:
+            dm_base_conds.append(cond)
+
+    rl_encode = []
+    for _, group in itertools.groupby(dm_base_conds):
+        rl_encode.append(len(list(group)))
+
     for key in sessions_dict:
         imas = sessions_dict[key]['imas_used']
         sess_path = os.path.dirname(sessions_dict[key]['session_net'])
@@ -921,63 +941,41 @@ def get_run_betas(para, mion=True):
         for ima in imas:
             run_dir = os.path.join(sess_path, str(ima))
             np_dm = full_cond_glm.design_matrices_[lindex].to_numpy()
+
             if mion:
-                all_conds = np.nonzero(np_dm.sum(axis=0) < 0)[0]  # what conditions are used (nonzero) in this dm??
+                all_conds = list(np_dm[:, :drift_dex].sum(axis=0) < 0)  # what conditions are used (nonzero) in this dm??
             else:
-                all_conds = np.nonzero(np_dm.sum(axis=0) > 0)[0]
-            dm_cols = list(full_cond_glm.design_matrices_[lindex].columns)
-            n_reg_dex = dm_cols.index("drift_1")
-            cur = None
-            count = 0
-            c_idx = 1
-            conds = []
-            # figure out which conditions are present in this dm
-            for i, cname in enumerate(dm_cols[:n_reg_dex]):
-                if "delay" in cname:
-                    cond = cname[:-8]
-                else:
-                    cond = cname
-                if cur is None:
-                    cur = cond
-                elif cur != cond:
-                    # count is the number of times this contrast repeats
-                    if i in all_conds:
-                        conds.append(c_idx)
-                    count = 0
-                    c_idx += 1
-                    cur = cond
-                else:
-                    count += 1
-            constant_idx = list(full_cond_glm.design_matrices_[lindex].columns).index("constant")
-            # construct a contrast matrix .
-            for cond in conds:
+                all_conds = list(np_dm[:, :drift_dex].sum(axis=0) > 0)
+
+            dm_index = 0
+            for cond, delays in enumerate(rl_encode):
                 para_index = cond
                 if base_conditions[0] <= cond < constant_idx:
                     para_index += 1
-                parent_group = None
-                for group in condition_groups.keys():
-                    if int(para_index) in condition_groups[group]["conds"]:
-                        parent_group = group
-                if parent_group is None:
-                    print("Undefined parent group for leaf condition", cond)
-                    continue
-                local_contrast_matrix = copy.deepcopy(contrast_matrix_template)
-                local_contrast_matrix[lindex][cond] = 1
-                local_contrast_matrix = np.array(local_contrast_matrix)
-                cond_name = paradigm_data['condition_integerizer'][str(para_index)]
-                # out_path = os.path.join(run_dir, cond_name + "_instance_beta.nii.gz")
+
+                cond_name = condition_names[str(para_index)]
                 # sess_out_paths.append(out_path)
-                data_log["condition_name"].append(cond_name)
-                data_log["condition_group"].append(parent_group)
-                data_log["condition_integer"].append(int(para_index))
-                data_log["session"].append(sess)
-                data_log["ima"].append(ima)
-                # send to contrast expander and runner
-                out_paths = analysis.nilearn_contrasts(full_cond_glm_path, local_contrast_matrix,
-                                                       [cond_name + "instance_betas"],
-                                                       output_dir=run_dir, mode="effect_size")
-                data_log["beta_path"].append(out_paths[0])
-                # instance_beta = full_cond_glm.compute_contrast(local_contrast_matrix, stat_type='t', output_type='effect_size')
+                if all_conds[dm_index]:
+                    parent_group = cond2group[para_index]
+                    data_log["condition_name"].append(cond_name)
+                    data_log["condition_group"].append(parent_group)
+                    data_log["condition_integer"].append(int(para_index))
+                    data_log["session"].append(sess)
+                    data_log["ima"].append(ima)
+                    # send to contrast expander and runner
+                    out_paths = []
+                    for delay in range(delays):
+                        local_contrast_matrix = copy.deepcopy(contrast_matrix_template)
+                        local_contrast_matrix[lindex][dm_index] = 1
+                        out_path = os.path.join(run_dir, dm_cols[dm_index] + "_instance_beta.nii.gz")
+                        instance_beta = full_cond_glm.compute_contrast(local_contrast_matrix, stat_type='t',
+                                                                       output_type='effect_size')
+                        nibabel.save(instance_beta, out_path)
+                        out_paths.append(out_path)
+                        dm_index += 1
+                    data_log["beta_path"].append(out_paths)
+                else:
+                    dm_index += delays
             lindex += 1
 
     data_log_out = os.path.join(subj_root, "analysis", para_name + "_stimulus_response_data_key.csv")
