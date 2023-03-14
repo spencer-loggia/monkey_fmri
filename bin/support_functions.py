@@ -673,7 +673,7 @@ def create_load_ima_order_map(source):
 def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
                                           base_conditions, sess_dir, sess_name, paradigm_data,
                                           condition_groups, tr_length, run_wise=False, mion=True,
-                                          fir=True):
+                                          use_cond_groups=True, fir=True):
     design_matrices = []
 
     print("Stimuli orders are defined manually at runtime for this paradigm. "
@@ -708,7 +708,7 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
 
         dm = analysis.design_matrix_from_run_list(clist, num_conditions, base_conditions, condition_names,
                                                   condition_groups, tr_length=tr_length, mion=mion,
-                                                  reorder=(not run_wise))
+                                                  reorder=(not run_wise), use_cond_groups=use_cond_groups)
         design_matrices.append(dm)
         if sess_name in paradigm_data['order_number_definitions']:
             paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
@@ -737,7 +737,8 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
     if "tr_length" in paradigm_data:
         tr_length = paradigm_data["tr_length"]
     else:
-        tr_length = input_control.numeric_input("No tr length defined in paradigm. What tr length (secs) should we use?")
+        tr_length = input_control.numeric_input(
+            "No tr length defined in paradigm. What tr length (secs) should we use?")
 
     condition_groups = None
     if 'condition_groups' in paradigm_data:
@@ -753,7 +754,8 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
         if runtime_order_defs:
             sess_dms = _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
                                                              base_conditions, sess_dir, sess_name, paradigm_data,
-                                                             condition_groups, tr_length, run_wise=run_wise, fir=fir)
+                                                             condition_groups, tr_length, run_wise=run_wise, fir=fir,
+                                                             use_cond_groups=use_cond_groups)
             with open(paradigm_path, 'w') as f:
                 json.dump(paradigm_data, f, indent=4)
 
@@ -791,7 +793,8 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
     return design_matrices, complete_source, tr_length
 
 
-def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii', out_dir=None, run_wise=False, smooth=3., use_cond_groups=True):
+def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii', out_dir=None,
+                    run_wise=False, smooth=3., use_cond_groups=True):
     """
     :param source: list of lists of runs for each session
     :param paradigm_path:
@@ -816,7 +819,8 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     base_conditions = [paradigm_data['base_case_condition']]
 
     design_matrices, complete_source, tr_length = get_design_matrices(paradigm_path, ima_order_map_path, source, mion,
-                                                                      run_wise=run_wise, use_cond_groups=use_cond_groups)
+                                                                      run_wise=run_wise,
+                                                                      use_cond_groups=use_cond_groups)
 
     print("using mion: ", mion)
     print('source fname: ', fname)
@@ -871,7 +875,8 @@ def construct_subject_glm(para, mion=True, run_wise=False, use_cond_groups=True)
             sources[-1].append(session_path)
             total_runs += 1
     total_path = os.path.relpath(os.path.join(subj_root, 'analysis'), project_root)
-    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii', out_dir=total_path, run_wise=run_wise, use_cond_groups=use_cond_groups)
+    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii', out_dir=total_path,
+                               run_wise=run_wise, use_cond_groups=use_cond_groups)
     print('Constructed subject beta matrix for paradigm', para_name, 'using', len(ima_order_maps), "sessions and",
           total_runs, ' individual runs')
     return glm_path
@@ -891,6 +896,7 @@ def get_run_betas(para, mion=True):
     sessions_dict = proj_config['data_map'][paradigm_data['name']][subject]
     base_conditions = [paradigm_data['base_case_condition']]
     condition_groups = paradigm_data['condition_groups']
+    condition_names = paradigm_data['condition_integerizer']
 
     if len(sessions_dict) == 0:
         print("No Runs Have Been Promoted From Session to Subject Level.")
@@ -902,51 +908,76 @@ def get_run_betas(para, mion=True):
                 "session": [],
                 "ima": []}
     # creates condition for every stimuli type instead of every stimuli group
-    full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False)
-
+    # full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False)
+    full_cond_glm_path = "/home/ssbeast/Projects/SS/monkey_fmri/MTurk1/subjects/wooster/analysis/glm_model_374992.pkl"
     full_cond_glm = pickle.load(open(full_cond_glm_path, "rb"))
-    contrast_matrix_template = [np.zeros((len(full_cond_glm.design_matrices_[0].columns),))
+    contrast_matrix_template = [np.zeros((len(condition_names)))
                                 for _ in range(len(full_cond_glm.design_matrices_))]
     lindex = 0
     for key in sessions_dict:
         imas = sessions_dict[key]['imas_used']
         sess_path = os.path.dirname(sessions_dict[key]['session_net'])
         sess = os.path.basename(sess_path)
-        args = []
         for ima in imas:
             run_dir = os.path.join(sess_path, str(ima))
             np_dm = full_cond_glm.design_matrices_[lindex].to_numpy()
             if mion:
-                conds = np.nonzero(np_dm.sum(axis=0) < 0)[0]  # what conditions are present in this dm??
+                all_conds = np.nonzero(np_dm.sum(axis=0) < 0)[0]  # what conditions are used (nonzero) in this dm??
             else:
-                conds = np.nonzero(np_dm.sum(axis=0) > 0)[0]
+                all_conds = np.nonzero(np_dm.sum(axis=0) > 0)[0]
+            dm_cols = list(full_cond_glm.design_matrices_[lindex].columns)
+            n_reg_dex = dm_cols.index("drift_1")
+            cur = None
+            count = 0
+            c_idx = 1
+            conds = []
+            # figure out which conditions are present in this dm
+            for i, cname in enumerate(dm_cols[:n_reg_dex]):
+                if "delay" in cname:
+                    cond = cname[:-8]
+                else:
+                    cond = cname
+                if cur is None:
+                    cur = cond
+                elif cur != cond:
+                    # count is the number of times this contrast repeats
+                    if i in all_conds:
+                        conds.append(c_idx)
+                    count = 0
+                    c_idx += 1
+                    cur = cond
+                else:
+                    count += 1
             constant_idx = list(full_cond_glm.design_matrices_[lindex].columns).index("constant")
+            # construct a contrast matrix .
             for cond in conds:
                 para_index = cond
                 if base_conditions[0] <= cond < constant_idx:
                     para_index += 1
                 parent_group = None
                 for group in condition_groups.keys():
-                    if int(para_index) in condition_groups[group]:
+                    if int(para_index) in condition_groups[group]["conds"]:
                         parent_group = group
                 if parent_group is None:
                     print("Undefined parent group for leaf condition", cond)
                     continue
                 local_contrast_matrix = copy.deepcopy(contrast_matrix_template)
                 local_contrast_matrix[lindex][cond] = 1
-                local_contrast_matrix[lindex][constant_idx] = -1
-                args.append((local_contrast_matrix, full_cond_glm))
+                local_contrast_matrix = np.array(local_contrast_matrix)
                 cond_name = paradigm_data['condition_integerizer'][str(para_index)]
-                out_path = os.path.join(run_dir, cond_name + "_instance_beta.nii.gz")
+                # out_path = os.path.join(run_dir, cond_name + "_instance_beta.nii.gz")
                 # sess_out_paths.append(out_path)
                 data_log["condition_name"].append(cond_name)
                 data_log["condition_group"].append(parent_group)
                 data_log["condition_integer"].append(int(para_index))
-                data_log["beta_path"].append(out_path)
                 data_log["session"].append(sess)
                 data_log["ima"].append(ima)
-                instance_beta = full_cond_glm.compute_contrast(local_contrast_matrix, stat_type='t', output_type='effect_size')
-                nibabel.save(instance_beta, out_path)
+                # send to contrast expander and runner
+                out_paths = analysis.nilearn_contrasts(full_cond_glm_path, local_contrast_matrix,
+                                                       [cond_name + "instance_betas"],
+                                                       output_dir=run_dir, mode="effect_size")
+                data_log["beta_path"].append(out_paths[0])
+                # instance_beta = full_cond_glm.compute_contrast(local_contrast_matrix, stat_type='t', output_type='effect_size')
             lindex += 1
 
     data_log_out = os.path.join(subj_root, "analysis", para_name + "_stimulus_response_data_key.csv")
@@ -1305,7 +1336,7 @@ def topup_wrapper(functional_dirs, fname='f_nordic.nii.gz'):
     number_images = input_control.int_input('How many images do you want to use topup with? (Recommended 2-3)')
     func_enc = input_control.str_list_input('What phase encoding are the functional images in? (HF, FH, RL, LR)')[0]
 
-    preprocess.topup(functional_dirs,image_1_path,image_2_path,image_1_enc,image_2_enc,number_images,func_enc)
+    preprocess.topup(functional_dirs, image_1_path, image_2_path, image_1_enc, image_2_enc, number_images, func_enc)
 
     return functional_dirs
 

@@ -420,7 +420,7 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
         cond_name = condition_names[str(active_condition)]
         timing["trial_type"].append(cond_name)
         timing["onset"].append(i * block_length * tr_length)
-        timing["duration"].append(block_length * 3)
+        timing["duration"].append(block_length * tr_length)
     frames = np.arange(num_blocks * block_length) * tr_length
     time_df = pd.DataFrame.from_dict(timing)
 
@@ -445,11 +445,12 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
 
 def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_condition_idxs: List[int],
                                 condition_names: dict, condition_groups: dict, tr_length=3.0, mion=True,
-                                reorder=True):
+                                reorder=True, use_cond_groups=True):
     """
     Creates a design matrix from a list of lengths number of trs, holding the stimulus condition at each tr.
     Basically just onehot encodes the run_list, except base case conditions are given a constant value and a
     Linear Drift regresssor is added.
+    Warning: different conditions in the same group MUST have the same block length and FIR delay
     :param run_list:
     :param num_conditions:
     :param base_condition_idxs:
@@ -481,6 +482,12 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     # iterate through the blocks
     t = 0
     block_lengths = {}
+    cond2group = {}
+    for key in condition_groups.keys():
+        for cond_idx in condition_groups[key]["conds"]:
+            cond2group[cond_idx] = key
+    name_integerizer = {v: k for k, v in condition_names.items()}
+
     for block in runlength_encode:
         cond = block[0]  # the integer representation for the condition of this block
         if cond not in base_condition_idxs:
@@ -490,29 +497,31 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
                 hrf_timing['onset'].append(t * tr_length)
                 hrf_timing['duration'].append(len(block) * tr_length)
             else:
-                for group_name in condition_groups.keys():
-                    group = condition_groups[group_name]['conds']
-                    fir_delay = condition_groups[group_name]['fir']
-                    if cond in group:
-                        block_lengths[group_name] = len(block)
-                        if fir_delay is not None:
-                            if fir_delay < 0:
-                                # ok, code says we want to use single TR fir regressors, with 0 delay
-                                for j in range(len(block)):
-                                    fir_timing['trial_type'].append(group_name + "_r" + str(j))
-                                    fir_timing['onset'].append((t + j) * tr_length)
-                                    fir_timing['duration'].append(tr_length)
-                                    global_fir_delay = len(block)
-                            else:
-                                fir_timing['trial_type'].append(group_name)
-                                fir_timing['onset'].append(t * tr_length)
-                                fir_timing['duration'].append(tr_length * len(block))
-                                global_fir_delay = fir_delay
-                        else:
-                            hrf_timing['trial_type'].append(group_name)
-                            hrf_timing['onset'].append(t * tr_length)
-                            hrf_timing['duration'].append(len(block) * tr_length)
-
+                # standard case, models each condition group with its own regressor of set of FIR regressors.
+                group_name = cond2group[cond]
+                fir_delay = condition_groups[group_name]['fir']
+                if use_cond_groups:
+                    # regressor for each group
+                    regressor_name = group_name
+                else:
+                    # regressor for each leaf stimulus type
+                    regressor_name = condition_names[str(cond)]
+                block_lengths[group_name] = len(block)
+                if fir_delay is not None:
+                    if fir_delay < 0:
+                        # ok, code says we want to use single TR fir regressors, with 0 delay
+                        for j in range(len(block)):
+                            fir_timing['trial_type'].append(regressor_name + "_r" + str(j))
+                            fir_timing['onset'].append((t + j) * tr_length)
+                            fir_timing['duration'].append(tr_length)
+                    else:
+                        fir_timing['trial_type'].append(regressor_name)
+                        fir_timing['onset'].append(t * tr_length)
+                        fir_timing['duration'].append(tr_length * len(block))
+                else:
+                    hrf_timing['trial_type'].append(regressor_name)
+                    hrf_timing['onset'].append(t * tr_length)
+                    hrf_timing['duration'].append(len(block) * tr_length)
         t += len(block)
     hrf_time_df = pd.DataFrame.from_dict(hrf_timing)
     fir_time_df = pd.DataFrame.from_dict(fir_timing)
@@ -539,18 +548,26 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     if mion:
         fir_dm *= -1
     # get our condition names
-    if condition_groups is None or reorder is False:
-        cond_names_list = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_condition_idxs]
+    if condition_groups is None or not use_cond_groups or reorder is False:
+        cond_names_set = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_condition_idxs]
     else:
         # for fir we have to generate additional conditions for each delay regressor matching nilearn nomenclature
         cond_names_set = list(condition_groups.keys())
-        cond_names_list = []
-        for cond_name in cond_names_set:
+    cond_names_list = []
+
+    for cond_name in cond_names_set:
+        if use_cond_groups:
+            cond_group = cond_name
             fir_delay = condition_groups[cond_name]['fir']
-            if fir_delay is None:
-                cond_names_list.append(cond_name)
-            else:
-                cond_names_list += [cond_name + "_delay_" + str(delay) for delay in range(block_lengths[cond_name])]
+        else:
+            cond_group = cond2group[int(name_integerizer[cond_name])]
+            fir_delay = condition_groups[cond_group]['fir']
+        if fir_delay is None:
+            cond_names_list.append(cond_name)
+        else:
+            cond_names_list += [cond_name + "_delay_" + str(delay)
+                                for delay in range(block_lengths[cond_group])]
+
     # merge the two dms
     dm = pd.concat([fir_dm, hrf_dm], axis=1)
     dupes = dm.columns.duplicated()
@@ -743,7 +760,7 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
     return avg_contrasts, out_paths
 
 
-def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, output_dir):
+def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, output_dir, mode='z_score'):
     glm = pickle.load(open(glm_model_path, "rb"))
     contrast_matrices = [[] for _ in range(contrast_matrix.shape[1])]
     dm_cols = list(glm.design_matrices_[0].columns)
@@ -780,7 +797,7 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
         for dm in glm.design_matrices_[:4]:
             plot_contrast_matrix(contrast, design_matrix=dm)
             plt.show()
-        contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type='effect_size')
+        contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type=mode)
         out_path = os.path.join(output_dir, contrast_descriptors[i] + '.nii')
         nib.save(contrast_nii, out_path)
         out_paths.append(out_path)
