@@ -531,7 +531,7 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
         hrf = "spm + derivative"
     
     # make seperate design matrix for FIR and HRF
-    fir_dm = _make_nl_dm(frames, fir_time_df, "fir", delay_periods=[0], stim_min_onset=-32)
+    fir_dm = _make_nl_dm(frames, fir_time_df, "fir", delay_periods=[1], stim_min_onset=-32)
     hrf_dm = _make_nl_dm(frames, hrf_time_df, hrf, delay_periods=[0], stim_min_onset=-32)
 
     # fix naming
