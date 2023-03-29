@@ -134,6 +134,7 @@ def get_functional_target():
 
 
 def get_fixation_csv(source):
+    subj_root, project_root = _env_setup()
     path = input_control.dir_input("Path to fixation csv file (length trs, header with IMAs)")
     fix_data = pd.read_csv(path)
     for run_dir in source:
@@ -969,7 +970,7 @@ def get_run_betas(para, mion=True):
                         local_contrast_matrix[lindex][dm_index] = 1
                         out_path = os.path.join(run_dir, dm_cols[dm_index] + "_instance_beta.nii.gz")
                         instance_beta = full_cond_glm.compute_contrast(local_contrast_matrix, stat_type='t',
-                                                                       output_type='effect_size')
+                                                                       output_type='z_score')
                         nibabel.save(instance_beta, out_path)
                         out_paths.append(out_path)
                         dm_index += 1

@@ -193,6 +193,9 @@ class DefaultSubjectControlNet(BaseControlNet):
         """
         session_id = input("enter date of session")
         subj_root, project_root = support_functions._env_setup()
+        proj_config = 'config.json'
+        with open(proj_config, 'r') as f:
+            proj_data = json.load(f)
         path = os.path.join(subj_root, 'sessions', session_id, 'session_net.json')
         session = DefaultSessionControlNet(session_id, self.network.nodes['functional_representative'],
                                            self.network.nodes['functional_representative_mask'],
@@ -210,6 +213,20 @@ class DefaultSubjectControlNet(BaseControlNet):
                 session.network.graph['scan_pos'] = 'HFP'
             else:
                 session.network.graph['scan_pos'] = 'HFS'
+
+        if 'reg_settings' not in session.network.graph:
+            use_project_defualts = bool_input("Use Project Default Nonlinear Registration and Topup Settings?")
+            if use_project_defualts:
+                nonlinear_moco = proj_data["reg_settings"]["nonlinear_moco"]
+                nonlinear_session_2_functional_rep = proj_data["reg_settings"]["nonlinear_session_2_functional_rep"]
+            else:
+                nonlinear_moco = bool_input("Use Nonlinear Motion Correction?")
+                nonlinear_session_2_functional_rep = bool_input("Use Nonlinear Session to Function Registration?")
+            use_topup = not nonlinear_session_2_functional_rep
+            session.network.graph["reg_settings"] = {"nonlinear_moco": nonlinear_moco,
+                                                     "nonlinear_session_2_functional_rep": nonlinear_session_2_functional_rep,
+                                                     "topup": use_topup}
+
         session.network.nodes['create_beta_matrix']['argv'] = session.network.graph['is_mion']
         session.network.nodes['sphinx_correct']['argv'] = session.network.graph['scan_pos']
         session.network.nodes['sphinx_correct_3d_rep']['argv'] = session.network.graph['scan_pos']
