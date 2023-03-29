@@ -1261,18 +1261,22 @@ def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, o
     return output
 
 
-def motion_correction_wrapper(source, targets, fname='f_topup_sphinx.nii'):
+def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, fname='f_topup_sphinx.nii'):
     """
     :param source:
     :param targets:
     :param fname:
+    :param moco_is_nonlinear
     :return:
+
     """
     subj_root, project_root = _env_setup()
     config_path = 'config.json'
     with open(config_path, 'r') as f:
         config = json.load(f)
-    moco_is_nonlinear = config["reg_settings"]["nonlinear_moco"]
+    if moco_is_nonlinear is None:
+        moco_is_nonlinear = config["reg_settings"]["nonlinear_moco"]
+
     best_disp = 9999999
     besp_disp_idx = -1
     if isinstance(targets, str):

@@ -537,7 +537,6 @@ class DefaultSessionControlNet(BaseControlNet):
         proj_config = 'config.json'
         with open(proj_config, 'r') as f:
             proj_data = json.load(f)
-        self.network.graph['sess2func_nonlinear'] = proj_data["reg_settings"]["nonlinear_session_2_functional_rep"]
         self.initialize_proccessing_structure(session_id, func_rep_node, func_rep_masked_node,
                                               func_rep_mask_node, func_rep_dil_mask_node)
         self.init_head_states()
@@ -618,12 +617,13 @@ class DefaultSessionControlNet(BaseControlNet):
                                    "our raw epis. Need to provide a thermal noise image path, ideally collected in the "
                                    "same session or otherwise a close of one as possible. Must have cloned the "
                                    "SteenMoeller/NORDIC_raw github and added it to matlab path.")
-        self.network.add_node('topup', fxn='support_functions.topup_wrapper',bipartite=1,
+        self.network.add_node('topup', fxn='support_functions.topup_wrapper', bipartite=1,
                                 desc='Use two reverse phase encoded Spin-Echo images to correct the magnetic field distortions '
-                                'in the functional image. ')
+                                'in the functional image. ', argv=self.network.graph["reg_settings"]["topup"])
         self.network.add_node('sphinx_correct', fxn='preprocess.convert_to_sphinx', bipartite=1,
                               desc='Preform Sphinx orientation correction on the 4d raw epi data')
         self.network.add_node('motion_correction', fxn='support_functions.motion_correction_wrapper', bipartite=1,
+                              argv=self.network.graph["reg_settings"]["nonlinear_moco"],
                               desc='Linear motion correction to target 3D rep image. All frames in whole session are '
                                    'affine aligned to this target, using mutual information cost. Uses either FSL MCFLIRT '
                                    'or ANTs motion correction under the hood depending on package availability. FSL is '
@@ -650,7 +650,7 @@ class DefaultSessionControlNet(BaseControlNet):
                                    'stripped manually aligned epi rep to the downsampled t1. The manual registration got'
                                    ' the brains as overlapping as possible, now this attempts to morph the cortex to correct'
                                    ' differences in white matter boundaries due to field warp in epi acquisition.',
-                              argv=self.network.graph['sess2func_nonlinear'])
+                              argv=self.network.graph['reg_settings']['nonlinear_session_2_functional_rep'])
         self.network.add_node('apply_reg_epi_mask', fxn='support_functions.apply_binary_mask_vol', bipartite=1,
                               desc='Applys the downsampled t1 mask to the epi rep thats been manually registered to the '
                                    'ds t1, so that the epi can be nonlinear coregistered to the t1 without intereference from the skull')
