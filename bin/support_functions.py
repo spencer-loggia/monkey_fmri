@@ -139,7 +139,10 @@ def get_fixation_csv(source):
     path = input_control.dir_input("Path to fixation csv file (length trs, header with IMAs)")
     fix_data = pd.read_csv(path)
     for run_dir in source:
-        ima_dir = os.path.dirname(run_dir)
+        if os.path.isfile(run_dir):
+            ima_dir = os.path.dirname(run_dir)
+        else:
+            ima_dir = run_dir
         ima = os.path.basename(ima_dir)
         try:
             ima_fix_data = fix_data[ima]
