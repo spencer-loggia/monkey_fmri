@@ -228,11 +228,10 @@ class DefaultSubjectControlNet(BaseControlNet):
                                                      "topup": use_topup}
 
         session.network.nodes['create_beta_matrix']['argv'] = session.network.graph['is_mion']
-        session.network.nodes['sphinx_correct']['argv'] = (session.network.graph['scan_pos'],session.network.graph["reg_settings"]["topup"])
-        session.network.nodes['select_3d_rep']['argv'] = session.network.graph["reg_settings"]["topup"]
+        session.network.nodes['sphinx_correct']['argv'] = session.network.graph['scan_pos']
         session.network.nodes['sphinx_correct_3d_rep']['argv'] = session.network.graph['scan_pos']
         session.network.nodes['automatic_coregistration']['argv'] = session.network.graph['reg_settings']['nonlinear_session_2_functional_rep']
-        session.network.nodes['motion_correction']['argv'] = (session.network.graph["reg_settings"]["nonlinear_moco"],session.network.graph["reg_settings"]["topup"])
+        session.network.nodes['motion_correction']['argv'] = session.network.graph["reg_settings"]["nonlinear_moco"]
         session.network.nodes['topup']['argv'] = session.network.graph["reg_settings"]["topup"]
 
         return list(set(sessions + [os.path.relpath(session.control_loop(path), subj_root)]))
@@ -624,11 +623,11 @@ class DefaultSessionControlNet(BaseControlNet):
                                    "SteenMoeller/NORDIC_raw github and added it to matlab path.")
         self.network.add_node('topup', fxn='support_functions.topup_wrapper', bipartite=1,
                                 desc='Use two reverse phase encoded Spin-Echo images to correct the magnetic field distortions '
-                                'in the functional image. ', argv=True)
+                                'in the functional image. ')
+
         self.network.add_node('sphinx_correct', fxn='preprocess.convert_to_sphinx', bipartite=1,
                               desc='Preform Sphinx orientation correction on the 4d raw epi data')
         self.network.add_node('motion_correction', fxn='support_functions.motion_correction_wrapper', bipartite=1,
-                              argv=(True,True),
                               desc='Linear motion correction to target 3D rep image. All frames in whole session are '
                                    'affine aligned to this target, using mutual information cost. Uses either FSL MCFLIRT '
                                    'or ANTs motion correction under the hood depending on package availability. FSL is '

@@ -97,7 +97,7 @@ def _apply_binary_mask_3D(in_img: nib.Nifti1Image, mask: nib.Nifti1Image) -> nib
         mask = mask[:, :, :, None]
         mask = np.tile(mask, (1, 1, 1, n_data.shape[-1]))
     print(mask.shape)
-    n_data[mask <= 0.01] = 0.
+    n_data[mask <= 0.5] = 0.
     print(n_data.shape)
     new_nifti = nib.Nifti1Image(n_data, affine=in_img.affine, header=in_img.header)
     return new_nifti
@@ -147,7 +147,7 @@ def _slice_time_wrapper(in_file, out_file, slice_dir, TR, st):
     return st.run()
 
 
-def convert_to_sphinx(input_dirs: List[str], scan_pos='HFP', use_topup=True, output: Union[None, str] = None, fname=None):
+def convert_to_sphinx(input_dirs: List[str], scan_pos='HFP', output: Union[None, str] = None, fname='f_topup.nii.gz'):
     """
     Convert to sphinx
     :param input_dirs: paths to dirs with input nii files, (likely in the MION or BOLD dir)
@@ -158,13 +158,6 @@ def convert_to_sphinx(input_dirs: List[str], scan_pos='HFP', use_topup=True, out
     will have be changed from RAS to RAI.
     :return: path to output directory
     """
-    if fname == None:
-        if use_topup:
-            fname='f_topup.nii.gz'
-    
-        if not use_topup:
-            fname = 'f_nordic.nii'
-
     sources = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in input_dirs]
     assert scan_pos == 'HFP' or scan_pos == 'HFS', "Parameter scan_pos must be either 'HFP' or 'HFS'"
 
@@ -298,20 +291,17 @@ def applytopup(func_in,topup_basename,func_dir = 'HF'):
         out_buf = out_buf + '1 0 0 0.0371245 \n'
     elif 'RL' in func_dir:
         out_buf = out_buf + '-1 0 0 0.0371245 \n'
-
-    scan_param_filepath = os.path.join(func_in,'scan_encode_params.txt')
+    source_dir = os.path.dirname(func_in)
+    scan_param_filepath = os.path.join(source_dir, 'scan_encode_params.txt')
     with open(scan_param_filepath, 'w') as f:
         f.write(out_buf)
 
-    func_out = os.path.join(func_in,'f_topup.nii.gz')
+    func_out = os.path.join(source_dir, 'f_topup.nii.gz')
 
-    f_in = os.path.join(func_in,'f_nordic.nii')
-
-    cmd = 'applytopup --imain={} --inindex={} --datain={} --topup={} --out={} --method=jac'.format(f_in,1,scan_param_filepath,topup_basename,func_out)
+    cmd = 'applytopup --imain={} --inindex={} --datain={} --topup={} --out={} --method=jac'.format(func_in, 1,scan_param_filepath,topup_basename,func_out)
     
     print(cmd)
     subprocess.call(cmd,shell=True)
-
 
     return func_out 
 
@@ -328,8 +318,9 @@ def topup(input_dirs: List[str], image_1_path, image_2_path, image_1_enc, image_
     for funcP in input_dirs:
         args.append((funcP,topup_prefix_out,func_enc))
 
-    with Pool() as p:
+    with Pool(32) as p:
         res = p.starmap(applytopup, args)
+    return res
 
 
 def NORDIC(input_dirs: List[str], filename='f_nordic'):

@@ -415,11 +415,8 @@ def convert_to_sphinx_vol_wrap(src, *argv):
         subj_root = os.environ.get('FMRI_WORK_DIR')
         project_root = os.path.join(subj_root, '..', '..')
         os.chdir(project_root)
-        dirname = os.path.dirname(path)
-        fname = os.path.basename(path)
-        out = preprocess.convert_to_sphinx(input_dirs=[dirname], fname=fname, scan_pos=pos)[0]
-        out_path = os.path.join(out, fname.split('.')[0] + '_sphinx.nii')
-        paths.append(os.path.relpath(out_path, project_root))
+        out = preprocess.convert_to_sphinx(input_dirs=[path], scan_pos=pos)[0]
+        paths.append(os.path.relpath(out, project_root))
     return paths
 
 
@@ -1230,7 +1227,7 @@ def load_white_surfs():
     return surfs
 
 
-def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, use_topup = True):
+def motion_correction_wrapper(source, targets, moco_is_nonlinear=None, fname="f_topup_sphinx.nii.gz"):
     """
     :param source:
     :param targets:
@@ -1239,13 +1236,8 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, use_top
     :return:
 
     """
-    if use_topup: 
-        fname='f_topup_sphinx.nii'
-    if use_topup == False:
-        fname='f_nordic_sphinx.nii'
-
     source = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in source]
-        
+    out = [os.path.join(os.path.dirname(f), 'moco.nii.gz') for f in source]
     subj_root, project_root = _env_setup()
     config_path = 'config.json'
     with open(config_path, 'r') as f:
@@ -1261,7 +1253,7 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, use_top
         preprocess.motion_correction(source, t, check_rms=False, fname=fname, outname='temp_moco.nii.gz')
         disp = 0
         for run_dir in source:
-            disp_file = os.path.join(run_dir, 'temp_moco.nii.gz_abs.rms')
+            disp_file = os.path.join(os.path.dirname(run_dir), 'temp_moco.nii.gz_abs.rms')
             disp_vec = np.loadtxt(disp_file)
             run_disp = np.mean(disp_vec.flatten())
             disp += run_disp
@@ -1270,8 +1262,9 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, use_top
             best_disp = disp
             besp_disp_idx = i
             for s in source:
-                moco_file = os.path.join(s, 'temp_moco.nii.gz')
-                rename_moco = os.path.join(s, 'moco.nii.gz')
+                sd = os.path.dirname(s)
+                moco_file = os.path.join(sd, 'temp_moco.nii.gz')
+                rename_moco = os.path.join(sd, 'moco.nii.gz')
                 os.rename(moco_file, rename_moco)
     print("Best average displacement: ", str(best_disp))
     print("Target chosen: " + targets[besp_disp_idx])
@@ -1280,11 +1273,12 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, use_top
         print("running final nonlinear warp...")
         args = []
         for s in source:
-            mc = os.path.join(s, 'moco.nii.gz')
+            sd = os.path.dirname(s)
+            mc = os.path.join(sd, 'moco.nii.gz')
             args.append((mc, ref, mc))
         with multiprocessing.Pool() as p:
             p.starmap(preprocess.nonlinear_moco, args)
-    return source, ref
+    return out, ref
 
 
 def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):
@@ -1296,13 +1290,11 @@ def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):
     subj_root,project_root = _env_setup()
     functional_dirs = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in functional_dirs]
     full_func_dirs = [os.path.abspath(fdir) for fdir in functional_dirs]
-
-    preprocess.NORDIC(full_func_dirs, 'f_nordic')
-
-    return functional_dirs
+    out = preprocess.NORDIC(full_func_dirs, 'f_nordic')
+    return out
 
 
-def topup_wrapper(functional_dirs, use_topup, fname='f_nordic.nii.gz'):
+def topup_wrapper(functional_dirs, use_topup, fname='f_nordic.nii'):
     if use_topup:
         in_paths = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in functional_dirs]
         image_1_path = input_control.dir_input('Enter the path to the first spin echo image.')
@@ -1311,12 +1303,12 @@ def topup_wrapper(functional_dirs, use_topup, fname='f_nordic.nii.gz'):
         image_2_enc = input_control.str_list_input('What phase encoding is this image? (HF, FH, RL, LR)')[0]
         number_images = input_control.int_input('How many images do you want to use topup with? (Recommended 2-3)')
         func_enc = input_control.str_list_input('What phase encoding are the functional images in? (HF, FH, RL, LR)')[0]
-    
-        preprocess.topup(in_paths, image_1_path, image_2_path, image_1_enc, image_2_enc, number_images, func_enc)
-    elif not use_topup:
+        out = preprocess.topup(in_paths, image_1_path, image_2_path, image_1_enc, image_2_enc, number_images, func_enc)
+    else:
         print('Skipping Topup')
+        out = functional_dirs
         
-    return functional_dirs
+    return out
 
 
 def time_series_order_vs_all_functional(functional_dirs, ima_order_data, paradigm_data, target_condition, output_dir,
