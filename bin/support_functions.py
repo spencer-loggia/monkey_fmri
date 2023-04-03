@@ -139,10 +139,11 @@ def get_fixation_csv(source):
     path = input_control.dir_input("Path to fixation csv file (length trs, header with IMAs)")
     fix_data = pd.read_csv(path)
     for run_dir in source:
-        ima = os.path.basename(run_dir)
+        ima_dir = os.path.dirname(run_dir)
+        ima = os.path.basename(ima_dir)
         try:
             ima_fix_data = fix_data[ima]
-            ima_fix_data.to_csv(os.path.join(run_dir, "fixation.csv"))
+            ima_fix_data.to_csv(os.path.join(os.path.dirname(ima_dir), "fixation.csv"))
         except KeyError:
             print("WARN: no fixation data found for IMA " + str(ima))
             pass
@@ -158,7 +159,7 @@ def dilate_mask(inpath, outpath=None):
         filename = os.path.basename(inpath)
         outname = 'dil_' + filename
         outpath = os.path.join(os.path.dirname(inpath), outname)
-    cmd = 'fslmaths %s -dilM %s' % (inpath, outpath)
+    cmd = 'fslmaths %s -bin -mul -1 -add 1 -kernel boxv 7 -ero -mul -1 -add 1 %s' % (inpath, outpath)
     call(cmd, shell=True)
     print(cmd)
     if outpath[-3:] != '.gz':
@@ -387,7 +388,7 @@ def get_3d_rep(src: Union[List[str], str], use_topup):
         fname = 'f_nordic.nii'
     subj_root, project_root = _env_setup()
     data_arr = []
-    sess_dir = os.path.dirname(src[0])
+    sess_dir = os.path.dirname(os.path.dirname(src[0]))
     affine = None
     header = None
     src = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in src]
@@ -666,7 +667,7 @@ def create_load_ima_order_map(source):
     ima_order_map = {}
     one_index_source = input_control.bool_input("Are order numbers 1 indexed (in experiment logs)? ")
     for s in source:
-        ima = os.path.basename(s).strip()
+        ima = os.path.basename(os.path.dirname(s)).strip()
         order_num = int(input("Enter order number (as in log) for ima " + ima))
         if one_index_source:
             order_num -= 1
@@ -791,7 +792,7 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
                 sess_dms.append(sess_dm)
 
         for j, sess_dm in enumerate(sess_dms):
-            ima = source[i][j]
+            ima = os.path.dirname(source[i][j])
             fix_path = os.path.join(ima, "fixation.csv")
             if os.path.exists(fix_path):
                 fix_data = pd.read_csv(fix_path, index_col=0)
@@ -830,7 +831,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
 
     base_conditions = [paradigm_data['base_case_condition']]
 
-    source = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in source]
+    source = [[os.path.join(f, fname) if not os.path.isfile(f) else f for f in s] for s in source]
     design_matrices, complete_source, tr_length = get_design_matrices(paradigm_path, ima_order_map_path, source, mion,
                                                                       run_wise=run_wise,
                                                                       use_cond_groups=use_cond_groups)
@@ -838,7 +839,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
     print("using mion: ", mion)
     print('source fname: ', fname)
     if out_dir is None:
-        out_dir = os.path.dirname(source[0][0])
+        out_dir = os.path.dirname(os.path.dirname(source[0][0]))
     glm_path = analysis.nilearn_glm(complete_source, design_matrices, base_conditions,
                                     output_dir=out_dir, fname=fname, mion=mion, tr_length=tr_length, smooth=smooth)
     print("Run Level Beta Coefficient Matrices Created")
