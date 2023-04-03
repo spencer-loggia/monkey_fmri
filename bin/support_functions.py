@@ -123,6 +123,7 @@ def get_epis(*argv):
     if check:
         expected = int(input("What is the expected number of trs? "))
         SOURCE = preprocess.check_time_series_length(SOURCE, fname='f.nii.gz', expected_length=expected)
+    SOURCE = [os.path.join(s, "f.nii.gz") for s in SOURCE]
     return SOURCE
 
 
@@ -289,9 +290,9 @@ def apply_warp_4d(source, vol_in_target_space, forward_gross_transform_path=None
 
 def apply_warp_4d_refactor(source, vol_in_target_space, forward_gross_transform_path=None, fine_transform_path=None,
                            fname='moco.nii.gz'):
-    gg_source = [os.path.join(f, fname) for f in source]
-    apply_warp_4d(gg_source, vol_in_target_space, forward_gross_transform_path, fine_transform_path)
-    return source
+    gg_source = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in source]
+    warped_source = apply_warp_4d(gg_source, vol_in_target_space, forward_gross_transform_path, fine_transform_path)
+    return warped_source
 
 
 def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path, reverse_fine_transform_path,
@@ -338,12 +339,15 @@ def apply_warp_inverse_vol_roi_dir(ds_vol_roi_dict, vol_in_target_space, forward
 
 
 def apply_binary_mask_functional(source, mask, fname='reg_moco.nii.gz'):
+    source = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in source]
+    out = []
     for run_dir in source:
-        src_nii = nibabel.load(os.path.join(run_dir, fname))
+        src_nii = nibabel.load(run_dir)
         mask_nii = nibabel.load(mask)
         masked_nii = preprocess._apply_binary_mask_3D(src_nii, mask_nii)
-        nibabel.save(masked_nii, os.path.join(run_dir, 'epi_masked.nii'))
-    return source
+        out.append(os.path.join(os.path.dirname(run_dir), 'epi_masked.nii'))
+        nibabel.save(masked_nii, out[-1])
+    return out
 
 
 def apply_binary_mask_vol(src_vol, mask):
@@ -372,18 +376,22 @@ def create_slice_overlays(function_reg_vol, anatomical, reg_contrasts):
     return out_paths
 
 
-def get_3d_rep(src: Union[List[str], str], fname="f_topup.nii.gz"):
+def get_3d_rep(src: Union[List[str], str], use_topup):
     """
     :param src:
     :return:
     """
+    if use_topup:
+        fname = 'f_topup.nii.gz'
+    if not use_topup:
+        fname = 'f_nordic.nii'
     subj_root, project_root = _env_setup()
     data_arr = []
     sess_dir = os.path.dirname(src[0])
     affine = None
     header = None
-    for path in src:
-        f_path = os.path.join(path, fname)
+    src = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in src]
+    for f_path in src:
         nii = nibabel.load(f_path)
         if affine is None:
             header = nii.header
@@ -750,8 +758,13 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
     for i, session_imas in enumerate(ima_order_map_path):
         with open(session_imas, "r") as f:
             ima_order_map = json.load(f)
-        sess_dir = os.path.dirname(source[i][0])
+        # if this source specfies file path we need to go up two levels to find the session directory
+        if os.path.isfile(source[i][0]):
+            sess_dir = os.path.dirname(os.path.dirname(source[i][0]))
+        else:
+            sess_dir = os.path.dirname(source[i][0])
         sess_name = os.path.basename(sess_dir)
+        # returns source with file if passed that way
         complete_source += source[i]
         if runtime_order_defs:
             sess_dms = _design_matrices_from_condition_lists(ima_order_map, condition_names, num_conditions,
@@ -820,6 +833,7 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
 
     base_conditions = [paradigm_data['base_case_condition']]
 
+    source = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in source]
     design_matrices, complete_source, tr_length = get_design_matrices(paradigm_path, ima_order_map_path, source, mion,
                                                                       run_wise=run_wise,
                                                                       use_cond_groups=use_cond_groups)
@@ -1216,52 +1230,7 @@ def load_white_surfs():
     return surfs
 
 
-def order_corrected_functional(functional_dirs, ima_order_data, paradigm_data, output, deconv_weight,
-                               fname='epi_masked') -> np.ndarray:
-    """
-    This method is not used by current control flow module, but kept cause it kinda cool.
-    The defualt maximal dynamic regressor does produce a deconv npy file to be used with this
-    By order correcting the batch averaged function via deconvolution, we can compare all block simultaneously,
-    giving a better sense of the true nature of the data.
-    Create a averaged 4d time series where stimuli presentation order is corrected for,
-    by de-convolving, rearranging, stacking, then re-convolving.
-    :return:
-    """
-    conditions = paradigm_data['condition_integerizer']
-    order_def = paradigm_data['order_number_definitions']
-    block_length = paradigm_data['block_length_trs']
-    w, h, d, _ = nibabel.load(os.path.join(functional_dirs[0], fname)).get_fdata().shape
-    num_conditions = len(conditions)
-    corrected_arr = torch.zeros((w, h, d, block_length, num_conditions))
-    weight = torch.zeros(len(conditions))
-    deconv_weight = torch.from_numpy(deconv_weight)
-    deconv = torch.nn.Conv1d(kernel_size=deconv_weight.shape[0], padding=torch.floor(deconv_weight.shape[0] / 2),
-                             in_channels=1, out_channels=1, bias=False)
-    deconv.weight = torch.nn.Parameter(deconv_weight, requires_grad=False)
-    for func_dir in functional_dirs:
-        ima = os.path.basename(func_dir)
-        order_num = ima_order_data[ima]
-        order = order_def[str(order_num)]
-        func_nii = nibabel.load(os.path.join(func_dir, fname))
-        func_data = func_nii.get_fdata()
-        shape = func_data.shape
-        func_data = torch.from_numpy(func_data.reshape(w * h * d, 1,
-                                                       -1))  # reshape to voxels (batch), channels, time for use with torch conv operator
-        func_data = deconv(func_data)
-        func_data = func_data.reshape(
-            list(shape[:3]) + [block_length, len(order)])  # so we can easily index into individual blocks
-        for block, condition in enumerate(order):
-            weight[condition] += 1
-            corrected_arr[:, :, :, :, condition] += func_data[:, :, :, :, block]
-    corrected_arr = (corrected_arr.T / weight[:, None, None, None, None]).T
-    corrected_arr = corrected_arr.reshape((w, h, d, block_length * num_conditions))  # reshape to real functional
-    corrected_arr = corrected_arr.numpy()
-    corrected_nii = nibabel.Nifti1Image(corrected_arr, affine=func_nii.affine, header=func_nii.header)
-    nibabel.save(corrected_nii, output)
-    return output
-
-
-def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, fname='f_topup_sphinx.nii'):
+def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, use_topup = True):
     """
     :param source:
     :param targets:
@@ -1270,6 +1239,13 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, fname='
     :return:
 
     """
+    if use_topup: 
+        fname='f_topup_sphinx.nii'
+    if use_topup == False:
+        fname='f_nordic_sphinx.nii'
+
+    source = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in source]
+        
     subj_root, project_root = _env_setup()
     config_path = 'config.json'
     with open(config_path, 'r') as f:
@@ -1283,7 +1259,6 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, fname='
         targets = [targets]
     for i, t in enumerate(targets):
         preprocess.motion_correction(source, t, check_rms=False, fname=fname, outname='temp_moco.nii.gz')
-        sess_dir = os.path.dirname(source[0])
         disp = 0
         for run_dir in source:
             disp_file = os.path.join(run_dir, 'temp_moco.nii.gz_abs.rms')
@@ -1313,34 +1288,34 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear = None, fname='
 
 
 def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):
-    use_noise = input_control.bool_input("Use noise image? (highly recommended) ")
-    in_paths = [os.path.abspath(os.path.join(fdir, fname)) for fdir in functional_dirs]
-    if use_noise:
-        noise_image_path = input_control.dir_input("Enter path to desired thermal noise image.")
-        noise_image = nibabel.load(noise_image_path)
-        if len(noise_image.shape) == 4:
-            data = noise_image.get_fdata()
-            data = np.mean(data, axis=3)
-            avg_noise = nibabel.Nifti1Image(data, affine=noise_image.affine, header=noise_image.header)
-            nibabel.save(avg_noise, noise_image_path)
+    """
+    Wrapper for nordic denoising. See https://github.com/SteenMoeller/NORDIC_Raw 
+    and https://www.nature.com/articles/s41467-021-25431-8.
 
-        preprocess.NORDIC(in_paths, noise_image_path, 'f_nordic')
-    else:
-        preprocess.NORDIC(in_paths, None, 'f_nordic')
+    """
+    subj_root,project_root = _env_setup()
+    functional_dirs = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in functional_dirs]
+    full_func_dirs = [os.path.abspath(fdir) for fdir in functional_dirs]
+
+    preprocess.NORDIC(full_func_dirs, 'f_nordic')
+
     return functional_dirs
 
 
-def topup_wrapper(functional_dirs, fname='f_nordic.nii.gz'):
-    in_paths = [os.path.abspath(os.path.join(fdir, fname)) for fdir in functional_dirs]
-    image_1_path = input_control.dir_input('Enter the path to the first spin echo image.')
-    image_1_enc = input_control.str_list_input('What phase encoding is this image? (HF, FH, RL, LR)')[0]
-    image_2_path = input_control.dir_input('Enter the path to the second spin echo image.')
-    image_2_enc = input_control.str_list_input('What phase encoding is this image? (HF, FH, RL, LR)')[0]
-    number_images = input_control.int_input('How many images do you want to use topup with? (Recommended 2-3)')
-    func_enc = input_control.str_list_input('What phase encoding are the functional images in? (HF, FH, RL, LR)')[0]
-
-    preprocess.topup(functional_dirs, image_1_path, image_2_path, image_1_enc, image_2_enc, number_images, func_enc)
-
+def topup_wrapper(functional_dirs, use_topup, fname='f_nordic.nii.gz'):
+    if use_topup:
+        in_paths = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in functional_dirs]
+        image_1_path = input_control.dir_input('Enter the path to the first spin echo image.')
+        image_1_enc = input_control.str_list_input('What phase encoding is this image? (HF, FH, RL, LR)')[0]
+        image_2_path = input_control.dir_input('Enter the path to the second spin echo image.')
+        image_2_enc = input_control.str_list_input('What phase encoding is this image? (HF, FH, RL, LR)')[0]
+        number_images = input_control.int_input('How many images do you want to use topup with? (Recommended 2-3)')
+        func_enc = input_control.str_list_input('What phase encoding are the functional images in? (HF, FH, RL, LR)')[0]
+    
+        preprocess.topup(in_paths, image_1_path, image_2_path, image_1_enc, image_2_enc, number_images, func_enc)
+    elif not use_topup:
+        print('Skipping Topup')
+        
     return functional_dirs
 
 
@@ -1522,58 +1497,4 @@ def binary_masks_from_int_atlas(atlas: str,
         out_path = os.path.join(out_dir, name + '.nii')
         nibabel.save(mask_nii, out_path)
         out_paths.append(os.path.relpath(out_path, project_root))
-    return out_paths
-
-
-def segment_contrast_time_course(contrast_files, functional_dirs, ima_order_map, hrf_file, deconvolution_file,
-                                 paradigm_file, fname='epi_masked.nii'):
-    out_paths = []
-    with open(paradigm_file, 'r') as f:
-        para_data = json.load(f)
-    with open(ima_order_map, 'r') as f:
-        ima_data = json.load(f)
-    block_length = para_data['block_length_trs']
-    block_orders = para_data['order_number_definitions']
-    num_conditions = len(para_data['condition_integerizer'])
-    hrf = np.load(hrf_file)
-    deconv = np.load(deconvolution_file)
-    correct_order = False
-    if len(para_data['order_number_definitions']) > 1:
-        correct_order = True
-    sess_dir = os.path.dirname(functional_dirs[0])
-    if correct_order:
-        func = os.path.join(sess_dir, 'avg_func.nii')
-        func = order_corrected_functional(functional_dirs, ima_data, para_data, func, deconv, fname=fname)
-        order_def = list(range(num_conditions))
-    else:
-        imas = [None]
-        while False in [ima in ima_data and ima_data[ima] == ima_data[imas[0]] for ima in imas]:
-            imas = input_control.int_list_input(
-                "enter IMA number of run(s) to use for timeseries. Must use the same order number. ")
-            imas = [str(ima) for ima in imas]
-        if len(imas) > 1:
-            func = os.path.join(sess_dir, 'avg_func.nii')
-            analysis.average_functional_data([f for f in functional_dirs if os.path.basename(f) in imas],
-                                             fname=fname,
-                                             output=func)
-        else:
-            func = os.path.join(sess_dir, imas[0], fname)
-
-        order_def = block_orders[str(ima_data[imas[0]])]
-
-    if type(contrast_files) is not list:
-        contrast_files = [contrast_files]
-
-    all_contrast = input_control.bool_input("Create auto rois for all contrasts?")
-    if not all_contrast:
-        print('select contrast to use:')
-        names = para_data['contrast_descriptions']
-        option = input_control.select_option_input(names)
-        contrast_files = [c for c in contrast_files if names[option] in c]
-    for contrast in contrast_files:
-        out_c = analysis.segment_get_time_course(contrast, func, block_length, order_def)
-        path = os.path.join(os.path.dirname(contrast), 'cleaned_' + os.path.basename(contrast))
-        nibabel.save(out_c, path)
-        out_paths.append(path)
-    plt.show()
     return out_paths
