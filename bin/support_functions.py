@@ -33,8 +33,8 @@ from subprocess import call
 # subject support function must be operating with working directory appropriately set
 
 def _env_setup():
-    subj_root = os.environ.get('FMRI_WORK_DIR')
-    project_root = os.path.join(subj_root, '..', '..')
+    subj_root = os.path.abspath(os.environ.get('FMRI_WORK_DIR'))
+    project_root = os.path.abspath(os.path.join(subj_root, '..', '..'))
     os.chdir(project_root)
     return subj_root, project_root
 
@@ -146,7 +146,7 @@ def get_fixation_csv(source):
         ima = os.path.basename(ima_dir)
         try:
             ima_fix_data = fix_data[ima]
-            ima_fix_data.to_csv(os.path.join(os.path.dirname(ima_dir), "fixation.csv"))
+            ima_fix_data.to_csv(os.path.join(ima_dir, "fixation.csv"))
         except KeyError:
             print("WARN: no fixation data found for IMA " + str(ima))
             pass
@@ -234,7 +234,7 @@ def bandpass_wrapper(functional_dirs, paradigm_path):
     return preprocess.batch_bandpass_functional(functional_dirs, blocklength)
 
 
-def coreg_wrapper(source_space_vol_path, target_space_vol_path, full=False, nonlinear=True):
+def coreg_wrapper(source_space_vol_path, target_space_vol_path, nonlinear=True):
     """
 
     :param source_space_vol_path:
@@ -252,7 +252,7 @@ def coreg_wrapper(source_space_vol_path, target_space_vol_path, full=False, nonl
                                                                                  outP=os.path.abspath(out),
                                                                                  ltrns=ltrns,
                                                                                  n_jobs=2,
-                                                                                 full=full)])
+                                                                                 full=nonlinear)])
 
 
 def _apply_warp_wrapper(s, vol, out, transforms, interp, type_code, dim, invert, project_root):
@@ -663,6 +663,8 @@ def create_load_paradigm(add_new_option=True):
 def create_load_ima_order_map(source):
     subj_root, project_root = _env_setup()
     sess_dir = os.path.dirname(source[0])
+    if os.path.isfile(source[0]):
+        sess_dir = os.path.dirname(sess_dir)
     omap_path = os.path.relpath(os.path.join(sess_dir, 'ima_order_map.json'), project_root)
     if os.path.exists(omap_path):
         if input_control.bool_input("IMA -> order number map already defined for this session. Use existing?"):
@@ -688,7 +690,7 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
     design_matrices = []
 
     print("Stimuli orders are defined manually at runtime for this paradigm. "
-          "Please load order csv file (rows are trs, cols are IMAs)")
+          "Please load order csv file for session", sess_dir,  "(rows are trs, cols are IMAs)")
     runlist = os.path.join(sess_dir, "runlist.txt")
     if os.path.exists(runlist):
         print("Reading existing ima runlist at", runlist)
@@ -1027,7 +1029,8 @@ def promote_session(reg_beta: str, paradigm_path, functional, ima_order_path, *a
     session_net_path = os.path.relpath(os.path.join(subj_root, 'sessions', session_id, 'session_net.json'),
                                        project_root)
 
-    session_info = {'imas_used': [os.path.basename(f) for f in functional],
+    session_info = {'imas_used': [os.path.basename(f) if os.path.isdir(f) else os.path.basename(os.path.dirname(f))
+                                  for f in functional],
                     'session_net': session_net_path,
                     'ima_order_map': ima_order_path,
                     'beta_file': reg_beta}
@@ -1287,7 +1290,7 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear=None, fname="f_
 
 def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):
     """
-    Wrapper for nordic denoising. See https://github.com/SteenMoeller/NORDIC_Raw 
+    Wrapper for nordic denoising. See https://github.com/SteenMoeller/NORDIC_Raw
     and https://www.nature.com/articles/s41467-021-25431-8.
 
     """
@@ -1295,6 +1298,7 @@ def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):
     functional_dirs = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in functional_dirs]
     full_func_dirs = [os.path.abspath(fdir) for fdir in functional_dirs]
     out = preprocess.NORDIC(full_func_dirs, 'f_nordic')
+    out = [os.path.relpath(opath, project_root) for opath in out]
     return out
 
 
@@ -1311,7 +1315,7 @@ def topup_wrapper(functional_dirs, use_topup, fname='f_nordic.nii'):
     else:
         print('Skipping Topup')
         out = functional_dirs
-        
+
     return out
 
 

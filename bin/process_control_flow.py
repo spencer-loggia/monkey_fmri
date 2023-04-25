@@ -2,6 +2,8 @@ import os
 
 import json
 import datetime
+import re
+
 import networkx as nx
 import time
 
@@ -15,6 +17,8 @@ class BaseControlNet:
 
     def __init__(self):
         self.network = nx.DiGraph()
+        self.network.add_node("end", data=None, complete=None, bipartite=0, generated=True)
+        self.session_file = None
         self.head = []
 
     def init_head_states(self):
@@ -41,10 +45,20 @@ class BaseControlNet:
                         break
             if good_head:
                 self.head.append(n)
+        # add sterilization command
+        if "sterilize" not in self.network.nodes:
+            self.network.add_node("sterilize", fxn="self.sterilize", bipartite=1, generated=True,
+                                  desc="function that removes intermediate files associated with session. "
+                                       "WARNING: This makes it impossible to re-run many intermediate processing steps "
+                                       "without starting over.")
+            self.network.add_edge("sterilize", "end", order=0)
+        self.head.append("sterilize")
 
     def control_loop(self, path):
+        subj_root, project_root = support_functions._env_setup()
+        self.session_file = os.path.relpath(path, project_root)
         while self.interactive_advance():
-            self.serialize(path)
+            self.serialize(self.session_file)
         return path
 
     def display_node_info(self, node_id):
@@ -142,8 +156,10 @@ class BaseControlNet:
         :param ignore: nodes to not update data attributes from file
         :return:
         """
+        subj_root, project_root = support_functions._env_setup()
         with open(in_path, 'r') as f:
             node_link_dict = json.load(f)
+        self.session_file = os.path.relpath(in_path, project_root)
         loaded_net = nx.readwrite.node_link_graph(node_link_dict, directed=True, multigraph=False)
         for g_att in loaded_net.graph.keys():
             self.network.graph[g_att] = loaded_net.graph[g_att]
@@ -166,6 +182,54 @@ class BaseControlNet:
                     ("generated" in self.network.nodes[s] or "generated" in self.network.nodes[t]):
                 self.network.add_edge(s, t, **data)
         self.init_head_states()
+
+    def sterilize(self, *argv):
+        """
+        Eliminates intermediate data. Scans through all directories where this network saves files. If the are not marked
+        as data by a leaf (terminal) class 0 node, or match certain reserved file name patterns, files in these
+        directories are removed.
+        Returns None
+        -------
+
+        """
+        subj_root, project_root = support_functions._env_setup()
+        # compute set of reserved file names and set of directories to scan
+        reserved = set()
+        reserved_patterns = {"instance_beta"}
+        dirs = set()
+        for node, data in self.network.nodes(data=True):
+            if data["bipartite"] == 0:
+                n_data = data["data"]
+                if n_data is not None:
+                    if type(n_data) not in [list, tuple]:
+                        n_data = [n_data]
+                    for path in n_data:
+                        if os.path.isdir(path):
+                            dirn = path
+                        else:
+                            dirn = os.path.dirname(path)
+                            if "leaf" in data and data["leaf"] is True:
+                                reserved.add(path)
+                            else:
+                                if data["complete"] is True:
+                                    self.network.nodes[node]["complete"] = False
+                                self.network[node]["data"] = None
+                        is_sub = os.path.realpath(os.path.dirname(self.session_file)) == \
+                                 os.path.commonpath([os.path.realpath(os.path.dirname(self.session_file)),
+                                                     os.path.realpath(path)])
+                        if is_sub and len(os.path.normpath(path).split(os.sep)) > 1:
+                            dirs.add(dirn)
+        for target_dir in dirs:
+            for fname in os.listdir(target_dir):
+                path = os.path.join(target_dir, fname)
+                if path not in reserved and os.path.isfile(path):
+                    kill_file = True
+                    for pat in reserved_patterns:
+                        if pat in path:
+                            kill_file = False
+                            break
+                    if kill_file:
+                        os.remove(path)
 
 
 class DefaultSubjectControlNet(BaseControlNet):
@@ -242,16 +306,16 @@ class DefaultSubjectControlNet(BaseControlNet):
         para_name = para_def_dict['name']
         subj_root = os.environ.get('FMRI_WORK_DIR')
         self.network.add_node('paradigm_' + para_name, data=para_path, complete=True, bipartite=0,
-                              type='json', generated=True, modified=str(datetime.datetime.now()))
+                              type='json', generated=True, modified=str(datetime.datetime.now()), leaf=True)
         self.network.add_node('beta_' + para_name, data=None, generated=True, complete=False, bipartite=0, type='4d_volume',
                               space='std_functional')
-        self.network.add_node('glm_' + para_name, data=None, complete=False, generated=True, bipartite=0, type='model_object')
+        self.network.add_node('glm_' + para_name, data=None, complete=False, generated=True, bipartite=0, type='model_object', leaf=True)
         self.network.add_node('contrasts_' + para_name, data=[], complete=False, generated=True, bipartite=0, type='volume',
-                              space='std_functional')
+                              space='std_functional', leaf=True)
         self.network.add_node('reg_contrasts_' + para_name, data=[], complete=False, generated=True, bipartite=0, type='volume',
-                              space='ds_t1_native')
+                              space='ds_t1_native', leaf=True)
         self.network.add_node('sigsurfaces_' + para_name, data=[], complete=False, generated=True, bipartite=0, type='overlay',
-                              space='t1_native')
+                              space='t1_native', leaf=True)
         self.network.add_node('run_beta_log' + para_name, data=[], complete=False, generated=True, bipartite=0, type='overlay',
                               space='std_functional')
 
@@ -321,6 +385,8 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + 'run_betas', order=0)
         self.network.add_edge('create_' + para_name + 'run_betas', 'run_beta_log' + para_name, order=0)
+        self.network.add_edge('create_' + para_name + 'run_betas', "end", order=1)
+
 
         self.serialize(os.path.join(subj_root, 'subject_net.json'))
         return para_path
@@ -345,43 +411,43 @@ class DefaultSubjectControlNet(BaseControlNet):
         Should eventualy be replaced with a full anatomical pipeline.
         :return:
         """
-        self.network.add_node('t1', data=None, type='volume', bipartite=0, complete=False, space='t1_native', )
-        self.network.add_node('t1_mask', data=None, type='volume', bipartite=0, complete=False, space='t1_native')
+        self.network.add_node('t1', data=None, type='volume', bipartite=0, complete=False, space='t1_native', leaf=True)
+        self.network.add_node('t1_mask', data=None, type='volume', bipartite=0, complete=False, space='t1_native', leaf=True)
 
-        self.network.add_node('ds_t1', data=None, type='volume', bipartite=0, complete=False, space='ds_t1_native')
-        self.network.add_node('ds_t1_mask', data=None, type='volume', bipartite=0, complete=False, space='ds_t1_native')
+        self.network.add_node('ds_t1', data=None, type='volume', bipartite=0, complete=False, space='ds_t1_native', leaf=True)
+        self.network.add_node('ds_t1_mask', data=None, type='volume', bipartite=0, complete=False, space='ds_t1_native', leaf=True)
         self.network.add_node('ds_t1_masked', data=None, type='volume', bipartite=0, complete=False,
-                              space='ds_t1_native')
-        self.network.add_node('dil_ds_t1_mask', data=None, type='volume', bipartite=0,complete=False, space='ds_t1_native')
+                              space='ds_t1_native', leaf=True)
+        self.network.add_node('dil_ds_t1_mask', data=None, type='volume', bipartite=0,complete=False, space='ds_t1_native', leaf=True)
 
-        self.network.add_node('white_surfs', data=[], type='surface', bipartite=0, complete=False, space='t1_native')
+        self.network.add_node('white_surfs', data=[], type='surface', bipartite=0, complete=False, space='t1_native', leaf=True)
 
-        self.network.add_node('sessions', data=[], type='net_json', complete=None, bipartite=0, always_show=True)
+        self.network.add_node('sessions', data=[], type='net_json', complete=None, bipartite=0, always_show=True, leaf=True)
 
-        self.network.add_node('functional_representative', data=None, type='volume', bipartite=0, complete=None, space='epi_std')
-        self.network.add_node('functional_representative_mask', data=None, type='volume', bipartite=0, complete=None, space='epi_std')
-        self.network.add_node('functional_representative_masked', data=None, type='volume', bipartite=0, complete=None, space='epi_std')
-        self.network.add_node('functional_representative_dil_mask', data=None, type='volume', bipartite=0, complete=None, space='epi_std')
+        self.network.add_node('functional_representative', data=None, type='volume', bipartite=0, complete=None, space='epi_std', leaf=True)
+        self.network.add_node('functional_representative_mask', data=None, type='volume', bipartite=0, complete=None, space='epi_std', leaf=True)
+        self.network.add_node('functional_representative_masked', data=None, type='volume', bipartite=0, complete=None, space='epi_std', leaf=True)
+        self.network.add_node('functional_representative_dil_mask', data=None, type='volume', bipartite=0, complete=None, space='epi_std', leaf=True)
 
         self.network.add_node('manual_reg_epi_rep', data=None, type='volume', bipartite=0, complete=False,
                               space='ds_t1_aprox')
         self.network.add_node('masked_manual_reg_epi_rep', data=None, type='volume', bipartite=0, complete=False,
                               space='ds_t1_aprox')
         self.network.add_node('manual_transform', data=None, type='transform', bipartite=0, complete=False,
-                              invertable=True, space=('epi_std', 'ds_t1_aprox'))
+                              invertable=True, space=('epi_std', 'ds_t1_aprox'), leaf=True)
         self.network.add_node('auto_composite_transform', data=None, type='transform', bipartite=0, complete=False,
-                              invertable=False, space=('ds_t1_aprox', 'ds_t1_native'))
+                              invertable=False, space=('ds_t1_aprox', 'ds_t1_native'), leaf=True)
         self.network.add_node('inverse_auto_composite_transform', data=None, type='transform', bipartite=0,
-                              complete=False, invertable=False, space=('ds_t1_native', 'ds_t1_aprox'))
+                              complete=False, invertable=False, space=('ds_t1_native', 'ds_t1_aprox'), leaf=True)
 
-        self.network.add_node('paradigm_complete_checkpoint', data=None, complete=None, bipartite=0)
+        self.network.add_node('paradigm_complete_checkpoint', data=None, complete=None, bipartite=0, leaf=True)
 
         # three below data is expected to be dict('roi_set_name' : tuple(condition_of_interest_intID, data_path))
-        self.network.add_node('surface_defined_rois', data={}, complete=None, type='label', bipartite=0)
-        self.network.add_node('volume_rois', data={}, complete=None, type='volume', space='t1_native', bipartite=0)
+        self.network.add_node('surface_defined_rois', data={}, complete=None, type='label', bipartite=0, leaf=True)
+        self.network.add_node('volume_rois', data={}, complete=None, type='volume', space='t1_native', bipartite=0, leaf=True)
         self.network.add_node('ds_volume_rois', data={}, complete=None, type='volume', space='ds_t1_native',
-                              bipartite=0)
-        self.network.add_node('roi_time_courses', data={}, complete=None, type='array', bipartite=0)
+                              bipartite=0, leaf=True)
+        self.network.add_node('roi_time_courses', data={}, complete=None, type='array', bipartite=0, leaf=True)
 
         self.network.add_node('load_t1_data', fxn='support_functions.load_t1_data', bipartite=1,
                               desc='Accept user input for paths to t1 and t1 mask anatomical volumes. Used for all subject sessions')
@@ -468,6 +534,7 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_edge('functional_representative_mask', 'create_load_session', order=3)
         self.network.add_edge('sessions', 'create_load_session', order=4)
         self.network.add_edge('create_load_session', 'sessions', order=0)  # 10
+        self.network.add_edge('create_load_session', 'end', order=1)
 
         self.network.add_edge('paradigm_complete_checkpoint', 'manual_surface_rois', order=0)
         self.network.add_edge('surface_defined_rois', 'manual_surface_rois', order=1)
@@ -552,8 +619,8 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.graph['is_mion'] = None
 
         # Initial preproccessing nodes
-        self.network.add_node('other_images', data=[], type='volume', bipartite=0, complete=False, space='epi_native')
-        self.network.add_node('raw_epi', data=[], type='time_series', bipartite=0, complete=False, space='epi_native')
+        self.network.add_node('other_images', data=[], type='volume', bipartite=0, complete=False, space='epi_native', leaf=True)
+        self.network.add_node('raw_epi', data=[], type='time_series', bipartite=0, complete=False, space='epi_native', leaf=True)
 
         self.network.add_node('nordic_epi', data=None, type='time_series', bipartite=0, complete=False,
                               space='epi_native')
@@ -570,7 +637,7 @@ class DefaultSessionControlNet(BaseControlNet):
 
         self.network.add_node('3d_epi_rep', data=None, type='volume', bipartite=0, complete=False, space='epi_native')
         self.network.add_node('3d_epi_rep_sphinx', data=None, type='volume', bipartite=0, complete=False,
-                              space='epi_native')
+                              space='epi_native', leaf=True)
 
         self.network.add_node('functional_std', **func_rep_node)
         self.network.add_node('functional_std_dil_mask', **functional_rep_dil_mask_node)
@@ -580,28 +647,31 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_node('manual_reg_epi_rep', data=None, type='volume', bipartite=0, complete=False,
                               space='epi_std_aprox')
         self.network.add_node('masked_manual_reg_epi_rep', data=None, type='volume', bipartite=0, complete=False,
-                              space='epi_std_aprox')
+                              space='epi_std_aprox', leaf=True)
         self.network.add_node('manual_transform', data=None, type='transform', bipartite=0, complete=False,
-                              invertable=True, space=('epi_native', 'epi_std_aprox'))
+                              invertable=True, space=('epi_native', 'epi_std_aprox'), leaf=True)
         self.network.add_node('auto_composite_transform', data=None, type='transform', bipartite=0, complete=False,
-                              invertable=False, space=('epi_std_aprox', 'epi_std'))
+                              invertable=False, space=('epi_std_aprox', 'epi_std'), leaf=True)
         self.network.add_node('inverse_auto_composite_transform', data=None, type='transform', bipartite=0,
-                              complete=False, invertable=False, space=('epi_std', 'epi_std_aprox'))
+                              complete=False, invertable=False, space=('epi_std', 'epi_std_aprox'), leaf=True)
 
         self.network.add_node('reg_epi', data=[], fname=None, type='time_series', bipartite=0, complete=False,
                               space='epi_native')
 
-        self.network.add_node('reg_epi_masked', data=[], fname=None, type='time_series', bipartite=0, complete=False)
+        self.network.add_node('fixation_data', data=[], fname=None, type='csv', bipartite=0, complete=False, leaf=True,
+                              space='time_course')
 
-        self.network.add_node('paradigm', data=None, type='json', bipartite=0, complete=False)
-        self.network.add_node('ima_order_map', type='json', bipartite=0, complete=False, data=None)
+        self.network.add_node('reg_epi_masked', data=[], fname=None, type='time_series', bipartite=0, complete=False, leaf=True)
+
+        self.network.add_node('paradigm', data=None, type='json', bipartite=0, complete=False, leaf=True)
+        self.network.add_node('ima_order_map', type='json', bipartite=0, complete=False, data=None, leaf=True)
 
         self.network.add_node('glm_model', data=[], type='glm_object', bipartite=0, complete=False,
-                              space='epi_std')
+                              space='epi_std', leaf=True)
 
         # index in path is id of contrast
         self.network.add_node('reg_contrasts', data=[], type='volume', bipartite=0, complete=False,
-                              space='epi_std')
+                              space='epi_std', leaf=True)
 
         self.network.add_node('slice_contrast_img', data=None, type='std_image', bipartite=0, complete=False, space='')
 
@@ -654,7 +724,7 @@ class DefaultSessionControlNet(BaseControlNet):
                                    'stripped manually aligned epi rep to the downsampled t1. The manual registration got'
                                    ' the brains as overlapping as possible, now this attempts to morph the cortex to correct'
                                    ' differences in white matter boundaries due to field warp in epi acquisition.',
-                              argv=True)
+                              argv=None)
         self.network.add_node('apply_reg_epi_mask', fxn='support_functions.apply_binary_mask_vol', bipartite=1,
                               desc='Applys the downsampled t1 mask to the epi rep thats been manually registered to the '
                                    'ds t1, so that the epi can be nonlinear coregistered to the t1 without intereference from the skull')
@@ -701,6 +771,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('get_images', 'other_images', order=0)
 
         self.network.add_edge("raw_epi", "get_fixation_data", order=0)
+        self.network.add_edge("get_fixation_data", "fixation_data", order=0)
 
         self.network.add_edge('get_epi', 'raw_epi', order=0)  # 10
 
@@ -782,6 +853,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('glm_model', 'create_session_contrast', order=0)  # 01
         self.network.add_edge('paradigm', 'create_session_contrast', order=1)  # 01
         self.network.add_edge('create_session_contrast', 'reg_contrasts', order=0)  # 10
+        self.network.add_edge('create_session_contrast', 'end', order=1)  # 10
 
         self.network.add_edge('reg_epi_masked', 'contrast_slice_overlay', order=0)
         self.network.add_edge('functional_std_masked', 'contrast_slice_overlay', order=1)

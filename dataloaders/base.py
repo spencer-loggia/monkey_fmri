@@ -5,7 +5,7 @@ from torch import Tensor
 class PsychDataloader:
     def __init__(self, data_folder, exp_image_size=(64, 64), stim_frames=30):
         """
-        data folder
+        data exp
         :param data_folder:
         """
         self.data_folder = data_folder

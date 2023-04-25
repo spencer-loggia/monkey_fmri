@@ -39,6 +39,8 @@ except (ModuleNotFoundError, ImportError):
     print("Nilearn not installed")
 
 from matplotlib import pyplot as plt
+
+import multiprocessing as mp
 from multiprocessing import Pool
 
 
@@ -316,9 +318,9 @@ def topup(input_dirs: List[str], image_1_path, image_2_path, image_1_enc, image_
     args = []
 
     for funcP in input_dirs:
-        args.append((funcP,topup_prefix_out,func_enc))
+        args.append((funcP, topup_prefix_out, func_enc))
 
-    with Pool(32) as p:
+    with mp.get_context('spawn').Pool() as p:
         res = p.starmap(applytopup, args)
     return res
 
@@ -344,7 +346,7 @@ def NORDIC(input_dirs: List[str], filename='f_nordic'):
     print(cmd)
     subprocess.run(cmd, shell=True)
     os.chdir('..')
-    out_dirs = [os.path.join(os.path.dirname(input_dir), filename+'.nii') for input_dir in input_dirs]
+    out_dirs = [os.path.join(os.path.dirname(input_dir), filename + '.nii') for input_dir in input_dirs]
     
     return out_dirs
 
@@ -667,14 +669,23 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
           " --transform Affine[ 0.01 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
           " --convergence [500,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
     if nonlinear:
-        cmd = cmd + " --transform SyN[ .1,4,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,6 ]" \
+        cmd = cmd + " --transform SyN[ .1,4,0 ] --metric MI[ " + fixedP + "," + movingP + ",1,100 ]" \
           " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
-          " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,5 ]" \
-          " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
-          " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
-          " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
+          " --transform SyN[ .01,3,0 ] --metric MI[ " + fixedP + "," + movingP + ",1,100]" \
+          " --convergence [100,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
           " --transform SyN[ .001,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
-          " --convergence [100,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
+          " --convergence [30,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" 
+          
+          
+          
+ #       cmd = cmd + " --transform SyN[ .1,4,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,6 ]" \
+ #         " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
+ #         " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,5 ]" \
+ #         " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
+ #         " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
+ #         " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
+ #         " --transform SyN[ .001,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
+ #         " --convergence [100,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
     print(cmd)
     subprocess.call(cmd, shell=True)
 
@@ -691,7 +702,7 @@ def antsCoReg(fixedP, movingP, outP, ltrns=('Affine', 'SyN'), n_jobs=2, full=Fal
     """
     outF = os.path.dirname(outP)
     os.chdir(outF)
-    if 'Syn' in ltrns:
+    if 'SyN' in ltrns:
         nonlinear = True
     else:
         nonlinear = False

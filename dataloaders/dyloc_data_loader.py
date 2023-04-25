@@ -15,7 +15,7 @@ def make_downseampled_stim(path_to_dyloc_source, out_dir):
             os.mkdir(stim_out_dir)
         for i, vid_clip_name in enumerate(os.listdir(stim_dir_path)):
             vid_clip_path = os.path.join(stim_dir_path, vid_clip_name)
-            vid_clip_out = os.path.join(stim_out_dir, "stim" + str(i))
+            vid_clip_out = os.path.join(stim_out_dir, "exp" + str(i))
             if not os.path.exists(vid_clip_out):
                 os.mkdir(vid_clip_out)
             if '.mov' not in vid_clip_name:
@@ -53,7 +53,7 @@ class DylocDataloader(PsychDataloader):
         stimuli = torch.zeros((len(condition_names), self.stim_frames, num_vids_in_batch, 3, self.exp_image_size[0], self.exp_image_size[1]))
         for cond_idx, condition in enumerate(condition_names):
             condition_path = os.path.join(self.data_folder, condition)
-            file_names = [f for f in os.listdir(condition_path) if ('stim' in f and f[0] != '.')]
+            file_names = [f for f in os.listdir(condition_path) if ('exp' in f and f[0] != '.')]
             batch_files = random.choices(file_names, k=num_vids_in_batch)
             for idx, file in enumerate(batch_files):
                 vid_path = os.path.join(condition_path, file)
