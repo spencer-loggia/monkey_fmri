@@ -7,6 +7,8 @@ import re
 import networkx as nx
 import time
 
+import nibabel
+
 import preprocess
 import support_functions
 import analysis
@@ -195,7 +197,7 @@ class BaseControlNet:
         subj_root, project_root = support_functions._env_setup()
         # compute set of reserved file names and set of directories to scan
         reserved = set()
-        reserved_patterns = {"instance_beta"}
+        reserved_patterns = {"instance_beta", "runlist", ".csv"}
         dirs = set()
         for node, data in self.network.nodes(data=True):
             if data["bipartite"] == 0:
@@ -203,21 +205,39 @@ class BaseControlNet:
                 if n_data is not None:
                     if type(n_data) not in [list, tuple]:
                         n_data = [n_data]
-                    for path in n_data:
-                        if os.path.isdir(path):
-                            dirn = path
-                        else:
-                            dirn = os.path.dirname(path)
-                            if "leaf" in data and data["leaf"] is True:
-                                reserved.add(path)
-                            else:
-                                if data["complete"] is True:
-                                    self.network.nodes[node]["complete"] = False
-                                self.network[node]["data"] = None
+                    for i, path in enumerate(n_data):
                         is_sub = os.path.realpath(os.path.dirname(self.session_file)) == \
                                  os.path.commonpath([os.path.realpath(os.path.dirname(self.session_file)),
                                                      os.path.realpath(path)])
                         if is_sub and len(os.path.normpath(path).split(os.sep)) > 1:
+                            # only look at directories below that aren't being accessed by a higher files.
+                            if os.path.isdir(path):
+                                dirn = path
+                            else:
+                                dirn = os.path.dirname(path)
+                                if "leaf" in data and data["leaf"] is True:
+                                    # make sure is compressed
+                                    if "nii" in path and ".gz" not in path:
+                                        nii = nibabel.load(path)
+                                        new_path = path + ".gz"
+                                        print("Compressed to", new_path)
+                                        nibabel.save(nibabel.Nifti1Image(nii.get_fdata(),
+                                                                         header=nii.header,
+                                                                         affine=nii.affine), new_path)
+                                        os.remove(path)
+
+                                        if type(data["data"]) is str:
+                                            self.network.nodes[node]["data"] = new_path
+                                        else:
+                                            self.network.nodes[node]["data"][i] = new_path
+                                        reserved.add(new_path)
+                                    else:
+                                        reserved.add(path)
+                                else:
+                                    if data["complete"] is True:
+                                        self.network.nodes[node]["complete"] = False
+                                    self.network.nodes[node]["data"] = None
+
                             dirs.add(dirn)
         for target_dir in dirs:
             for fname in os.listdir(target_dir):
@@ -230,6 +250,7 @@ class BaseControlNet:
                             break
                     if kill_file:
                         os.remove(path)
+                        print("Removed", path)
 
 
 class DefaultSubjectControlNet(BaseControlNet):

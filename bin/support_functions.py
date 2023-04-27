@@ -33,8 +33,8 @@ from subprocess import call
 # subject support function must be operating with working directory appropriately set
 
 def _env_setup():
-    subj_root = os.path.abspath(os.environ.get('FMRI_WORK_DIR'))
-    project_root = os.path.abspath(os.path.join(subj_root, '..', '..'))
+    subj_root = os.path.realpath(os.environ.get('FMRI_WORK_DIR'))
+    project_root = os.path.realpath(os.path.join(subj_root, '..', '..'))
     os.chdir(project_root)
     return subj_root, project_root
 
@@ -130,13 +130,21 @@ def get_epis(*argv):
 def get_functional_target():
     subj_root = os.environ.get('FMRI_WORK_DIR')
     path = input_control.dir_input("Enter path to functional data representative image (should be masked): ")
-    shutil.copy(path, os.path.join(subj_root, 'mri', 'functional_target.nii'))
-    return os.path.join(subj_root, 'mri', 'functional_target.nii')
+    if ".nii.gz" in path:
+        out = 'functional_target.nii.gz'
+    elif ".nii" in path:
+        out = 'functional_target.nii'
+    else:
+        raise ValueError("did not enter a valid nifti.")
+    out_path = os.path.join(subj_root, 'mri', out)
+    shutil.copy(path, out_path)
+    return out_path
 
 
 def get_fixation_csv(source):
     subj_root, project_root = _env_setup()
     path = input_control.dir_input("Path to fixation csv file (length trs, header with IMAs)")
+    out_paths = []
     fix_data = pd.read_csv(path)
     for run_dir in source:
         if os.path.isfile(run_dir):
@@ -146,11 +154,12 @@ def get_fixation_csv(source):
         ima = os.path.basename(ima_dir)
         try:
             ima_fix_data = fix_data[ima]
-            ima_fix_data.to_csv(os.path.join(ima_dir, "fixation.csv"))
+            out_paths.append(os.path.join(ima_dir, "fixation.csv"))
+            ima_fix_data.to_csv(out_paths[-1])
         except KeyError:
             print("WARN: no fixation data found for IMA " + str(ima))
             pass
-
+    return out_paths
 
 def dilate_mask(inpath, outpath=None):
     """
@@ -182,7 +191,7 @@ def downsample_anatomical(inpath, factor=[2, 2, 2], out_dir=None, affine_scale=N
     subj_root, project_root = _env_setup()
     source_dir = os.path.dirname(inpath)
     name = os.path.basename(inpath)
-    out_name = 'ds_' + name.split('.')[0] + '.nii'
+    out_name = 'ds_' + name.split('.')[0] + '.nii.gz'
     factor = input_control.int_list_input("Enter the scale factor (x y z):")
     if out_dir is None:
         output_dir = preprocess._create_dir_if_needed(subj_root, 'mri')
@@ -242,14 +251,14 @@ def coreg_wrapper(source_space_vol_path, target_space_vol_path, nonlinear=True):
     :return: forward_transform_path, inverse_transform_path
     """
     subj_root, project_root = _env_setup()
-    out = os.path.join(os.path.dirname(source_space_vol_path), 'coreg_3df.nii')
+    out = os.path.join(os.path.dirname(source_space_vol_path), 'coreg_3df.nii.gz')
     if nonlinear:
         ltrns = ['Affine', 'SyN']
     else:
         ltrns = ['Affine']
-    return tuple([os.path.relpath(f, project_root) for f in preprocess.antsCoReg(os.path.abspath(target_space_vol_path),
-                                                                                 os.path.abspath(source_space_vol_path),
-                                                                                 outP=os.path.abspath(out),
+    return tuple([os.path.relpath(f, project_root) for f in preprocess.antsCoReg(os.path.realpath(target_space_vol_path),
+                                                                                 os.path.realpath(source_space_vol_path),
+                                                                                 outP=out,
                                                                                  ltrns=ltrns,
                                                                                  n_jobs=2,
                                                                                  full=nonlinear)])
@@ -345,11 +354,11 @@ def apply_warp_inverse_vol_roi_dir(ds_vol_roi_dict, vol_in_target_space, forward
 def apply_binary_mask_functional(source, mask, fname='reg_moco.nii.gz'):
     source = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in source]
     out = []
+    mask_nii = nibabel.load(mask)
     for run_dir in source:
         src_nii = nibabel.load(run_dir)
-        mask_nii = nibabel.load(mask)
         masked_nii = preprocess._apply_binary_mask_3D(src_nii, mask_nii)
-        out.append(os.path.join(os.path.dirname(run_dir), 'epi_masked.nii'))
+        out.append(os.path.join(os.path.dirname(run_dir), 'epi_masked.nii.gz'))
         nibabel.save(masked_nii, out[-1])
     return out
 

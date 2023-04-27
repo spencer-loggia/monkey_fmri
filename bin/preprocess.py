@@ -175,10 +175,10 @@ def convert_to_sphinx(input_dirs: List[str], scan_pos='HFP', output: Union[None,
         os.environ.setdefault("SUBJECTS_DIR", scan_dir)
         cvt = freesurfer.MRIConvert()
         if not output:
-            local_out = os.path.join(scan_dir, fname.split('.')[0] + '_sphinx.nii')
+            local_out = os.path.join(scan_dir, fname.split('.')[0] + '_sphinx.nii.gz')
         else:
             out_dir = _create_dir_if_needed(output, os.path.basename(scan_dir))
-            local_out = os.path.join(out_dir, fname.split('.')[0] + '_sphinx.nii')
+            local_out = os.path.join(out_dir, fname.split('.')[0] + '_sphinx.nii.gz')
         args_sphinx.append((in_file, local_out, cvt))
         args_flip.append((local_out, local_out, in_orientation, out_orientation, cvt))
         out.append(local_out)
@@ -337,6 +337,7 @@ def NORDIC(input_dirs: List[str], filename='f_nordic'):
     """
     b_path = os.path.dirname(Path(__file__).absolute())
     print(b_path)
+    std_dir = os.getcwd()
     os.chdir(b_path)
     noise_option = 0 # no longer used, vestigial
 
@@ -345,13 +346,12 @@ def NORDIC(input_dirs: List[str], filename='f_nordic'):
     cmd = cmd + fun
     print(cmd)
     subprocess.run(cmd, shell=True)
-    os.chdir('..')
-    out_dirs = [os.path.join(os.path.dirname(input_dir), filename + '.nii') for input_dir in input_dirs]
-    
+    out_dirs = [os.path.join(os.path.dirname(input_dir), filename + '.nii.gz') for input_dir in input_dirs]
+    os.chdir(std_dir)
     return out_dirs
 
 
-def motion_correction(sources: List[str], ref_path: str, outname='moco.nii.gz', output: Union[None, str] = None, fname='f_topup_sphinx.nii',
+def motion_correction(sources: List[str], ref_path: str, outname='moco.nii.gz', output: Union[None, str] = None, fname='f_topup_sphinx.nii.gz',
                       check_rms=True, abs_threshold=3, var_threshold=1) -> Union[List[str], None]:
     """
     preform fsl motion correction. If check rms is enabled will remove data where too much motion is detected.
@@ -455,7 +455,7 @@ def check_time_series_length(input_dirs: List[str], fname='f.nii.gz', expected_l
     return good
 
 
-def sample_frames(SOURCE: List[str], num_samples, output=None, fname='f_nordic.nii') -> List[str]:
+def sample_frames(SOURCE: List[str], num_samples, output=None, fname='f_nordic.nii.gz') -> List[str]:
     """
     Returns a frame to in the middle of a session
     :param out: output path
@@ -480,7 +480,7 @@ def sample_frames(SOURCE: List[str], num_samples, output=None, fname='f_nordic.n
                 raise ValueError("must pass 4D timeseries or Volume inputs")
             target_idx = np.random.choice(dims[3])
             frame = data[:, :, :, target_idx]
-            output = os.path.join(os.path.dirname(run_dir), '3d_epi_rep' + str(run_dir_idx) + '_' + str(target_idx) + '.nii')
+            output = os.path.join(os.path.dirname(run_dir), '3d_epi_rep' + str(run_dir_idx) + '_' + str(target_idx) + '.nii.gz')
             frame = np.squeeze(frame)
             rep_img = nib.Nifti1Image(frame, affine=nifti.affine, header=nifti.header)
             nib.save(rep_img, output)
@@ -555,7 +555,7 @@ def bandpass_filter_functional(input_file, out_file, low_period, plot=True, save
     return filtered_nii
 
 
-def batch_bandpass_functional(functional_input_dirs, block_length_trs, fname='epi_masked.nii', out_name='epi_filtered.nii.gz'):
+def batch_bandpass_functional(functional_input_dirs, block_length_trs, fname='epi_masked.nii.gz', out_name='epi_filtered.nii.gz'):
     args = []
     if block_length_trs == 1:
         period = int(input("enter max length in trs that we expect to see meaningful signal change "
@@ -701,7 +701,8 @@ def antsCoReg(fixedP, movingP, outP, ltrns=('Affine', 'SyN'), n_jobs=2, full=Fal
     :return:
     """
     outF = os.path.dirname(outP)
-    os.chdir(outF)
+    cur_dir = os.getcwd()
+    os.chdir(os.path.realpath(outF))
     if 'SyN' in ltrns:
         nonlinear = True
     else:
@@ -716,6 +717,7 @@ def antsCoReg(fixedP, movingP, outP, ltrns=('Affine', 'SyN'), n_jobs=2, full=Fal
         run=True, n_jobs=n_jobs, full=full)
     frwdTrnsP = os.path.join(outF, 'Composite.h5')
     invTrnsP = os.path.join(outF, 'InverseComposite.h5')
+    os.chdir(os.path.realpath(cur_dir))
     return frwdTrnsP, invTrnsP
 
 
@@ -793,7 +795,7 @@ def _nifti_load_and_call_wrapper(path: str, fxn, output, to_center, *args):
 
 def create_low_res_anatomical(source_dir: str, fname:str ='orig.mgz', output=None, factor=[2, 2, 2], affine_scale=None, resample='interpolate'):
     if not output:
-        output = os.path.join(source_dir, 'low_res.nii')
+        output = os.path.join(source_dir, 'low_res.nii.gz')
     in_path = os.path.join(source_dir, fname)
     cmd_resample = 'mri_convert %s -vs %s %s %s -rt %s %s --out_type nii'%(in_path, factor[0], factor[1], factor[2], resample, output)
     subprocess.run(cmd_resample,shell=True)
@@ -806,7 +808,7 @@ def create_low_res_anatomical(source_dir: str, fname:str ='orig.mgz', output=Non
     return output
 
 
-def functional_to_cube(input_dirs: List[str], output: str = None, fname: str = 'moco.nii'):
+def functional_to_cube(input_dirs: List[str], output: str = None, fname: str = 'moco.nii.gz'):
     args = []
     sources = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in input_dirs]
     out = []
@@ -816,10 +818,10 @@ def functional_to_cube(input_dirs: List[str], output: str = None, fname: str = '
             print("could not find file")
             exit(1)
         if not output:
-            local_out = os.path.join(source_dir, 'f_cubed.nii')
+            local_out = os.path.join(source_dir, 'f_cubed.nii.gz')
         else:
             out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-            local_out = os.path.join(out_dir, 'f_cubed.nii')
+            local_out = os.path.join(out_dir, 'f_cubed.nii.gz')
         args.append((source, _pad_to_cube, local_out, False))
         out.append(local_out)
     with Pool() as p:

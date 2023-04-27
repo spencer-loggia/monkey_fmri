@@ -466,7 +466,7 @@ def create_averaged_beta(beta_paths, out_dir=None):
     beta_nii = nib.Nifti1Image(avg_betas, affine=affine, header=beta_nii.header)
     if out_dir is None:
         out_dir = os.path.dirname(os.path.dirname(beta_paths[0]))
-    out_path = os.path.join(out_dir, 'reg_beta_coef.nii')
+    out_path = os.path.join(out_dir, 'reg_beta_coef.nii.gz')
     nib.save(beta_nii, out_path)
     return out_path
 
@@ -483,7 +483,7 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
     out_paths = []
     for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
         contrast_nii = nib.Nifti1Image(cond, affine=beta_nii.affine, header=beta_nii.header)
-        out = os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii')
+        out = os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii.gz')
         nib.save(contrast_nii, out)
         out_paths.append(out)
 
@@ -528,7 +528,7 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
             plot_contrast_matrix(contrast, design_matrix=dm)
             plt.show()
         contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type=mode)
-        out_path = os.path.join(output_dir, contrast_descriptors[i] + '.nii')
+        out_path = os.path.join(output_dir, contrast_descriptors[i] + '.nii.gz')
         nib.save(contrast_nii, out_path)
         out_paths.append(out_path)
     return out_paths
@@ -623,7 +623,7 @@ def labels_to_roi_mask(label_dir, hemi, out_dir, t1, subject_id) -> Tuple[str, l
     if hemi not in ['rh', 'lh']:
         raise ValueError('Hemi must be one of rh or lh.')
     for f in os.listdir(label_dir):
-        output = os.path.join(out_dir, f.split('.')[0] + '.nii')
+        output = os.path.join(out_dir, f.split('.')[0] + '.nii.gz')
         if '.label' in f and hemi in f:
             subprocess.run(['mri_label2vol',
                             '--label', os.path.join(label_dir, f),
@@ -796,7 +796,7 @@ def get_auto_roi_masks(contrast_paths: List[str], out_dir='./', max_rois=10, min
             nib.save(mask_nii, out_path)
         clean_data = (labels > 0).astype(float)
         cleaned_nii = nib.Nifti1Image(clean_data, header=cnii.header, affine=cnii.affine)
-        nib.save(cleaned_nii, os.path.join(out_dir, "all_" + n + "_rois.nii"))
+        nib.save(cleaned_nii, os.path.join(out_dir, "all_" + n + "_rois.nii.gz"))
     return out_dir
 
 
@@ -903,7 +903,7 @@ def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, c
 
 def get_condition_time_series_comparision(functional_dirs, block_length, ima_order_num_map: Dict[str, int],
                                           order_num_defs: Dict[str, List[int]], target_condition, output,
-                                          fname='epi_masked.nii', pre_onset_trs=6, post_offset_trs=18):
+                                          fname='epi_masked.nii.gz', pre_onset_trs=6, post_offset_trs=18):
     """
     Goal is to take a set of epis that were recorded with different stimuli presentation order (needs to be a block
     cesign) and create a new functional file that compares the waveform of the functional blog with an average over
