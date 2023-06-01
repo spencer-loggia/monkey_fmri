@@ -27,24 +27,23 @@ class BaseControlNet:
         self.head = []
         connected = list(nx.connected_components(self.network.to_undirected()))
         if len(connected) > 1:
-            print("Error: graph is diconnected. Print non-main components")
+            print("Error: graph is disconnected. Print non-main components")
             for comp in connected:
                 print(comp)
         data_node, process_node = nx.bipartite.sets(self.network)
         for n in process_node:
             pred = list(self.network.predecessors(n))
-            good_head = False
-            if len(pred) == 0:
-                good_head = True
-            else:
-                for d in pred:
-                    if 'complete' not in self.network.nodes[d]:
-                        raise ValueError(d + " : " + str(self.network.nodes[d]))
-                    if self.network.nodes[d]['complete'] or self.network.nodes[d]['complete'] is None:
-                        good_head = True
-                    else:
-                        good_head = False
-                        break
+            good_head = True
+            for d in pred:
+                if 'complete' not in self.network.nodes[d]:
+                    raise ValueError(d + " : " + str(self.network.nodes[d]))
+                if self.network.nodes[d]['complete'] is not None and (not self.network.nodes[d]['complete'] or
+                                                                      "modified" not in self.network.nodes[d] or
+                                                                      ("modified" in self.network.nodes[n] and
+                                                                       (datetime.datetime.fromisoformat(self.network.nodes[d]["modified"]) >
+                                                                       datetime.datetime.fromisoformat(self.network.nodes[n]["modified"])))):
+                    good_head = False
+                    break
             if good_head:
                 self.head.append(n)
         # add sterilization command
@@ -78,6 +77,7 @@ class BaseControlNet:
 
     def interactive_advance(self):
         print("action selection")
+        self.init_head_states()
         self.head = sorted(self.head)
         options = [str(n) + '   modified: ' + self.network.nodes[n]['modified']
                    if 'modified' in self.network.nodes[n] else str(n) + '   modified: unknown' for n in self.head]
@@ -101,13 +101,6 @@ class BaseControlNet:
             res = fxn(*data_params, self.network.nodes[action_name]['argv'])
         else:
             res = fxn(*data_params)
-        bfs_tree = nx.traversal.bfs_tree(self.network, action_name)
-        to_remove = set()
-        for node, data in bfs_tree.nodes(data=True):
-            if 'complete' in data and data['complete'] is True:
-                self.network[node]['complete'] = False
-                to_remove.add(node)
-        self.head = list(set(self.head) - to_remove)
         suc = list(self.network.successors(action_name))
         for s in suc:
             res_idx = self.network.edges[(action_name, s)]['order']
@@ -119,18 +112,6 @@ class BaseControlNet:
             self.network.nodes[s]['modified'] = str(datetime.datetime.now())
             if 'complete' in self.network.nodes[s] and self.network.nodes[s]['complete'] is not None:
                 self.network.nodes[s]['complete'] = True
-            for n in self.network.successors(s):
-                comp = True
-                for j in self.network.predecessors(n):
-                    try:
-                        if not self.network.nodes[j]['complete']:
-                            comp = False
-                            break
-                    except KeyError:
-                        print(j)
-                        exit(1)
-                if comp:
-                    self.head.append(n)
         return True
 
     def serialize(self, out_path):
@@ -173,17 +154,26 @@ class BaseControlNet:
                     print("bipartite set not defined by node " + str(n))
                     exit(1)
                 bip = self.network.nodes[n]['bipartite']
+
+                # inherit basic node attributes from loaded data
                 if bip == 0:
                     self.network.nodes[n]['data'] = data['data']
                     self.network.nodes[n]['complete'] = data['complete']
+                    if 'modified' in data:
+                        self.network.nodes[n]['modified'] = data['modified']
+                    else:
+                        # for data nodes that don't list a modified attribute, attempt to inherit timestamp from creator
+                        pred = self.network.predecessors(n)[0]
+                        if "modified" in pred:
+                            self.network.nodes[n]['modified'] = pred["modified"]
                 elif bip == 1:
                     if "modified" in data:
                         self.network.nodes[n]['modified'] = data['modified']
+
         for s, t, data in loaded_net.edges(data=True):
             if s in self.network.nodes and t in self.network.nodes and \
                     ("generated" in self.network.nodes[s] or "generated" in self.network.nodes[t]):
                 self.network.add_edge(s, t, **data)
-        self.init_head_states()
 
     def sterilize(self, *argv):
         """
@@ -194,6 +184,10 @@ class BaseControlNet:
         -------
 
         """
+        really = bool_input("WARNING: Are you sure you want to sterilize intermediate states? You will need to "
+                            "reprocess from the beginning if you need to make any future changes to the local graph. ")
+        if not really:
+            return
         subj_root, project_root = support_functions._env_setup()
         # compute set of reserved file names and set of directories to scan
         reserved = set()
@@ -264,7 +258,6 @@ class DefaultSubjectControlNet(BaseControlNet):
         func2anat_is_nonlinear = proj_data["reg_settings"]["nonlinear_functional_rep_2_anat"]
         self.network.graph['func2anat_nonlinear'] = func2anat_is_nonlinear
         self.initialize_processing_structure()
-        self.init_head_states()
 
     def create_load_session(self, sessions):
         """
@@ -632,7 +625,6 @@ class DefaultSessionControlNet(BaseControlNet):
             proj_data = json.load(f)
         self.initialize_proccessing_structure(session_id, func_rep_node, func_rep_masked_node,
                                               func_rep_mask_node, func_rep_dil_mask_node)
-        self.init_head_states()
 
     def initialize_proccessing_structure(self, session_id, func_rep_node, func_rep_mask_node,
                                          function_rep_masked_node, functional_rep_dil_mask_node):
