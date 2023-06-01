@@ -288,7 +288,7 @@ def apply_warp(source, vol_in_target_space, forward_gross_transform_path=None, f
             [project_root] * len(source)
             ]
     args = list(zip(*args))
-    with multiprocessing.Pool(16) as p:
+    with multiprocessing.Pool(8) as p:
         out_paths = p.starmap(_apply_warp_wrapper, args)
     if len(out_paths) == 1:
         out_paths = out_paths[0]
@@ -406,6 +406,7 @@ def get_3d_rep(src: Union[List[str], str], use_topup):
     src = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in src]
     for f_path in src:
         nii = nibabel.load(f_path)
+
         if affine is None:
             header = nii.header
             affine = nii.affine
@@ -789,7 +790,10 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
         else:
             sess_dms = []
             for run_dir in source[i]:
-                ima = os.path.basename(run_dir).strip()
+                if os.path.isfile(run_dir):
+                    ima = os.path.basename(os.path.dirname(run_dir))
+                else:
+                    ima = os.path.basename(run_dir)
                 order_num = ima_order_map[ima]
                 order = list(paradigm_data['order_number_definitions'][str(order_num)])
                 if is_block_design:
@@ -820,8 +824,8 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
     return design_matrices, complete_source, tr_length
 
 
-def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii', out_dir=None,
-                    run_wise=False, smooth=3., use_cond_groups=True):
+def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_masked.nii.gz', out_dir=None,
+                    run_wise=False, smooth=2., use_cond_groups=True):
     """
     :param source: list of lists of runs for each session
     :param paradigm_path:
@@ -851,9 +855,10 @@ def get_beta_matrix(source, paradigm_path, ima_order_map_path, mion, fname='epi_
                                                                       use_cond_groups=use_cond_groups)
 
     print("using mion: ", mion)
-    print('source fname: ', fname)
+    print('source fname: ', os.path.basename(source[0][0]))
     if out_dir is None:
         out_dir = os.path.dirname(os.path.dirname(source[0][0]))
+    print("Using Smoothing Kernel of", smooth)
     glm_path = analysis.nilearn_glm(complete_source, design_matrices, base_conditions,
                                     output_dir=out_dir, fname=fname, mion=mion, tr_length=tr_length, smooth=smooth)
     print("Run Level Beta Coefficient Matrices Created")
@@ -870,13 +875,13 @@ def create_contrast(beta_path, paradigm_path, use_cond_groups=True):
     if 'condition_groups' in paradigm_data and len(paradigm_data['condition_groups']) > 0 and use_cond_groups:
         base_case = None
     contrast_def = list(zip(*paradigm_data['desired_contrasts']))
-    contrast_def = np.array([c for i, c in enumerate(contrast_def) if i != base_case], dtype=float)
+    contrast_def = np.array([c for i, c in enumerate(contrast_def)], dtype=float)
     contrast_paths = analysis.nilearn_contrasts(beta_path, contrast_def, contrast_descriptions, output_dir=sess_dir)
     print("contrasts created at: " + str(contrast_paths))
     return contrast_paths
 
 
-def construct_subject_glm(para, mion=True, run_wise=False, use_cond_groups=True):
+def construct_subject_glm(para, mion=True, run_wise=False, use_cond_groups=True, smooth=.5):
     subj_root, project_root = _env_setup()
     proj_config_path = 'config.json'
     with open(para, 'r') as f:
@@ -903,8 +908,8 @@ def construct_subject_glm(para, mion=True, run_wise=False, use_cond_groups=True)
             sources[-1].append(session_path)
             total_runs += 1
     total_path = os.path.relpath(os.path.join(subj_root, 'analysis'), project_root)
-    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii', out_dir=total_path,
-                               run_wise=run_wise, use_cond_groups=use_cond_groups)
+    glm_path = get_beta_matrix(sources, para, ima_order_maps, mion=mion, fname='epi_masked.nii.gz', out_dir=total_path,
+                               run_wise=run_wise, use_cond_groups=use_cond_groups, smooth=smooth)
     print('Constructed subject beta matrix for paradigm', para_name, 'using', len(ima_order_maps), "sessions and",
           total_runs, ' individual runs')
     return glm_path
@@ -936,7 +941,7 @@ def get_run_betas(para, mion=True):
                 "session": [],
                 "ima": []}
     # creates condition for every stimuli type instead of every stimuli group
-    full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False)
+    full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.)
     full_cond_glm = pickle.load(open(full_cond_glm_path, "rb"))
 
     lindex = 0
@@ -1238,7 +1243,8 @@ def load_white_surfs():
         cur_surf_path = input_control.dir_input("enter path to " + hemi + " surf: ")
         surf_name = os.path.basename(cur_surf_path)
         surf_proj_path = os.path.relpath(os.path.join(subj_root, 'surf', surf_name), project_root)
-        shutil.copy(cur_surf_path, surf_proj_path)
+        if not os.path.samefile(cur_surf_path, surf_proj_path):
+            shutil.copy(cur_surf_path, surf_proj_path)
         surfs.append(surf_proj_path)
     return surfs
 

@@ -266,7 +266,7 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.initialize_processing_structure()
         self.init_head_states()
 
-    def create_load_session(self, ds_t1, ds_t1_mask, ds_t1_masked, dil_t1_mask, sessions):
+    def create_load_session(self, sessions):
         """
         local method
         only creates a new session for now
@@ -318,6 +318,12 @@ class DefaultSubjectControlNet(BaseControlNet):
         session.network.nodes['automatic_coregistration']['argv'] = session.network.graph['reg_settings']['nonlinear_session_2_functional_rep']
         session.network.nodes['motion_correction']['argv'] = session.network.graph["reg_settings"]["nonlinear_moco"]
         session.network.nodes['topup']['argv'] = session.network.graph["reg_settings"]["topup"]
+
+
+        session.network.add_node('functional_std', **self.network.nodes['functional_representative'])
+        session.network.add_node('functional_std_dil_mask', **self.network.nodes['functional_representative_dil_mask'])
+        session.network.add_node('functional_std_mask', **self.network.nodes['functional_representative_mask'])
+        session.network.add_node('functional_std_masked', **self.network.nodes['functional_representative_masked'])
 
         return list(set(sessions + [os.path.relpath(session.control_loop(path), subj_root)]))
 
@@ -407,7 +413,6 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + 'run_betas', order=0)
         self.network.add_edge('create_' + para_name + 'run_betas', 'run_beta_log' + para_name, order=0)
         self.network.add_edge('create_' + para_name + 'run_betas', "end", order=1)
-
 
         self.serialize(os.path.join(subj_root, 'subject_net.json'))
         return para_path
@@ -549,10 +554,6 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_edge('ds_t1_mask', 'mask_downsampled_t1', order=1)
         self.network.add_edge('mask_downsampled_t1', 'ds_t1_masked', order=0)
 
-        self.network.add_edge('ds_t1', 'create_load_session', order=0)  # 01
-        self.network.add_edge('functional_representative', 'create_load_session', order=1) # 01
-        self.network.add_edge('functional_representative_masked', 'create_load_session', order=2)
-        self.network.add_edge('functional_representative_mask', 'create_load_session', order=3)
         self.network.add_edge('sessions', 'create_load_session', order=4)
         self.network.add_edge('create_load_session', 'sessions', order=0)  # 10
         self.network.add_edge('create_load_session', 'end', order=1)
@@ -647,13 +648,13 @@ class DefaultSessionControlNet(BaseControlNet):
                               space='epi_native')
 
         self.network.add_node('topup_epi', data=None,type='time_series',bipartite=0, complete=False,
-                                space='epi_native')
+                                space='epi_native', leaf=True)
 
         self.network.add_node('sphinx_epi', data=[], type='time_series', bipartite=0, complete=False,
                               space='epi_native')
         self.network.add_node('moco_epi', data=[], type='time_series', bipartite=0, complete=False, space='epi_native')
 
-        self.network.add_node('slice_time_motion_corrected_epi', data=[], type='time_series', bipartite=0,
+        self.network.add_node('slice_time_corrected_epi', data=[], type='time_series', bipartite=0,
                               complete=False, space='epi_native')
 
         self.network.add_node('3d_epi_rep', data=None, type='volume', bipartite=0, complete=False, space='epi_native')
@@ -799,8 +800,11 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('raw_epi', 'noise_correct', order=0)
         self.network.add_edge('noise_correct', 'nordic_epi', order=0)
 
-        self.network.add_edge('nordic_epi','topup',order=0)
-        self.network.add_edge('topup','topup_epi',order=0)
+        self.network.add_edge('nordic_epi', 'slice_timing_correction', order=0)
+        self.network.add_edge('slice_timing_correction', 'slice_time_corrected_epi', order=0)
+
+        self.network.add_edge('slice_time_corrected_epi', 'topup',order=0)
+        self.network.add_edge('topup', 'topup_epi', order=0)
 
         self.network.add_edge('topup_epi', 'sphinx_correct', order=0)  # 01
         self.network.add_edge('sphinx_correct', 'sphinx_epi', order=0)  # 10
@@ -815,9 +819,6 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('3d_epi_rep_sphinx', 'motion_correction', order=1)  # 01
         self.network.add_edge('motion_correction', 'moco_epi', order=0)  # 10
         self.network.add_edge('motion_correction', '3d_epi_rep_sphinx', order=1)  # 10
-
-        self.network.add_edge('moco_epi', 'slice_timing_correction', order=0)
-        self.network.add_edge('slice_timing_correction', 'slice_time_motion_corrected_epi', order=0)
 
         self.network.add_edge('3d_epi_rep_sphinx', 'manual_registration', order=0)  # 01
         self.network.add_edge('functional_std', 'manual_registration', order=1)  # 01

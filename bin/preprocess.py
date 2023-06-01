@@ -346,6 +346,11 @@ def NORDIC(input_dirs: List[str], filename='f_nordic'):
     cmd = cmd + fun
     print(cmd)
     subprocess.run(cmd, shell=True)
+    for input_dir in input_dirs:
+        cmd = 'mri_convert %s %s'%(os.path.join(os.path.dirname(input_dir), filename + '.nii'),os.path.join(os.path.dirname(input_dir), filename + '.nii.gz'))
+        subprocess.run(cmd, shell=True)
+        if os.path.isfile(os.path.join(os.path.dirname(input_dir), filename + '.nii.gz')):
+            os.remove(os.path.join(os.path.dirname(input_dir), filename + '.nii'))
     out_dirs = [os.path.join(os.path.dirname(input_dir), filename + '.nii.gz') for input_dir in input_dirs]
     os.chdir(std_dir)
     return out_dirs
@@ -400,7 +405,7 @@ def nonlinear_moco(moving_epi, reference, outfile):
     return outfile
 
 
-def slice_time_correction(input_dirs: List[str], output: Union[None, str] = None, fname='moco.nii.gz', slice_dir = 3, TR = 3):
+def slice_time_correction(input_dirs: List[str], output: Union[None, str] = None, fname='f_nordic.nii', slice_dir = 3, TR = 3):
     '''
     slice_time_correction: Performs slice timing on motion corrected (or non motion corrected) data.
     :param input_dirs:
@@ -412,21 +417,18 @@ def slice_time_correction(input_dirs: List[str], output: Union[None, str] = None
     args = []
     sources = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in input_dirs]
     outputs = []
-    for source in sources:
-        if os.path.isfile(source):
-            source_dir = os.path.dirname(source)
+    for path in sources:
+        if os.path.isfile(path):
+            source_dir = os.path.dirname(path)
             st = fsl.SliceTimer()
             if not output:
-                out_dir = source_dir
                 local_out = os.path.join(source_dir, 'slc.nii.gz')
             else:
-                out_dir = _create_dir_if_needed(output, os.path.basename(source_dir))
-                local_out = os.path.join(source_dir, 'slc.nii.gz')
-            path = os.path.join(source_dir, fname)
+                local_out = os.path.join(output, 'slc.nii.gz')
             args.append((path, local_out, slice_dir, TR, st))
             outputs.append(local_out)
         else:
-            raise FileNotFoundError(source + " does not exist")
+            raise FileNotFoundError(path + " does not exist")
     with Pool() as p:
         res = p.starmap(_slice_time_wrapper, args)
     return outputs
@@ -672,20 +674,13 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
         cmd = cmd + " --transform SyN[ .1,4,0 ] --metric MI[ " + fixedP + "," + movingP + ",1,100 ]" \
           " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
           " --transform SyN[ .01,3,0 ] --metric MI[ " + fixedP + "," + movingP + ",1,100]" \
-          " --convergence [100,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
+          " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
+          " --transform SyN[ .01,4,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,6 ]" \
+          " --convergence [120,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
           " --transform SyN[ .001,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
-          " --convergence [30,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" 
-          
-          
-          
- #       cmd = cmd + " --transform SyN[ .1,4,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,6 ]" \
- #         " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
- #         " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,5 ]" \
- #         " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
- #         " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
- #         " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
- #         " --transform SyN[ .001,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
- #         " --convergence [100,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
+          " --convergence [30,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
+
+
     print(cmd)
     subprocess.call(cmd, shell=True)
 

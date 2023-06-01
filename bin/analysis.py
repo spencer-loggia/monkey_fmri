@@ -216,7 +216,7 @@ def _make_nl_dm(frames, time_df, hrf, stim_min_onset, delay_periods):
 
 def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int],
                                  base_conditions_idxs: List[int], condition_names: dict, tr_length=3, mion=True,
-                                 fir=True):
+                                 fir=False):
     """
     Creates as num_conditions x time onehot encoded matrix from an order number definition
     :param block_length:
@@ -226,6 +226,7 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
     :param base_conditions_idxs: the integers corresponding to base case (usually gray) conditions
     :return: design matrix with constant one on base conditions and linear drift nuisance regressors on cols -1 and -2
     """
+    fir=False
     k = len(order)
     timing = {"trial_type": [],
               "onset": [],
@@ -403,7 +404,7 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     return dm
 
 
-def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, fir=True, tr_length=3., smooth=3):
+def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, fir=True, tr_length=3., smooth=1.):
     if fir:
         if mion:
             hrf = "mion"
@@ -411,14 +412,15 @@ def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_con
             hrf = "spm + derivative"
     else:
         hrf = 'fir'
-    tmp_dir = './tmp_glm_cache'
+    tmp_dir = os.path.join(os.path.dirname(source[0]), 'tmp_glm_cache')
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
-    os.mkdir("./tmp_glm_cache")
+    os.mkdir(tmp_dir)
     fmri_glm = first_level.FirstLevelModel(
                 minimize_memory=True,
                 hrf_model=hrf,
                 t_r=tr_length,
+                standardize=False,
                 slice_time_ref=0,
                 smoothing_fwhm=smooth,
                 signal_scaling=False,
@@ -447,6 +449,8 @@ def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_con
     glm_path = os.path.join(output_dir, "glm_model_" + str(code) + ".pkl")
     with open(glm_path, "wb") as f:
         pickle.dump(fmri_glm, f)
+    # if os.path.exists(tmp_dir):
+    #     shutil.rmtree(tmp_dir)
     return glm_path
 
 
@@ -492,36 +496,52 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
 
 def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, output_dir, mode='z_score'):
     glm = pickle.load(open(glm_model_path, "rb"))
-    contrast_matrices = [[] for _ in range(contrast_matrix.shape[1])]
+    contrast_matrices = [[] for _ in range(contrast_matrix.shape[1] + 1)] # room for auto background contrast
     dm_cols = list(glm.design_matrices_[0].columns)
     n_reg_dex = dm_cols.index("drift_1")
-    cm = contrast_matrix.tolist()
-    expanded_cm = []
-    cur = None
-    count = 0
-    c_idx = 0
-    for i, cname in enumerate(dm_cols[:n_reg_dex]):
-        if "delay" in cname:
-            cond = cname[:-8]
-        else:
-            cond = cname
-        if cur is None:
-            cur = cond
-        elif cur != cond:
-            # count is the number of times this contrast repeats
-            expanded_cm += [cm[c_idx]] * (count + 1)
-            count = 0
-            c_idx += 1
-            cur = cond
-        else:
-            count += 1
-    contrast_matrix = np.array(expanded_cm, dtype=float)
+    constant_dex = dm_cols.index("constant")
+    contrast_descriptors.append("background")
+    is_fir = True in ["delay" in cname for cname in dm_cols[:n_reg_dex]]
+
+    if is_fir:
+        cm = contrast_matrix.tolist()
+        expanded_cm = []
+        cur = None
+        count = 0
+        c_idx = 0
+        for i, cname in enumerate(dm_cols[:n_reg_dex]):
+            if "delay" in cname:
+                cond = cname[:-8]
+            else:
+                cond = cname
+            if cur is None:
+                cur = cond
+            elif cur != cond:
+                # count is the number of times this condition repeats (supposed to combined across seperate fir regressors)
+                expanded_cm += [cm[c_idx]] * (count + 1)
+                count = 0
+                c_idx += 1
+                cur = cond
+            else:
+                count += 1
+        contrast_matrix = np.array(expanded_cm, dtype=float)
+
     for dm in glm.design_matrices_:
         num_cond = dm.shape[1]
-        drift_regressors = num_cond - n_reg_dex + 1
+        drift_regressors = num_cond - n_reg_dex
+        if is_fir:
+            drift_regressors += 1
+
         cm = np.pad(contrast_matrix, ((0, drift_regressors), (0, 0)), constant_values=((0, 0), (0, 0))).T
+
+        # always compute background contrast
+        back_contrast = np.zeros((1, cm.shape[1]))
+        back_contrast[0, constant_dex] = 1
+        cm = np.concatenate([cm, back_contrast], axis=0)
+
         for i, contrast in enumerate(cm):
             contrast_matrices[i].append(contrast)
+
     out_paths = []
     for i, contrast in enumerate(contrast_matrices):
         for dm in glm.design_matrices_[:4]:
