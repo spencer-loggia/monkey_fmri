@@ -87,10 +87,11 @@ def select_option_input(option_desc: List[str]):
         try:
             choice = input('Enter the number for the desired operation: ')
             if '-h' in choice:
-                choice = int(choice.split()[0])
+                choice = choice.split()[0]
                 help_req = True
-            else:
-                choice = int(choice)
+            elif choice[0] == "-":
+                return choice.strip()
+            choice = int(choice)
         except ValueError:
             continue
         if 0 < choice <= len(option_desc):

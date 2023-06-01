@@ -59,6 +59,7 @@ class BaseControlNet:
     def control_loop(self, path):
         subj_root, project_root = support_functions._env_setup()
         self.session_file = os.path.relpath(path, project_root)
+        self.init_head_states()
         while self.interactive_advance():
             self.serialize(self.session_file)
         return path
@@ -78,7 +79,7 @@ class BaseControlNet:
 
     def interactive_advance(self):
         print("action selection:", self.name)
-        self.init_head_states()
+
         self.head = sorted(self.head)
         options = [str(n) + '   modified: ' + self.network.nodes[n]['modified']
                    if 'modified' in self.network.nodes[n] else str(n) + '   modified: unknown' for n in self.head]
@@ -87,6 +88,14 @@ class BaseControlNet:
         if type(choice) is tuple:
             need_help = choice[1]
             choice = choice[0]
+
+        if choice == "-all":
+            print("\nWARNING: Forcing access to all action nodes, dependencies for some will be unavailable or at the "
+                  "wrong version. Proceed with caution.")
+            time.sleep(1)
+            _, self.head = nx.bipartite.sets(self.network)
+            return True
+
         if choice == len(self.head):
             return False
         action_name = self.head[choice]
@@ -122,6 +131,7 @@ class BaseControlNet:
 
             if 'complete' in self.network.nodes[s] and self.network.nodes[s]['complete'] is not None:
                 self.network.nodes[s]['complete'] = True
+        self.init_head_states()
         return True
 
     def serialize(self, out_path):
