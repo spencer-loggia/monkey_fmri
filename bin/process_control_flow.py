@@ -110,6 +110,15 @@ class BaseControlNet:
                 else:
                     self.network.nodes[s]['data'] = res
             self.network.nodes[s]['modified'] = str(datetime.datetime.now())
+
+            # find all descendent nodes an update their timestamp, since they are no longer up to date
+            # we don't update action nodes, so their timestamps will be behind their dependencies'
+            desc = nx.bfs_tree(self.network, s)
+            for d in desc.nodes():
+                if "bipartite" in self.network.nodes[d]:
+                    if self.network.nodes[d]['bipartite'] == 0:
+                        self.network.nodes[d]['modified'] = self.network.nodes[s]['modified']
+
             if 'complete' in self.network.nodes[s] and self.network.nodes[s]['complete'] is not None:
                 self.network.nodes[s]['complete'] = True
         return True
@@ -163,9 +172,18 @@ class BaseControlNet:
                         self.network.nodes[n]['modified'] = data['modified']
                     else:
                         # for data nodes that don't list a modified attribute, attempt to inherit timestamp from creator
-                        pred = self.network.predecessors(n)[0]
-                        if "modified" in pred:
-                            self.network.nodes[n]['modified'] = pred["modified"]
+                        pred = list(self.network.predecessors(n))
+                        if len(pred) > 0 and "modified" in pred[0]:
+                            self.network.nodes[n]['modified'] = pred[0]["modified"]
+
+                    # ensure consistency in timestamp logic
+                    if "modified" in self.network.nodes[n]:
+                        desc = nx.bfs_tree(self.network, n)
+                        for d in desc.nodes():
+                            if self.network.nodes[d]['bipartite'] == 0 and "modified" in self.network.nodes[d]:
+                                # only update descendent if it was modified before parent.
+                                if datetime.datetime.fromisoformat(self.network.nodes[d]['modified']) < datetime.datetime.fromisoformat(self.network.nodes[n]['modified']):
+                                    self.network.nodes[d]['modified'] = self.network.nodes[n]['modified']
                 elif bip == 1:
                     if "modified" in data:
                         self.network.nodes[n]['modified'] = data['modified']
