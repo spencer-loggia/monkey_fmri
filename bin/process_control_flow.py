@@ -18,6 +18,7 @@ from input_control import select_option_input, bool_input
 class BaseControlNet:
 
     def __init__(self):
+        self.name = None
         self.network = nx.DiGraph()
         self.network.add_node("end", data=None, complete=None, bipartite=0, generated=True)
         self.session_file = None
@@ -76,7 +77,7 @@ class BaseControlNet:
         bool_input("Done? ")
 
     def interactive_advance(self):
-        print("action selection")
+        print("action selection:", self.name)
         self.init_head_states()
         self.head = sorted(self.head)
         options = [str(n) + '   modified: ' + self.network.nodes[n]['modified']
@@ -269,6 +270,7 @@ class DefaultSubjectControlNet(BaseControlNet):
 
     def __init__(self, subject_name):
         super().__init__()
+        self.name = subject_name
         self.network.graph['subject_name'] = subject_name
         proj_config = 'config.json'
         with open(proj_config, 'r') as f:
@@ -639,6 +641,7 @@ class DefaultSessionControlNet(BaseControlNet):
     def __init__(self, session_id, func_rep_node, func_rep_masked_node, func_rep_mask_node, func_rep_dil_mask_node):
         super().__init__()
         proj_config = 'config.json'
+        self.name = session_id
         with open(proj_config, 'r') as f:
             proj_data = json.load(f)
         self.initialize_proccessing_structure(session_id, func_rep_node, func_rep_masked_node,
