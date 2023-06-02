@@ -38,11 +38,19 @@ class BaseControlNet:
             for d in pred:
                 if 'complete' not in self.network.nodes[d]:
                     raise ValueError(d + " : " + str(self.network.nodes[d]))
+
+                # get the timestamp of the previous action node
+                pact_node = list(nx.predecessor(self.network, d))[0]
+                if "modified" in self.network.nodes[pact_node]:
+                    pact_ts = datetime.datetime.fromisoformat(self.network.nodes[pact_node]["modified"])
+                else:
+                    pact_ts = datetime.datetime.min
+
                 if self.network.nodes[d]['complete'] is not None and (not self.network.nodes[d]['complete'] or
                                                                       "modified" not in self.network.nodes[d] or
                                                                       ("modified" in self.network.nodes[n] and
                                                                        (datetime.datetime.fromisoformat(self.network.nodes[d]["modified"]) >
-                                                                       datetime.datetime.fromisoformat(self.network.nodes[n]["modified"])))):
+                                                                       pact_ts + datetime.timedelta(seconds=1)))):
                     good_head = False
                     break
             if good_head:
@@ -183,21 +191,22 @@ class BaseControlNet:
                         self.network.nodes[n]['modified'] = data['modified']
                     else:
                         # for data nodes that don't list a modified attribute, attempt to inherit timestamp from creator
-                        pred = list(self.network.predecessors(n))
-                        if len(pred) > 0 and "modified" in pred[0]:
-                            self.network.nodes[n]['modified'] = pred[0]["modified"]
-
-                    # ensure consistency in timestamp logic
-                    if "modified" in self.network.nodes[n]:
-                        desc = nx.bfs_tree(self.network, n)
-                        for d in desc.nodes():
-                            if self.network.nodes[d]['bipartite'] == 0 and "modified" in self.network.nodes[d]:
-                                # only update descendent if it was modified before parent.
-                                if datetime.datetime.fromisoformat(self.network.nodes[d]['modified']) < datetime.datetime.fromisoformat(self.network.nodes[n]['modified']):
-                                    self.network.nodes[d]['modified'] = self.network.nodes[n]['modified']
+                        pred = list(loaded_net.predecessors(n))
+                        if len(pred) > 0 and "modified" in loaded_net.nodes[pred[0]]:
+                            self.network.nodes[n]['modified'] = loaded_net.nodes[pred[0]]["modified"]
                 elif bip == 1:
                     if "modified" in data:
                         self.network.nodes[n]['modified'] = data['modified']
+
+        for n, data in self.network.nodes(data=True):
+            # ensure consistency in timestamp logic
+            if "modified" in self.network.nodes[n]:
+                desc = nx.bfs_tree(self.network, n)
+                for d in desc.nodes():
+                    if self.network.nodes[d]['bipartite'] == 0 and "modified" in self.network.nodes[d]:
+                        # only update descendent if it was modified before parent.
+                        if datetime.datetime.fromisoformat(self.network.nodes[d]['modified']) < datetime.datetime.fromisoformat(self.network.nodes[n]['modified']):
+                            self.network.nodes[d]['modified'] = self.network.nodes[n]['modified']
 
         for s, t, data in loaded_net.edges(data=True):
             if s in self.network.nodes and t in self.network.nodes and \
@@ -832,7 +841,7 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('topup_epi', 'sphinx_correct', order=0)  # 01
         self.network.add_edge('sphinx_correct', 'sphinx_epi', order=0)  # 10
 
-        self.network.add_edge('nordic_epi', 'select_3d_rep', order=0)  # 01
+        self.network.add_edge('topup_epi', 'select_3d_rep', order=0)  # 01
         self.network.add_edge('select_3d_rep', '3d_epi_rep', order=0)  # 10
 
         self.network.add_edge('3d_epi_rep', 'sphinx_correct_3d_rep', order=0)
