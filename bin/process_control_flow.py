@@ -40,17 +40,16 @@ class BaseControlNet:
                     raise ValueError(d + " : " + str(self.network.nodes[d]))
 
                 # get the timestamp of the previous action node
-                pact_node = list(nx.predecessor(self.network, d))[0]
-                if "modified" in self.network.nodes[pact_node]:
-                    pact_ts = datetime.datetime.fromisoformat(self.network.nodes[pact_node]["modified"])
+                pred_list = list(self.network.predecessors(d))
+                if len(pred_list) > 0 and "modified" in self.network.nodes[pred_list[0]]:
+                    pact_ts = datetime.datetime.fromisoformat(self.network.nodes[pred_list[0]]["modified"])
                 else:
                     pact_ts = datetime.datetime.min
 
                 if self.network.nodes[d]['complete'] is not None and (not self.network.nodes[d]['complete'] or
                                                                       "modified" not in self.network.nodes[d] or
-                                                                      ("modified" in self.network.nodes[n] and
-                                                                       (datetime.datetime.fromisoformat(self.network.nodes[d]["modified"]) >
-                                                                       pact_ts + datetime.timedelta(seconds=1)))):
+                                                                      ((datetime.datetime.fromisoformat(self.network.nodes[d]["modified"]) >
+                                                                        (pact_ts + datetime.timedelta(seconds=.05))))):
                     good_head = False
                     break
             if good_head:
@@ -96,10 +95,12 @@ class BaseControlNet:
         if type(choice) is tuple:
             need_help = choice[1]
             choice = choice[0]
+        revise_history = False
 
         if choice == "-all":
             print("\nWARNING: Forcing access to all action nodes, dependencies for some will be unavailable or at the "
                   "wrong version. Proceed with caution.")
+            revise_history = bool_input("Entered override mode. Force revise network history upon action selction and successful completion?")
             time.sleep(1)
             _, self.head = nx.bipartite.sets(self.network)
             return True
@@ -110,7 +111,6 @@ class BaseControlNet:
         if need_help:
             self.display_node_info(action_name)
             return self.interactive_advance()
-        self.network.nodes[action_name]['modified'] = str(datetime.datetime.now())
         pred = list(self.network.predecessors(action_name))
         fxn = eval(self.network.nodes[action_name]['fxn'])
         pred = sorted(pred, key=lambda x: self.network.edges[(x, action_name)]['order'])
@@ -119,7 +119,11 @@ class BaseControlNet:
             res = fxn(*data_params, self.network.nodes[action_name]['argv'])
         else:
             res = fxn(*data_params)
+        self.network.nodes[action_name]['modified'] = str(datetime.datetime.now())
+        # set successful function timestamp
         suc = list(self.network.successors(action_name))
+
+        # set successor data nodes and descendents time stamps
         for s in suc:
             res_idx = self.network.edges[(action_name, s)]['order']
             if res_idx is not None:
@@ -139,6 +143,14 @@ class BaseControlNet:
 
             if 'complete' in self.network.nodes[s] and self.network.nodes[s]['complete'] is not None:
                 self.network.nodes[s]['complete'] = True
+
+        if revise_history:
+            ancest = nx.bfs_tree(self.network, action_name, reverse=True)
+            for node in ancest.nodes():
+                self.network.nodes[node]["modified"] = self.network.nodes[action_name]["modified"]
+                if self.network.nodes[node]["complete"] is not None:
+                    self.network.nodes[node]["complete"] = True
+
         self.init_head_states()
         return True
 

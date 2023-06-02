@@ -137,7 +137,10 @@ def get_functional_target():
     else:
         raise ValueError("did not enter a valid nifti.")
     out_path = os.path.join(subj_root, 'mri', out)
-    shutil.copy(path, out_path)
+    try:
+        shutil.copy(path, out_path)
+    except shutil.SameFileError:
+        pass
     return out_path
 
 
@@ -160,6 +163,7 @@ def get_fixation_csv(source):
             print("WARN: no fixation data found for IMA " + str(ima))
             pass
     return out_paths
+
 
 def dilate_mask(inpath, outpath=None):
     """
@@ -389,7 +393,7 @@ def create_slice_overlays(function_reg_vol, anatomical, reg_contrasts):
     return out_paths
 
 
-def get_3d_rep(src: Union[List[str], str], use_topup):
+def get_3d_rep(src: Union[List[str], str], use_topup=True, out_name="3d_epi_rep.nii.gz"):
     """
     :param src:
     :return:
@@ -415,7 +419,7 @@ def get_3d_rep(src: Union[List[str], str], use_topup):
     data_arr = np.stack(data_arr, axis=0)
     data_arr = np.median(data_arr, axis=0)
     target_nii = nibabel.Nifti1Image(data_arr, header=header, affine=affine)
-    out = os.path.join(sess_dir, "3d_epi_rep.nii.gz")
+    out = os.path.join(sess_dir, out_name)
     nibabel.save(target_nii, out)
     return [os.path.relpath(out, project_root)]
 
@@ -1300,6 +1304,10 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear=None, fname="f_
             args.append((mc, ref, mc))
         with multiprocessing.Pool() as p:
             p.starmap(preprocess.nonlinear_moco, args)
+
+    # update the target file to be an average of moco-ed images
+    get_3d_rep(out, out_name=os.path.basename(ref))
+
     return out, ref
 
 
