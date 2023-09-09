@@ -89,7 +89,7 @@ def select_option_input(option_desc: List[str]):
             if '-h' in choice:
                 choice = choice.split()[0]
                 help_req = True
-            elif choice[0] == "-":
+            elif len(choice) > 0 and choice[0] == "-":
                 return choice.strip()
             choice = int(choice)
         except ValueError:

@@ -665,20 +665,16 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
           " --interpolation Linear --use-histogram-matching 0 --winsorize-image-intensities [ 0.005,0.995 ]" \
           " --initial-moving-transform [" + fixedP + "," + movingP + ",1 ]" \
           " --transform Rigid[ 0.1 ] --metric MI[" + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
-          " --convergence [1000x500x250,1e-8,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
+          " --convergence [ 1000x500x250,1e-8,10 ] --shrink-factors 4x2x1 --smoothing-sigmas 2x1x0vox" \
           " --transform Affine[ 0.1 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
-          " --convergence [1000x500,1e-9,10 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox" \
+          " --convergence [ 1000x500,1e-9,10 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox" \
           " --transform Affine[ 0.01 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
-          " --convergence [500,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
+          " --convergence [ 500,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
     if nonlinear:
-        cmd = cmd + " --transform SyN[ .1,4,0 ] --metric MI[ " + fixedP + "," + movingP + ",1,100 ]" \
-          " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
-          " --transform SyN[ .01,3,0 ] --metric MI[ " + fixedP + "," + movingP + ",1,100]" \
-          " --convergence [200,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
-          " --transform SyN[ .01,4,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,6 ]" \
-          " --convergence [120,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox" \
-          " --transform SyN[ .001,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
-          " --convergence [30,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
+        cmd = cmd + " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,4 ]" \
+          " --convergence [ 250x250,1e-9,25 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox"\
+          " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,2 ]" \
+          " --convergence [ 250,1e-9,25 ] --shrink-factors 1 --smoothing-sigmas 0vox"
 
 
     print(cmd)

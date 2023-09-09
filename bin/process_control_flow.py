@@ -22,6 +22,7 @@ class BaseControlNet:
         self.network = nx.DiGraph()
         self.network.add_node("end", data=None, complete=None, bipartite=0, generated=True)
         self.session_file = None
+        self.non_recursive = None
         self.head = []
 
     def init_head_states(self):
@@ -44,16 +45,17 @@ class BaseControlNet:
                 if len(pred_list) > 0 and "modified" in self.network.nodes[pred_list[0]]:
                     pact_ts = datetime.datetime.fromisoformat(self.network.nodes[pred_list[0]]["modified"])
                 else:
-                    pact_ts = datetime.datetime.min
+                    pact_ts = datetime.datetime.max
 
                 if self.network.nodes[d]['complete'] is not None and (not self.network.nodes[d]['complete'] or
                                                                       "modified" not in self.network.nodes[d] or
                                                                       ((datetime.datetime.fromisoformat(self.network.nodes[d]["modified"]) >
-                                                                        (pact_ts + datetime.timedelta(seconds=.05))))):
+                                                                        (pact_ts + datetime.timedelta(seconds=.5))))):
                     good_head = False
                     break
             if good_head:
                 self.head.append(n)
+
         # add sterilization command
         if "sterilize" not in self.network.nodes:
             self.network.add_node("sterilize", fxn="self.sterilize", bipartite=1, generated=True,
@@ -131,23 +133,22 @@ class BaseControlNet:
                     self.network.nodes[s]['data'] = res[res_idx]
                 else:
                     self.network.nodes[s]['data'] = res
-            self.network.nodes[s]['modified'] = str(datetime.datetime.now())
-
-            # find all descendent nodes an update their timestamp, since they are no longer up to date
-            # we don't update action nodes, so their timestamps will be behind their dependencies'
-            desc = nx.bfs_tree(self.network, s)
-            for d in desc.nodes():
-                if "bipartite" in self.network.nodes[d]:
-                    if self.network.nodes[d]['bipartite'] == 0:
-                        self.network.nodes[d]['modified'] = self.network.nodes[s]['modified']
-
             if 'complete' in self.network.nodes[s] and self.network.nodes[s]['complete'] is not None:
                 self.network.nodes[s]['complete'] = True
 
+        # find all descendent nodes an update their timestamp, since they are no longer up to date
+        # we don't update action nodes, so their timestamps will be behind their dependencies'
+        if self.non_recursive is not None:
+            desc = nx.bfs_tree(self.non_recursive, action_name)
+            for d in desc.nodes():
+                if "bipartite" in self.network.nodes[d]:
+                    if self.network.nodes[d]['bipartite'] == 0:
+                        self.network.nodes[d]['modified'] = self.network.nodes[action_name]['modified']
+
         if revise_history:
-            ancest = nx.bfs_tree(self.network, action_name, reverse=True)
+            ancest = nx.bfs_tree(self.non_recursive, action_name, reverse=True)
             for node in ancest.nodes():
-                self.network.nodes[node]["modified"] = self.network.nodes[action_name]["modified"]
+                self.network.nodes[node]["modified"] = datetime.datetime.min
                 if self.network.nodes[node]["complete"] is not None:
                     self.network.nodes[node]["complete"] = True
 
@@ -225,6 +226,10 @@ class BaseControlNet:
                     ("generated" in self.network.nodes[s] or "generated" in self.network.nodes[t]):
                 self.network.add_edge(s, t, **data)
 
+        self.non_recursive = self.network.copy()
+        self.non_recursive.remove_edges_from(nx.selfloop_edges(self.non_recursive))
+
+
     def sterilize(self, *argv):
         """
         Eliminates intermediate data. Scans through all directories where this network saves files. If the are not marked
@@ -241,7 +246,7 @@ class BaseControlNet:
         subj_root, project_root = support_functions._env_setup()
         # compute set of reserved file names and set of directories to scan
         reserved = set()
-        reserved_patterns = {"instance_beta", "runlist", ".csv"}
+        reserved_patterns = {"instance_beta", "runlist", ".csv", "ima_order_map"}
         dirs = set()
         for node, data in self.network.nodes(data=True):
             if data["bipartite"] == 0:
@@ -320,7 +325,12 @@ class DefaultSubjectControlNet(BaseControlNet):
         :param dil_t1_mask:
         :return: path to session json
         """
-        session_id = input("enter date of session")
+        session_names = [os.path.basename(os.path.dirname(session)) for session in sessions] + ["create new session"]
+        choice = select_option_input(session_names)
+        if choice == len(session_names) - 1:
+            session_id = input("enter name of session")
+        else:
+            session_id = session_names[choice]
         subj_root, project_root = support_functions._env_setup()
         proj_config = 'config.json'
         with open(proj_config, 'r') as f:
@@ -376,7 +386,7 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         para_name = para_def_dict['name']
         subj_root = os.environ.get('FMRI_WORK_DIR')
-        self.network.add_node('paradigm_' + para_name, data=para_path, complete=True, bipartite=0,
+        self.network.add_node('paradigm_' + para_name, data=para_path, complete=None, bipartite=0,
                               type='json', generated=True, modified=str(datetime.datetime.now()), leaf=True)
         self.network.add_node('beta_' + para_name, data=None, generated=True, complete=False, bipartite=0, type='4d_volume',
                               space='std_functional')
@@ -419,6 +429,9 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         self.network.add_node('create_' + para_name + 'run_betas', generated=True, bipartite=1, fxn='support_functions.get_run_betas')
 
+        self.network.add_node('create_' + para_name + 'run_surfaces', generated=True, bipartite=1,
+                              fxn='support_functions.surface_run_betas')
+
         self.network.add_node('delete_paradigm_' + para_name, generated=True, bipartite=1, fxn='self.remove_paradigm_control_set')
 
         self.network.add_edge('add_new_paradigm', 'paradigm_' + para_name, order=0)  # 10
@@ -457,6 +470,15 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + 'run_betas', order=0)
         self.network.add_edge('create_' + para_name + 'run_betas', 'run_beta_log' + para_name, order=0)
         self.network.add_edge('create_' + para_name + 'run_betas', "end", order=1)
+
+        self.network.add_edge('run_beta_log' + para_name, 'create_' + para_name + 'run_surfaces', order=0)
+        self.network.add_edge("ds_t1", 'create_' + para_name + 'run_surfaces', order=1)
+        self.network.add_edge("t1", 'create_' + para_name + 'run_surfaces', order=2)
+        self.network.add_edge("manual_transform", 'create_' + para_name + 'run_surfaces', order=3)
+        self.network.add_edge("auto_composite_transform", 'create_' + para_name + 'run_surfaces', order=4)
+        self.network.add_edge('paradigm_' + para_name, 'create_' + para_name + 'run_surfaces', order=5)
+        self.network.add_edge("white_surfs", 'create_' + para_name + 'run_surfaces', order=6)
+        self.network.add_edge('create_' + para_name + 'run_surfaces', "end", order=0)
 
         self.serialize(os.path.join(subj_root, 'subject_net.json'))
         return para_path
@@ -517,6 +539,8 @@ class DefaultSubjectControlNet(BaseControlNet):
         self.network.add_node('volume_rois', data={}, complete=None, type='volume', space='t1_native', bipartite=0, leaf=True)
         self.network.add_node('ds_volume_rois', data={}, complete=None, type='volume', space='ds_t1_native',
                               bipartite=0, leaf=True)
+        self.network.add_node('functional_rois', data={}, complete=None, type='volume', space='functional_std',
+                              bipartite=0, leaf=True)
         self.network.add_node('roi_time_courses', data={}, complete=None, type='array', bipartite=0, leaf=True)
 
         self.network.add_node('load_t1_data', fxn='support_functions.load_t1_data', bipartite=1,
@@ -575,6 +599,8 @@ class DefaultSubjectControlNet(BaseControlNet):
                               desc='Combine time series created with different stimuli orderings via block of interest stacking method, then extract the average time course for each volume roi.')
         self.network.add_node('downsample_vol_rois', fxn='support_functions.downsample_vol_rois', bipartite=1,
                               desc='downsample volume rois by a factor of 2 to the working space.')
+        self.network.add_node('vol_2_functional_rois', fxn='support_functions.apply_warp_inverse_vol_roi_dir', bipartite=1,
+                              desc='transform directory of anatomical rois to functional space.')
         self.network.add_node('manual_volume_rois', fxn='support_functions.manual_volume_rois', bipartite=1)
 
         self.network.add_edge('load_t1_data', 't1', order=0)  # 10
@@ -615,7 +641,15 @@ class DefaultSubjectControlNet(BaseControlNet):
 
         self.network.add_edge('volume_rois', 'downsample_vol_rois', order=0)
         self.network.add_edge('ds_volume_rois', 'downsample_vol_rois', order=1)
+        self.network.add_edge('ds_t1', 'downsample_vol_rois', order=2)
         self.network.add_edge('downsample_vol_rois', 'ds_volume_rois', order=0)
+
+        self.network.add_edge('ds_volume_rois', 'vol_2_functional_rois', order=0)
+        self.network.add_edge('functional_representative', 'vol_2_functional_rois', order=1)
+        self.network.add_edge('manual_transform', 'vol_2_functional_rois', order=2)
+        self.network.add_edge('inverse_auto_composite_transform', 'vol_2_functional_rois', order=3)
+        self.network.add_edge('functional_rois', 'vol_2_functional_rois', order=4)
+        self.network.add_edge('vol_2_functional_rois', 'functional_rois', order=2)
 
         self.network.add_edge('get_functional_representative', 'functional_representative', order=0)
 
@@ -862,7 +896,6 @@ class DefaultSessionControlNet(BaseControlNet):
         self.network.add_edge('sphinx_epi', 'motion_correction', order=0)  # 01
         self.network.add_edge('3d_epi_rep_sphinx', 'motion_correction', order=1)  # 01
         self.network.add_edge('motion_correction', 'moco_epi', order=0)  # 10
-        self.network.add_edge('motion_correction', '3d_epi_rep_sphinx', order=1)  # 10
 
         self.network.add_edge('3d_epi_rep_sphinx', 'manual_registration', order=0)  # 01
         self.network.add_edge('functional_std', 'manual_registration', order=1)  # 01

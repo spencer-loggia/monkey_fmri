@@ -21,6 +21,7 @@ import unpack
 import fnmatch
 import numpy as np
 
+import traceback
 import matplotlib
 import matplotlib.pyplot as plt
 from cycler import cycler
@@ -108,7 +109,7 @@ def get_epis(*argv):
             "Enter path to session directory containing run subdirectories containing niftis")
         nifti_name = input("Enter name of nifti files to transfer (should be unprocessed versions")
         sess_target_dir = os.path.join(f_dir, str(session_id))
-        if nifti_source != sess_target_dir:
+        if not os.path.samefile(nifti_source, sess_target_dir):
             shutil.copytree(nifti_source, sess_target_dir, ignore=include_patterns(nifti_name))
         else:
             preprocess._create_dir_if_needed(f_dir, str(session_id))
@@ -118,7 +119,8 @@ def get_epis(*argv):
             for run_dir in SOURCE:
                 raw_nifti = os.path.join(run_dir, nifti_name)
                 target_nifti = os.path.join(run_dir, 'f.nii.gz')
-                shutil.move(raw_nifti, target_nifti)
+                if not os.path.samefile(raw_nifti, target_nifti):
+                    shutil.move(raw_nifti, target_nifti)
     check = input_control.bool_input("Check functional time series lengths? ")
     if check:
         expected = int(input("What is the expected number of trs? "))
@@ -207,14 +209,18 @@ def downsample_anatomical(inpath, factor=[2, 2, 2], out_dir=None, affine_scale=N
     return output
 
 
-def downsample_vol_rois(roi_dict, ds_roi_dict, factor=[2, 2, 2], affine_scale=None, resample='nearest',
+def downsample_vol_rois(roi_dict, ds_roi_dict, ds_t1, affine_scale=None, resample='nearest',
                         output_dir=None):
     options = list(roi_dict)
     subj_root, project_root = _env_setup()
     choice = input_control.select_option_input(options)
     roi_set_name = options[choice]
     roi_set_path = roi_dict[roi_set_name]
-    factor = input_control.int_list_input("Enter the scale factor (x y z):")
+    ds_t1 = nibabel.load(ds_t1)
+    zooms = ds_t1.header.get_zooms()
+    factor = [zooms[0], zooms[1], zooms[2]]
+    # factor = input_control.int_list_input("Enter the scale factor (x y z):")
+    print("Scaling voxels to:", factor)
     if output_dir is None:
         output_dir = os.path.relpath(
             preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set_name), 'ds_roi_vols'),
@@ -237,7 +243,6 @@ def downsample_vol_rois_cmdline_wrap(dir, factor=[2, 2, 2], affine_scale=None, r
     out_dict = {}
     return downsample_vol_rois(roi_dict, out_dict, factor=factor, affine_scale=affine_scale, resample=resample,
                                output_dir=output_dir)
-
 
 def bandpass_wrapper(functional_dirs, paradigm_path):
     subj_root, project_root = _env_setup()
@@ -335,16 +340,13 @@ def apply_warp_inverse(source, vol_in_target_space, forward_gross_transform_path
 
 def apply_warp_inverse_vol_roi_dir(ds_vol_roi_dict, vol_in_target_space, forward_gross_transform_path,
                                    reverse_fine_transform_path, func_space_rois_dict):
-    """
-    Slated for removal
-    :return:
-    """
+
     subj_root, project_root = _env_setup()
     options = list(ds_vol_roi_dict)
     choice = input_control.select_option_input(options)
     roi_set_name = options[choice]
     roi_set_path = ds_vol_roi_dict[roi_set_name]
-    output_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois'), 'func_space_rois')
+    output_dir = preprocess._create_dir_if_needed(os.path.join(subj_root, 'rois', roi_set_name), 'auto_func_space_rois')
     for roi_file in os.listdir(roi_set_path):
         if '.nii' in roi_file:
             f = os.path.join(roi_set_path, roi_file)
@@ -389,7 +391,7 @@ def create_slice_overlays(function_reg_vol, anatomical, reg_contrasts):
     for contrast in reg_contrasts:
         out_paths.append(os.path.relpath(analysis.create_slice_maps(function_reg_vol, anatomical, contrast,
                                                                     sig_thresh=sig_thresh, saturation=sig_sat),
-                                         project_root))
+                                                                    project_root))
     return out_paths
 
 
@@ -421,7 +423,7 @@ def get_3d_rep(src: Union[List[str], str], use_topup=True, out_name="3d_epi_rep.
     target_nii = nibabel.Nifti1Image(data_arr, header=header, affine=affine)
     out = os.path.join(sess_dir, out_name)
     nibabel.save(target_nii, out)
-    return [os.path.relpath(out, project_root)]
+    return os.path.relpath(out, project_root)
 
 
 def convert_to_sphinx_vol_wrap(src, *argv):
@@ -435,6 +437,8 @@ def convert_to_sphinx_vol_wrap(src, *argv):
         os.chdir(project_root)
         out = preprocess.convert_to_sphinx(input_dirs=[path], scan_pos=pos)[0]
         paths.append(os.path.relpath(out, project_root))
+    if len(paths) == 1:
+        paths = paths[0]
     return paths
 
 
@@ -683,13 +687,17 @@ def create_load_ima_order_map(source):
     if os.path.exists(omap_path):
         if input_control.bool_input("IMA -> order number map already defined for this session. Use existing?"):
             return omap_path
+    auto_fill = input_control.bool_input("fill with zeros? (use if runtime order def.)")
     ima_order_map = {}
     one_index_source = input_control.bool_input("Are order numbers 1 indexed (in experiment logs)? ")
     for s in source:
         ima = os.path.basename(os.path.dirname(s)).strip()
-        order_num = int(input("Enter order number (as in log) for ima " + ima))
-        if one_index_source:
-            order_num -= 1
+        if auto_fill:
+            order_num = -1
+        else:
+            order_num = int(input("Enter order number (as in log) for ima " + ima))
+            if one_index_source:
+                order_num -= 1
         ima_order_map[ima] = order_num
     with open(omap_path, 'w') as f:
         json.dump(ima_order_map, f, indent=4)
@@ -711,10 +719,12 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
     else:
         runlist = input_control.dir_input("Path to csv file: ")
     ima_order = pd.read_csv(runlist, sep='\t')
-    for c_name, c in ima_order.iteritems():
-        c_name = c_name.strip()
-        if c_name not in ima_order_map:
-            # this ima wasn't used
+    # should be same order as sessions
+    for ima in ima_order_map.keys():
+        if ima in ima_order:
+            c = ima_order[ima]
+        else:
+            print("IMA", ima, "not found in runlist")
             continue
         clist = c.tolist()
         # check if integers
@@ -738,9 +748,9 @@ def _design_matrices_from_condition_lists(ima_order_map, condition_names, num_co
                                                   reorder=(not run_wise), use_cond_groups=use_cond_groups)
         design_matrices.append(dm)
         if sess_name in paradigm_data['order_number_definitions']:
-            paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][c_name] = clist
+            paradigm_data['order_number_definitions'][os.path.basename(sess_dir)][ima] = clist
         else:
-            paradigm_data['order_number_definitions'][os.path.basename(sess_dir)] = {c_name: clist}
+            paradigm_data['order_number_definitions'][os.path.basename(sess_dir)] = {ima: clist}
 
     return design_matrices
 
@@ -812,7 +822,7 @@ def get_design_matrices(paradigm_path, ima_order_map_path, source, mion=True, fi
                                                                    condition_names, condition_groups,
                                                                    tr_length=tr_length, mion=mion)
                 sess_dms.append(sess_dm)
-
+        # sess dms is ordered by runlist (chrono)
         for j, sess_dm in enumerate(sess_dms):
             ima = os.path.dirname(source[i][j])
             fix_path = os.path.join(ima, "fixation.csv")
@@ -885,7 +895,7 @@ def create_contrast(beta_path, paradigm_path, use_cond_groups=True):
     return contrast_paths
 
 
-def construct_subject_glm(para, mion=True, run_wise=False, use_cond_groups=True, smooth=.5):
+def construct_subject_glm(para, mion=True, run_wise=False, use_cond_groups=True, smooth=1.0):
     subj_root, project_root = _env_setup()
     proj_config_path = 'config.json'
     with open(para, 'r') as f:
@@ -935,6 +945,12 @@ def get_run_betas(para, mion=True):
     condition_groups = paradigm_data['condition_groups']
     condition_names = paradigm_data['condition_integerizer']
 
+    if input_control.bool_input("Add behavioral data?"):
+        bp = input_control.dir_input("Enter path to behavior csv file.")
+        behavior_key = pd.read_csv(bp)
+    else:
+        behavior_key = None
+
     if len(sessions_dict) == 0:
         print("No Runs Have Been Promoted From Session to Subject Level.")
         return None, None
@@ -943,6 +959,7 @@ def get_run_betas(para, mion=True):
                 "condition_group": [],
                 "beta_path": [],
                 "session": [],
+                "correct": [],
                 "ima": []}
     # creates condition for every stimuli type instead of every stimuli group
     full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.)
@@ -953,28 +970,44 @@ def get_run_betas(para, mion=True):
     for key in condition_groups.keys():
         for cond_idx in condition_groups[key]["conds"]:
             cond2group[cond_idx] = key
-    dm_cols = list(full_cond_glm.design_matrices_[lindex].columns)
-    contrast_matrix_template = [np.zeros((len(dm_cols)))
-                                for _ in range(len(full_cond_glm.design_matrices_))]
-    drift_dex = dm_cols.index("drift_1")
-    constant_idx = dm_cols.index("constant")
-    dm_base_conds = []
-    for cond in dm_cols[:drift_dex]:
-        cond = str(cond)
-        if "delay" in cond:
-            dm_base_conds.append(cond[:-8])
-        else:
-            dm_base_conds.append(cond)
-
-    rl_encode = []
-    for _, group in itertools.groupby(dm_base_conds):
-        rl_encode.append(len(list(group)))
 
     for key in sessions_dict:
         imas = sessions_dict[key]['imas_used']
         sess_path = os.path.dirname(sessions_dict[key]['session_net'])
         sess = os.path.basename(sess_path)
+        if behavior_key is not None:
+            sess_tkns = sess.split("_")
+            sess_tkns = sess_tkns[-1]
+            syear = int(sess_tkns[:4])
+            smonth = int(sess_tkns[4:6])
+            sday = int(sess_tkns[6:8])
+            sess_behave = behavior_key.loc[(behavior_key["year"] == syear) &
+                                           (behavior_key["month"] == smonth) &
+                                           (behavior_key["day"] == sday)]
+        else:
+            sess_behave = None
         for ima in imas:
+            if behavior_key is not None:
+                ima_behave = sess_behave[sess_behave["ima"] == int(ima)]
+            else:
+                ima_behave = None
+            dm_cols = list(full_cond_glm.design_matrices_[lindex].columns)
+            contrast_matrix_template = [np.zeros((len(dm_cols)))
+                                        for _ in range(len(full_cond_glm.design_matrices_))]
+            drift_dex = dm_cols.index("drift_1")
+            constant_idx = dm_cols.index("constant")
+            dm_base_conds = []
+            for cond in dm_cols[:drift_dex]:
+                cond = str(cond)
+                if "delay" in cond:
+                    dm_base_conds.append(cond[:-8])
+                else:
+                    dm_base_conds.append(cond)
+
+            rl_encode = []
+            for _, group in itertools.groupby(dm_base_conds):
+                rl_encode.append(len(list(group)))
+
             run_dir = os.path.join(sess_path, str(ima))
             np_dm = full_cond_glm.design_matrices_[lindex].to_numpy()
 
@@ -992,6 +1025,15 @@ def get_run_betas(para, mion=True):
                 cond_name = condition_names[str(para_index)]
                 # sess_out_paths.append(out_path)
                 if all_conds[dm_index]:
+                    if behavior_key is not None and "Choice" not in cond_name:
+                        try:
+                            correct = int(ima_behave[ima_behave["condition_name"] == cond_name]["correct"].iloc[0])
+                            data_log["correct"].append(correct)
+                        except IndexError:
+                            print("Failed to get behavior information for sess", sess, "ima", ima, "cond", cond_name)
+                            data_log["correct"].append(0)
+                    else:
+                        data_log["correct"].append(0)
                     parent_group = cond2group[para_index]
                     data_log["condition_name"].append(cond_name)
                     data_log["condition_group"].append(parent_group)
@@ -1004,11 +1046,19 @@ def get_run_betas(para, mion=True):
                         local_contrast_matrix = copy.deepcopy(contrast_matrix_template)
                         local_contrast_matrix[lindex][dm_index] = 1
                         out_path = os.path.join(run_dir, dm_cols[dm_index] + "_instance_beta.nii.gz")
-                        instance_beta = full_cond_glm.compute_contrast(local_contrast_matrix, stat_type='t',
-                                                                       output_type='z_score')
-                        nibabel.save(instance_beta, out_path)
-                        out_paths.append(out_path)
+                        try:
+                            instance_beta = full_cond_glm.compute_contrast(local_contrast_matrix, stat_type='t',
+                                                                           output_type='effect_size')
+                            nans = np.count_nonzero(np.isnan(instance_beta.get_fdata()))
+                            if nans > 0:
+                                print("WARNING: detected", nans, "NaN values in contrast", sess, ima, cond_name)
+                            nibabel.save(instance_beta, out_path)
+                            out_paths.append(out_path)
+                        except Exception:
+                            print("contrast creation failed for", run_dir, "ima", ima)
+                            traceback.print_exc()
                         dm_index += 1
+
                     data_log["beta_path"].append(out_paths)
                 else:
                     dm_index += delays
@@ -1018,6 +1068,40 @@ def get_run_betas(para, mion=True):
     data_log = pandas.DataFrame.from_dict(data_log, orient='columns')
     data_log.to_csv(data_log_out)
     return data_log_out
+
+
+def surface_run_betas(data_key, ds_t1, t1, manual, auto, paradigm, white_surfs):
+    """
+    creates and adds registered decode trials and their surface projections to the data key
+    """
+    reg_epis = []
+    right_textures = []
+    left_textures = []
+    surfs = []
+    data = pd.read_csv(data_key)
+    data.drop("Unnamed: 0", axis=1, inplace=True)
+    
+    for row in data.iterrows():
+        sources = eval(row[1]["beta_path"])
+        try:
+            reg_sources = apply_warp(sources, ds_t1, manual, auto)
+            surfs, _ = generate_subject_overlays(paradigm, reg_sources, white_surfs, t1, ds_t1)
+        except FileNotFoundError:
+            print("could not finish", sources)
+            right_textures.append(None)
+            left_textures.append(None)
+            reg_epis.append(None)
+            continue
+        right_surfs = [s for s in surfs if "rh" in s]
+        left_surfs = [s for s in surfs if "lh" in s]
+        reg_epis.append(reg_sources)
+        right_textures.append(right_surfs)
+        left_textures.append(left_surfs)
+
+    data["reg_beta_paths"] = reg_epis
+    data["right_surface_textures"] = right_textures
+    data["left_surface_textures"] = left_textures
+    data.to_csv(data_key)
 
 
 def beta_from_glm():
@@ -1247,7 +1331,7 @@ def load_white_surfs():
         cur_surf_path = input_control.dir_input("enter path to " + hemi + " surf: ")
         surf_name = os.path.basename(cur_surf_path)
         surf_proj_path = os.path.relpath(os.path.join(subj_root, 'surf', surf_name), project_root)
-        if not os.path.samefile(cur_surf_path, surf_proj_path):
+        if not os.path.exists(surf_proj_path):
             shutil.copy(cur_surf_path, surf_proj_path)
         surfs.append(surf_proj_path)
     return surfs
@@ -1308,7 +1392,7 @@ def motion_correction_wrapper(source, targets, moco_is_nonlinear=None, fname="f_
     # update the target file to be an average of moco-ed images
     get_3d_rep(out, out_name=os.path.basename(ref))
 
-    return out, ref
+    return out
 
 
 def nordic_correction_wrapper(functional_dirs, fname='f.nii.gz'):

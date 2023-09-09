@@ -435,15 +435,12 @@ def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_con
     print("TRY: HIGH VAR CONFOUND ESTIMATION")
     with Pool() as p:
         confounds = p.map(_confound, epis)
-    index = design_matrices[0].index
-    design_matrices = [pd.concat([dm, confounds[i].set_index(index)], axis=1) for i, dm in enumerate(design_matrices)]
+    design_matrices = [pd.concat([dm, confounds[i].set_index(dm.index)], axis=1) for i, dm in enumerate(design_matrices)]
     fmri_glm = fmri_glm.fit(epis, design_matrices=design_matrices)
-    fig, axs = plt.subplots(2)
-    dm = fmri_glm.design_matrices_[0]
-    dms = np.stack([dm.to_numpy() for dm in fmri_glm.design_matrices_], axis=0).mean(axis=0)
-    dms = pd.DataFrame(data=dms, index=dm.index, columns=dm.columns)
-    plot_design_matrix(dms, ax=axs[0])
-    plot_design_matrix(dm, ax=axs[1])
+    fmri_glm.source_paths = source
+    fig, axs = plt.subplots(1)
+    dm = fmri_glm.design_matrices_[-1]
+    plot_design_matrix(dm, ax=axs)
     plt.show()
     code = random.randint(0, 999999)
     glm_path = os.path.join(output_dir, "glm_model_" + str(code) + ".pkl")
@@ -499,7 +496,6 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
     contrast_matrices = [[] for _ in range(contrast_matrix.shape[1] + 1)] # room for auto background contrast
     dm_cols = list(glm.design_matrices_[0].columns)
     n_reg_dex = dm_cols.index("drift_1")
-    constant_dex = dm_cols.index("constant")
     contrast_descriptors.append("background")
     is_fir = True in ["delay" in cname for cname in dm_cols[:n_reg_dex]]
 
@@ -536,6 +532,7 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
 
         # always compute background contrast
         back_contrast = np.zeros((1, cm.shape[1]))
+        constant_dex = list(dm.columns).index("constant")
         back_contrast[0, constant_dex] = 1
         cm = np.concatenate([cm, back_contrast], axis=0)
 
@@ -544,9 +541,9 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
 
     out_paths = []
     for i, contrast in enumerate(contrast_matrices):
-        for dm in glm.design_matrices_[:4]:
-            plot_contrast_matrix(contrast, design_matrix=dm)
-            plt.show()
+        # for dm in glm.design_matrices_[-2:]:
+        #     plot_contrast_matrix(contrast, design_matrix=dm)
+        #     plt.show()
         contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type=mode)
         out_path = os.path.join(output_dir, contrast_descriptors[i] + '.nii.gz')
         nib.save(contrast_nii, out_path)
@@ -623,7 +620,8 @@ def create_contrast_surface(anatomical_white_surface: str,
     # subprocess.run(['fslroi', path, path_gz, '0', '256', '0', '256', '0,', '256'])
     # path = _scale_and_standardize(scale, path)
     overlay_out_path = os.path.join(output, 'sigsurface_' + hemi + '_' + out_desc + '.mgh')
-    subprocess.run(['mri_vol2surf', '--src', path,
+    subprocess.run(['mri_vol2surf', '--projfrac-avg', '.05', '.95', '.05',
+                    '--src', path,
                     '--out', overlay_out_path,
                     '--hemi', hemi,
                     '--regheader', subject_id])
@@ -649,7 +647,7 @@ def labels_to_roi_mask(label_dir, hemi, out_dir, t1, subject_id) -> Tuple[str, l
                             '--label', os.path.join(label_dir, f),
                             '--regheader', t1,
                             '--temp', t1,
-                            '--proj', 'frac', '0', '1', '.1',
+                            '--proj', 'frac', '0', '1', '.05',
                             '--hemi', hemi,
                             '--subject', subject_id,
                             '--o', output])
