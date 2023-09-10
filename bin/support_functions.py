@@ -962,7 +962,8 @@ def get_run_betas(para, mion=True):
                 "correct": [],
                 "ima": []}
     # creates condition for every stimuli type instead of every stimuli group
-    full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.)
+    # full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.)
+    full_cond_glm_path = "/home/ssbeast/Projects/SS/monkey_fmri/MTurk1/subjects/jeeves/analysis/glm_model_169033.pkl"
     full_cond_glm = pickle.load(open(full_cond_glm_path, "rb"))
 
     lindex = 0
@@ -992,10 +993,17 @@ def get_run_betas(para, mion=True):
             else:
                 ima_behave = None
             dm_cols = list(full_cond_glm.design_matrices_[lindex].columns)
-            contrast_matrix_template = [np.zeros((len(dm_cols)))
-                                        for _ in range(len(full_cond_glm.design_matrices_))]
+
+            # get index in dm cols of constant and first drift regressor
             drift_dex = dm_cols.index("drift_1")
             constant_idx = dm_cols.index("constant")
+
+            # get ima glm parameters
+            ima_betas = np.array(full_cond_glm.results_[lindex][0.0].theta)  # <c, v>
+            ima_residuals = np.array(full_cond_glm.results_[lindex][0.0].residuals)  # <t, v>
+            np_dm = full_cond_glm.design_matrices_[lindex].to_numpy().T  # <c, t>
+            masker = full_cond_glm.masker_  # a neat nilearn object that can intelligently mask and unmask your data!
+
             dm_base_conds = []
             for cond in dm_cols[:drift_dex]:
                 cond = str(cond)
@@ -1005,61 +1013,81 @@ def get_run_betas(para, mion=True):
                     dm_base_conds.append(cond)
 
             rl_encode = []
+            # rl_encode has number of delays for each condition in the dm
             for _, group in itertools.groupby(dm_base_conds):
                 rl_encode.append(len(list(group)))
 
             run_dir = os.path.join(sess_path, str(ima))
-            np_dm = full_cond_glm.design_matrices_[lindex].to_numpy()
 
             if mion:
-                all_conds = list(np_dm[:, :drift_dex].sum(axis=0) < 0)  # what conditions are used (nonzero) in this dm??
+                all_conds = list(np_dm.T[:, :drift_dex].sum(axis=0) < 0)  # what conditions are used (nonzero) in this dm??
             else:
-                all_conds = list(np_dm[:, :drift_dex].sum(axis=0) > 0)
+                all_conds = list(np_dm.T[:, :drift_dex].sum(axis=0) > 0)
 
             dm_index = 0
+            # collapse dm to discard grey blocks
+
+            # iterate through all conditions in any dm (including delay)
             for cond, delays in enumerate(rl_encode):
+                # para index stores the index of the condition in the paradigm
                 para_index = cond
                 if base_conditions[0] <= cond < constant_idx:
                     para_index += 1
-
                 cond_name = condition_names[str(para_index)]
-                # sess_out_paths.append(out_path)
+
+                # all_conds give the conditions present in this specific dm,
                 if all_conds[dm_index]:
-                    if behavior_key is not None and "Choice" not in cond_name:
-                        try:
-                            correct = int(ima_behave[ima_behave["condition_name"] == cond_name]["correct"].iloc[0])
-                            data_log["correct"].append(correct)
-                        except IndexError:
-                            print("Failed to get behavior information for sess", sess, "ima", ima, "cond", cond_name)
-                            data_log["correct"].append(0)
-                    else:
-                        data_log["correct"].append(0)
-                    parent_group = cond2group[para_index]
-                    data_log["condition_name"].append(cond_name)
-                    data_log["condition_group"].append(parent_group)
-                    data_log["condition_integer"].append(int(para_index))
-                    data_log["session"].append(sess)
-                    data_log["ima"].append(ima)
-                    # send to contrast expander and runner
-                    out_paths = []
+                    # this cond exists in this dm
+                    mask_dm = np.abs(np_dm) > .2
+                    occ_beta_sets = []
                     for delay in range(delays):
-                        local_contrast_matrix = copy.deepcopy(contrast_matrix_template)
-                        local_contrast_matrix[lindex][dm_index] = 1
-                        out_path = os.path.join(run_dir, dm_cols[dm_index] + "_instance_beta.nii.gz")
-                        try:
-                            instance_beta = full_cond_glm.compute_contrast(local_contrast_matrix, stat_type='t',
-                                                                           output_type='effect_size')
-                            nans = np.count_nonzero(np.isnan(instance_beta.get_fdata()))
-                            if nans > 0:
-                                print("WARNING: detected", nans, "NaN values in contrast", sess, ima, cond_name)
-                            nibabel.save(instance_beta, out_path)
-                            out_paths.append(out_path)
-                        except Exception:
-                            print("contrast creation failed for", run_dir, "ima", ima)
-                            traceback.print_exc()
+                        condition_time_raw = np.nonzero(mask_dm[dm_index])
+                        condition_time_indexes = []
+                        # adjacent indexes should be grouped
+                        prev = -10
+                        for i, t_dex in enumerate(condition_time_raw[0].tolist()):
+                            if t_dex != prev + 1:
+                                condition_time_indexes.append([i])
+                            else:
+                                condition_time_indexes[-1].append(i)
+                            prev = t_dex
+                        # multiply coi betas by coi dm and add residuals to create cleaned real time series.
+                        predicted_ts = np.outer(ima_betas[dm_index].T, np_dm[dm_index, condition_time_raw])  # <v, t> this is the time series we predict for this stimulus in isolation
+                        cleaned_ts = predicted_ts + ima_residuals[condition_time_raw].T  # <v, t> this is what we'll chop up to get our trial data
+                        for occ_num, indexes in enumerate(condition_time_indexes):
+                            if delay == 0:
+                                occ_beta_sets.append([])
+                                # create a new entry in the data log if this the first delay.
+                                parent_group = cond2group[para_index]
+                                data_log["condition_name"].append(cond_name)
+                                data_log["condition_group"].append(parent_group)
+                                data_log["condition_integer"].append(int(para_index))
+                                data_log["session"].append(sess)
+                                data_log["ima"].append(ima)
+                                if occ_num == 0:
+                                    print("Adding", len(condition_time_indexes), "Instances of Class", cond_name, "from Session", sess, "IMA", ima)
+
+                                if behavior_key is not None and "Choice" not in cond_name:
+                                    try:
+                                        cond_behave_data = ima_behave[ima_behave["condition_name"] == cond_name]["correct"]
+                                        correct = int(cond_behave_data.iloc[occ_num])
+                                        data_log["correct"].append(correct)
+                                    except IndexError:
+                                        print("Failed to get behavior information for sess", sess, "ima", ima, "cond",
+                                              cond_name)
+                                        data_log["correct"].append(0)
+                                else:
+                                    data_log["correct"].append(0)
+                            # create the trial data
+                            out_path = os.path.join(run_dir, dm_cols[dm_index] + "_" + str(occ_num) + "_instance_beta.nii.gz")
+                            # transform 1d masked voxels into 3d func space
+                            trial_data = masker.inverse_transform(cleaned_ts[:, indexes].squeeze().T)
+                            # instance_beta = nibabel.Nifti1Image(trial_data, affine=affine, header=header)
+                            nibabel.save(trial_data, out_path)
+                            occ_beta_sets[occ_num].append(out_path)
                         dm_index += 1
 
-                    data_log["beta_path"].append(out_paths)
+                    data_log["beta_path"] += occ_beta_sets
                 else:
                     dm_index += delays
             lindex += 1

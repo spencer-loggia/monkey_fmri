@@ -412,12 +412,12 @@ def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_con
             hrf = "spm + derivative"
     else:
         hrf = 'fir'
-    tmp_dir = os.path.join(os.path.dirname(source[0]), 'tmp_glm_cache')
+    tmp_dir = os.path.join("/media/ssbeast/DATA/cache", 'tmp_glm_cache')
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
     os.mkdir(tmp_dir)
     fmri_glm = first_level.FirstLevelModel(
-                minimize_memory=True,
+                minimize_memory=False,
                 hrf_model=hrf,
                 t_r=tr_length,
                 standardize=False,
