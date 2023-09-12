@@ -962,17 +962,26 @@ def get_run_betas(para, mion=True):
                 "correct": [],
                 "ima": []}
     # creates condition for every stimuli type instead of every stimuli group
-    # full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.)
-    full_cond_glm_path = "/home/ssbeast/Projects/SS/monkey_fmri/MTurk1/subjects/jeeves/analysis/glm_model_169033.pkl"
-    full_cond_glm = pickle.load(open(full_cond_glm_path, "rb"))
+    # full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.5)
+    #full_cond_glm_path = "/home/ssbeast/Projects/SS/monkey_fmri/MTurk1/subjects/jeeves/analysis/glm_model_169033.pkl"
+   # full_cond_glm = pickle.load(open(full_cond_glm_path, "rb"))
 
-    lindex = 0
     cond2group = {}
     for key in condition_groups.keys():
         for cond_idx in condition_groups[key]["conds"]:
             cond2group[cond_idx] = key
 
     for key in sessions_dict:
+        sources = []
+        session_betas = sessions_dict[key]['beta_file']
+        imas = sessions_dict[key]['imas_used']
+        ima_order_map = os.path.join(os.path.dirname(session_betas), "ima_order_map.json")
+        for ima in imas:
+            session_path = os.path.join(os.path.dirname(session_betas), str(ima))
+            sources.append(session_path)
+
+        glm_path = get_beta_matrix(sources, para, ima_order_map, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.)
+        glm = pickle.load(open(glm_path, "rb"))
         imas = sessions_dict[key]['imas_used']
         sess_path = os.path.dirname(sessions_dict[key]['session_net'])
         sess = os.path.basename(sess_path)
@@ -987,22 +996,22 @@ def get_run_betas(para, mion=True):
                                            (behavior_key["day"] == sday)]
         else:
             sess_behave = None
-        for ima in imas:
+        for lindex, ima in enumerate(imas):
             if behavior_key is not None:
                 ima_behave = sess_behave[sess_behave["ima"] == int(ima)]
             else:
                 ima_behave = None
-            dm_cols = list(full_cond_glm.design_matrices_[lindex].columns)
+            dm_cols = list(glm.design_matrices_[lindex].columns)
 
             # get index in dm cols of constant and first drift regressor
             drift_dex = dm_cols.index("drift_1")
             constant_idx = dm_cols.index("constant")
 
             # get ima glm parameters
-            ima_betas = np.array(full_cond_glm.results_[lindex][0.0].theta)  # <c, v>
-            ima_residuals = np.array(full_cond_glm.results_[lindex][0.0].residuals)  # <t, v>
-            np_dm = full_cond_glm.design_matrices_[lindex].to_numpy().T  # <c, t>
-            masker = full_cond_glm.masker_  # a neat nilearn object that can intelligently mask and unmask your data!
+            ima_betas = np.array(glm.results_[lindex][0.0].theta)  # <c, v>
+            ima_residuals = np.array(glm.results_[lindex][0.0].residuals)  # <t, v>
+            np_dm = glm.design_matrices_[lindex].to_numpy().T  # <c, t>
+            masker = glm.masker_  # a neat nilearn object that can intelligently mask and unmask your data!
 
             dm_base_conds = []
             for cond in dm_cols[:drift_dex]:
@@ -1090,8 +1099,8 @@ def get_run_betas(para, mion=True):
                     data_log["beta_path"] += occ_beta_sets
                 else:
                     dm_index += delays
-            lindex += 1
 
+        os.remove(glm_path)
     data_log_out = os.path.join(subj_root, "analysis", para_name + "_stimulus_response_data_key.csv")
     data_log = pandas.DataFrame.from_dict(data_log, orient='columns')
     data_log.to_csv(data_log_out)
