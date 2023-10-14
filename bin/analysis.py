@@ -412,7 +412,8 @@ def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_con
             hrf = "spm + derivative"
     else:
         hrf = 'fir'
-    tmp_dir = os.path.join("/media/ssbeast/DATA/cache", 'tmp_glm_cache')
+    # tmp_dir = os.path.join("/media/ssbeast/DATA/cache", 'tmp_glm_cache')
+    tmp_dir = os.path.join("/media/data/cache", 'tmp_glm_cache')
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
     os.mkdir(tmp_dir)
@@ -617,10 +618,35 @@ def create_contrast_surface(anatomical_white_surface: str,
 
     os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
 
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+    print('-='*40 + '-')  # Nice little flair
+    print('::: Anatomical white surface :::')
+    print(anatomical_white_surface)  # Print path to the anatomical white surface being used
+    print('::: Low-resolution anatomical image :::')
+    print(orig_low_res_anatomical)  # Print the path to the low-resolution anatomical image
+    print('::: High-resolution anatomical image :::')
+    print(orig_high_res_anatomical)  # Print the path to the high-resolution anatomical image
+    print('::: Contrast volume path :::')
+    print(contrast_vol_path)  # Print the contrast volume path
+    print('::: Hemisphere :::')
+    print(hemi)  # Print the hemisphere
+    print('::: Subject ID :::')
+    print(subject_id)  # Print the subject ID
+    print('::: Environment path :::')
+    print(os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR'))))
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
     # subprocess.run(['fslroi', path, path_gz, '0', '256', '0', '256', '0,', '256'])
     # path = _scale_and_standardize(scale, path)
     overlay_out_path = os.path.join(output, 'sigsurface_' + hemi + '_' + out_desc + '.mgh')
-    subprocess.run(['mri_vol2surf', '--projfrac-avg', '.05', '.95', '.05',
+
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+    print('::: Output path :::')
+    print(overlay_out_path)  # Print the path to the output overlay
+    print('-='*40 + '-')  # Nice little flair
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+    subprocess.run(['mri_vol2surf', '--projfrac-max', '.05', '1.15', '.05',
                     '--src', path,
                     '--out', overlay_out_path,
                     '--hemi', hemi,
@@ -638,6 +664,7 @@ def labels_to_roi_mask(label_dir, hemi, out_dir, t1, subject_id) -> Tuple[str, l
     :return:
     """
     os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
+    print(os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
     if hemi not in ['rh', 'lh']:
         raise ValueError('Hemi must be one of rh or lh.')
     for f in os.listdir(label_dir):
