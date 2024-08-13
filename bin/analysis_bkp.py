@@ -55,7 +55,6 @@ from nilearn.image import high_variance_confounds
 from nilearn.plotting import plot_design_matrix, plot_contrast_matrix
 from nilearn.glm.first_level.hemodynamic_models import mion_hrf, spm_time_derivative
 
-from preprocess import _pad_to_cube
 
 def _norm_4d(arr: np.ndarray):
     """
@@ -197,15 +196,14 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
         res = p.starmap(_create_SNR_volume_wrapper, args)
 
 
-def _make_nl_dm(frames, time_df, hrf, stim_min_onset, delay_periods, moco_regs): # Helen added moco_regs
+def _make_nl_dm(frames, time_df, hrf, stim_min_onset, delay_periods):
     svd_converge = False
     trys = 0
     while not svd_converge and trys < 4:
         try:
             dm = first_level.make_first_level_design_matrix(frames, time_df, hrf,
-                                                            drift_model='cosine', high_pass=.005,
-                                                            min_onset=stim_min_onset, fir_delays=delay_periods,
-                                                            add_regs=moco_regs) # Helen added add_regs
+                                                            drift_model='cosine', high_pass=.01,
+                                                            min_onset=stim_min_onset, fir_delays=delay_periods)
         except (ValueError, np.linalg.LinAlgError):
             trys += 1
             continue
@@ -217,8 +215,8 @@ def _make_nl_dm(frames, time_df, hrf, stim_min_onset, delay_periods, moco_regs):
 
 
 def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int],
-                                 base_conditions_idxs: List[int], condition_names: dict, moco_params, tr_length=3, mion=True,
-                                 fir=False): # Helen added moco_params
+                                 base_conditions_idxs: List[int], condition_names: dict, tr_length=3, mion=True,
+                                 fir=False):
     """
     Creates as num_conditions x time onehot encoded matrix from an order number definition
     :param block_length:
@@ -252,7 +250,7 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
             hrf = "mion"
         else:
             hrf = "spm + derivative"
-    dm = _make_nl_dm(frames, time_df, hrf, delay_periods=[0], stim_min_onset=-32, moco_regs=moco_params) # Helen added moco_regs=moco_params
+    dm = _make_nl_dm(frames, time_df, hrf, delay_periods=[0], stim_min_onset=-32)
     if fir and mion:
         dm *= -1
     # reorder
@@ -265,7 +263,7 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
 
 
 def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_condition_idxs: List[int],
-                                condition_names: dict, condition_groups: dict, moco_params, tr_length=3.0, mion=True,
+                                condition_names: dict, condition_groups: dict, tr_length=3.0, mion=True,
                                 reorder=True, use_cond_groups=True):
     """
     Creates a design matrix from a list of lengths number of trs, holding the stimulus condition at each tr.
@@ -352,8 +350,8 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
         hrf = "spm + derivative"
     
     # make seperate design matrix for FIR and HRF
-    fir_dm = _make_nl_dm(frames, fir_time_df, "fir", delay_periods=[1], stim_min_onset=-32, moco_regs=None) # Helen added moco_regs=None so it won't throw error 
-    hrf_dm = _make_nl_dm(frames, hrf_time_df, hrf, delay_periods=[0], stim_min_onset=-32, moco_regs=moco_params)
+    fir_dm = _make_nl_dm(frames, fir_time_df, "fir", delay_periods=[1], stim_min_onset=-32)
+    hrf_dm = _make_nl_dm(frames, hrf_time_df, hrf, delay_periods=[0], stim_min_onset=-32)
 
     # fix naming
     cols = []
@@ -406,7 +404,7 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     return dm
 
 
-def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, fir=True, tr_length=3., smooth=1., use_hv_confound=True, autoregress=True):
+def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, fir=True, tr_length=3., smooth=1.):
     if fir:
         if mion:
             hrf = "mion"
@@ -414,16 +412,11 @@ def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_con
             hrf = "spm + derivative"
     else:
         hrf = 'fir'
-    #tmp_dir = os.path.join("/media/ssbeast/DATA/cache", 'tmp_glm_cache')
-    tmp_dir = "/media/ssbeast/DATA/cache/tmp_glm_cache"
-    #tmp_dir = os.path.join("/media/data/cache", 'tmp_glm_cache')
+    # tmp_dir = os.path.join("/media/ssbeast/DATA/cache", 'tmp_glm_cache')
+    tmp_dir = os.path.join("/media/data/cache", 'tmp_glm_cache')
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
     os.mkdir(tmp_dir)
-    if autoregress:
-        nm = "ar1"
-    else:
-        nm = "ols"
     fmri_glm = first_level.FirstLevelModel(
                 minimize_memory=False,
                 hrf_model=hrf,
@@ -434,17 +427,16 @@ def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_con
                 signal_scaling=False,
                 verbose=True,
                 n_jobs=multiprocessing.cpu_count() - 1,
-                noise_model=nm,
+                noise_model='ols',
                 memory=tmp_dir
         )
     epis = [nib.load(run) if os.path.isfile(run) else nib.load(os.path.join(run, fname)) for run in source]
-    print("CHECK DM LENGTH", len(design_matrices[0]))
+
     # estimate high variance confounds
-    if use_hv_confound:
-        print("TRY: HIGH VAR CONFOUND ESTIMATION")
-        with Pool() as p: # try taking out for SCD 20240801
-            confounds = p.map(_confound, epis)
-        design_matrices = [pd.concat([dm, confounds[i].set_index(dm.index)], axis=1) for i, dm in enumerate(design_matrices)]
+    print("TRY: HIGH VAR CONFOUND ESTIMATION")
+    with Pool() as p:
+        confounds = p.map(_confound, epis)
+    design_matrices = [pd.concat([dm, confounds[i].set_index(dm.index)], axis=1) for i, dm in enumerate(design_matrices)]
     fmri_glm = fmri_glm.fit(epis, design_matrices=design_matrices)
     fmri_glm.source_paths = source
     fig, axs = plt.subplots(1)
@@ -502,22 +494,11 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
 
 def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, output_dir, mode='z_score'):
     glm = pickle.load(open(glm_model_path, "rb"))
+    contrast_matrices = [[] for _ in range(contrast_matrix.shape[1] + 1)] # room for auto background contrast
     dm_cols = list(glm.design_matrices_[0].columns)
-    if 'fixation' in dm_cols:
-        add_contrasts = 2
-    else:
-        add_contrasts = 1
-    contrast_matrices = [[] for _ in range(contrast_matrix.shape[1] + add_contrasts)] # room for auto background and fixatoin contrast
-
     n_reg_dex = dm_cols.index("drift_1")
-    #n_reg_dex = 2 # helen look here
     contrast_descriptors.append("background")
-    
-    if 'fixation' in dm_cols:
-        contrast_descriptors.append("fixation")
-    
     is_fir = True in ["delay" in cname for cname in dm_cols[:n_reg_dex]]
-    #is_fir=None # helen look here
 
     if is_fir:
         cm = contrast_matrix.tolist()
@@ -545,7 +526,6 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
     for dm in glm.design_matrices_:
         num_cond = dm.shape[1]
         drift_regressors = num_cond - n_reg_dex
-
         if is_fir:
             drift_regressors += 1
 
@@ -556,12 +536,6 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
         constant_dex = list(dm.columns).index("constant")
         back_contrast[0, constant_dex] = 1
         cm = np.concatenate([cm, back_contrast], axis=0)
-        # compute fixation contrast
-        if 'fixation' in dm_cols:
-            fixation_contrast = np.zeros((1, cm.shape[1]))
-            fixation_dex = list(dm.columns).index("fixation")
-            fixation_contrast[0, fixation_dex] = 1
-            cm = np.concatenate([cm, fixation_contrast], axis=0)            
 
         for i, contrast in enumerate(cm):
             contrast_matrices[i].append(contrast)
@@ -627,10 +601,10 @@ def create_contrast_surface(anatomical_white_surface: str,
         raise ValueError('Hemi must be one of rh or lh.')
     high_res = nib.load(orig_high_res_anatomical)
     high_res_data = high_res.get_fdata()
-    high_res_data = _pad_to_cube(high_res_data)
+    # high_res_data = _pad_to_cube(high_res_data)
     low_res = nib.load(orig_low_res_anatomical).get_fdata()
-    low_res = _pad_to_cube(low_res)
-    scale = _find_scale_factor(high_res_data, low_res)
+    # low_res = _pad_to_cube(low_res)
+    # scale = _find_scale_factor(high_res_data, low_res)
     contrast_nii = nib.load(contrast_vol_path)
     contrast_data = np.array(contrast_nii.get_fdata())
     aff = contrast_nii.affine
@@ -644,7 +618,7 @@ def create_contrast_surface(anatomical_white_surface: str,
 
     os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
     # subprocess.run(['fslroi', path, path_gz, '0', '256', '0', '256', '0,', '256'])
-    #path = _scale_and_standardize(scale, path)
+    # path = _scale_and_standardize(scale, path)
     overlay_out_path = os.path.join(output, 'sigsurface_' + hemi + '_' + out_desc + '.mgh')
     subprocess.run(['mri_vol2surf', '--projfrac-max', '.05', '.95', '.025',
                     '--src', path,

@@ -1,0 +1,74 @@
+#!/bin/bash
+#
+# XXX: This is still a work in progress! I want this script to be able
+# to create overlays for all existing models in a given directory. I
+# don't want to have to supply the model names myself.
+
+set -e
+
+SUBJECT=wooster
+
+PROJECT_DIRECTORY=/home/ssbeast/Projects/SS/monkey_fmri/MTurk1_12TB
+SUBJECT_DIRECTORY="${PROJECT_DIRECTORY}/subjects/${SUBJECT}"
+# Because we're not on the computer that has all the models.
+MODELS_DIRECTORY=/home/ssbeast/LSR_DS4/bizon/Projects/MTurk1/MTurk1/analysis/decoding/models/final-run-vss-linear
+
+MODEL_NAME="${SUBJECT}_searchlight_linear_shape_2_color_other_multiclass_r0.0_l3_2024-05-12"
+
+HEMISPHERES=(lh rh)
+
+# Resample an image from one space to another.
+function resample() {
+  rflags=(-d 3)
+  rflags+=(-r "${fimg}")
+  rflags+=(-t "${mxfm}")
+  rflags+=(-t "${axfm}")
+
+  for img in "${imgs[@]}"; do
+    rflags+=(-i "${img}")
+    rflags+=(-o "$(dirname ${img})/reg_$(basename ${img})")
+    antsApplyTransforms "${rflags[@]}"
+  done
+}
+
+function project() {
+  pflags+=(--regheader "${s}")
+  pflags+=(--hemi "${h}")
+  pflags+=(--projfrac-max 0.05 1.15 0.05)
+  pflags+=(--sd "${SUBJECT_DIRECTORY}")
+
+  for rimg in "${rimgs[@]}"; do
+    output=$(dirname ${rimg})/sigsurface_${h}_$(basename ${rimg//.nii.gz/_overlay.mgh})
+
+    pflags+=(--src "${rimg}")
+    pflags+=(--o "${output}")
+    mri_vol2surf "${pflags[@]}"
+  done
+}
+
+# Resample the images to be projected into the subject's anatomical
+# space.
+# Transform from manual coregistration.
+mxfm="${SUBJECT_DIRECTORY}/mri/itkManual.txt"
+# Transform from automatic coregistration.
+axfm="${SUBJECT_DIRECTORY}/mri/Composite.h5"
+
+# Not sure why the names are different.
+if [[ "${SUBJECT}" == "jeeves" ]]; then
+  # Fixed image
+  fimg="${SUBJECT_DIRECTORY}/mri/masked_ds_final_t1.nii.gz"
+fi
+
+if [[ "${SUBJECT}" == "wooster" ]]; then
+  fimg="${SUBJECT_DIRECTORY}/mri/masked_ds_avT1.nii.gz"
+fi
+
+imgs=($(find "${MODELS_DIRECTORY}/${MODEL_NAME}" -name "*ACC.nii.gz"))
+resample
+
+# Resampled images
+rimgs=($(find "${MODELS_DIRECTORY}/${MODEL_NAME}" -name "reg*ACC.nii.gz"))
+
+for h in "${HEMISPHERES[@]}"; do
+  project
+done

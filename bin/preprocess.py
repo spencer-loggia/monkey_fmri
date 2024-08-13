@@ -194,7 +194,7 @@ def convert_to_sphinx(input_dirs: List[str], scan_pos='HFP', output: Union[None,
 
 def _mcflt_wrapper(in_file, out_file, ref_file, mcflt):
     mcflt.inputs.in_file = in_file
-    mcflt.inputs.cost = 'normcorr'
+    mcflt.inputs.cost = 'normcorr' 
     mcflt.inputs.ref_file = ref_file
     mcflt.inputs.out_file = out_file
     mcflt.inputs.dof = 12
@@ -394,7 +394,7 @@ def motion_correction(sources: List[str], ref_path: str, outname='moco.nii.gz', 
     return out
 
 
-def nonlinear_moco(moving_epi, reference, outfile):
+def nonlinear_moco(moving_epi, reference, outfile): 
     out_no_ext = outfile.split('.')[0]
     mc_cmd = "antsMotionCorr  -d 3 -o [{output},{output}.nii.gz,{avg}] " \
              " -m MI[ {avg} , {inputB} , 1 , 1 , Random, 0.05  ] -t Affine[ 0.01 ] -i 10 -u 1 -e 1 -s 0 -f 1 " \
@@ -659,6 +659,7 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
     :param n_jobs:
     :return:
     """
+    
     cmd = "antsRegistration" \
           " --verbose 1 --dimensionality 3 --float 0 --collapse-output-transforms 1 --write-composite-transform 1" \
           " --output [ ./,./Warped.nii.gz,./InverseWarped.nii.gz ] " \
@@ -675,8 +676,22 @@ def antsCoreg(fixedP, movingP, outP, initialTrsnfrmP=None,
           " --convergence [ 250x250,1e-9,25 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox"\
           " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,2 ]" \
           " --convergence [ 250,1e-9,25 ] --shrink-factors 1 --smoothing-sigmas 0vox"
-
-
+    """
+    #spencer edits on 20240627
+    cmd = "antsRegistration" \
+          " --verbose 1 --dimensionality 3 --float 0 --collapse-output-transforms 1 --write-composite-transform 1" \
+          " --output [ ./,./Warped.nii.gz,./InverseWarped.nii.gz ] " \
+          " --interpolation Linear --use-histogram-matching 0 --winsorize-image-intensities [ 0.005,0.995 ]" \
+          " --initial-moving-transform [" + fixedP + "," + movingP + ",1 ]" \
+          " --transform Rigid[ 0.1 ] --metric MI[" + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
+          " --transform Affine[ 0.01 ] --metric MI[ " + fixedP + "," + movingP + ",1,32,Regular,0.25 ]" \
+          " --convergence [ 500,1e-9,10 ] --shrink-factors 1 --smoothing-sigmas 0vox"
+    if nonlinear:
+        cmd = cmd + " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,6 ]" \
+          " --convergence [ 250x250,1e-9,25 ] --shrink-factors 2x1 --smoothing-sigmas 1x0vox"\
+          " --transform SyN[ .01,3,0 ] --metric CC[ " + fixedP + "," + movingP + ",1,3 ]" \
+          " --convergence [ 250,1e-9,25 ] --shrink-factors 1 --smoothing-sigmas 0vox"
+    """
     print(cmd)
     subprocess.call(cmd, shell=True)
 
@@ -691,6 +706,7 @@ def antsCoReg(fixedP, movingP, outP, ltrns=('Affine', 'SyN'), n_jobs=2, full=Fal
     :param n_jobs:
     :return:
     """
+    print('fixed is ', fixedP, ' moving is ', movingP, ' outP is ', outP)
     outF = os.path.dirname(outP)
     cur_dir = os.getcwd()
     os.chdir(os.path.realpath(outF))

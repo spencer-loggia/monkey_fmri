@@ -417,7 +417,7 @@ class DefaultSubjectControlNet(BaseControlNet):
                                    "values are interpreted as Z-scores here. ")
 
         self.network.add_node('register_' + para_name + '_contrasts', generated=True, bipartite=1,
-                              fxn='support_functions.apply_warp', desc="registers the contrasts to the anatomical space.")
+                              fxn='support_functions.apply_warp', desc="registers the contrasts to the anatomical space.", argv="NearestNeighbor")
         self.network.add_node('create_' + para_name + '_sigsurface_overlays', generated=True, bipartite=1,
                               fxn='support_functions.generate_subject_overlays')
 

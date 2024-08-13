@@ -1,13 +1,9 @@
 import copy
 import itertools
 import multiprocessing
-multiprocessing.set_start_method("spawn", force=True)
 import pickle
-import time
-import timeit
 import typing
 
-import nilearn.glm.first_level
 import pandas
 import pandas as pd
 import torch
@@ -29,7 +25,6 @@ import traceback
 import matplotlib
 import matplotlib.pyplot as plt
 from cycler import cycler
-from collections import namedtuple
 
 matplotlib.rcParams["axes.prop_cycle"] = cycler(color="brgcmyk")
 
@@ -362,12 +357,10 @@ def apply_warp(
     vol_in_target_space,
     forward_gross_transform_path=None,
     fine_transform_path=None,
-    interp="Linear",
     type_code=0,
     dim=3,
-    mp=True
+    interp="Linear",
 ):
-    print('what is my volume in target space?', vol_in_target_space, 'forward gross', forward_gross_transform_path, 'fine transform', fine_transform_path)
     subj_root, project_root = _env_setup()
     if type(source) is not list:
         source = [source]
@@ -389,13 +382,8 @@ def apply_warp(
         [project_root] * len(source),
     ]
     args = list(zip(*args))
-    if mp:
-        with multiprocessing.Pool(8) as p:
-            out_paths = p.starmap(_apply_warp_wrapper, args)
-    else:
-        out_paths = []
-        for arg in args:
-            out_paths.append(_apply_warp_wrapper(*arg))
+    with multiprocessing.Pool(8) as p:
+        out_paths = p.starmap(_apply_warp_wrapper, args)
     if len(out_paths) == 1:
         out_paths = out_paths[0]
     return out_paths
@@ -494,7 +482,7 @@ def apply_warp_inverse_vol_roi_dir(
         os.path.join(subj_root, "rois", roi_set_name), "auto_func_space_rois"
     )
     for roi_file in os.listdir(roi_set_path):
-        if ".nii" in roi_file and "~" not in roi_file:
+        if ".nii" in roi_file:
             f = os.path.join(roi_set_path, roi_file)
             out = os.path.join(output_dir, roi_file)
             apply_warp_inverse(
@@ -512,7 +500,6 @@ def apply_binary_mask_functional(source, mask, fname="reg_moco.nii.gz"):
     source = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in source]
     out = []
     mask_nii = nibabel.load(mask)
-    print('mask at ', str(mask))
     for run_dir in source:
         src_nii = nibabel.load(run_dir)
         masked_nii = preprocess._apply_binary_mask_3D(src_nii, mask_nii)
@@ -1011,19 +998,13 @@ def _design_matrices_from_condition_lists(
             clist = int_clist
         else:
             clist = [int(c) for c in clist]
-        
-        # Load in linear motion correctino parameters 
-        ima_moco_params_path = os.path.join(sess_dir, ima, "temp_moco.nii.gz.par")
-        ima_moco_params = pd.read_csv(ima_moco_params_path, header=None, sep="  ", engine="python")
-        ima_moco_params.columns = ["x_rotation", "y_rotation", "z_rotation", "x_translation", "y_translation", "z_translation"]
-                      
+
         dm = analysis.design_matrix_from_run_list(
             clist,
             num_conditions,
             base_conditions,
             condition_names,
             condition_groups,
-            moco_params = ima_moco_params,
             tr_length=tr_length,
             mion=mion,
             reorder=(not run_wise),
@@ -1049,7 +1030,7 @@ def get_design_matrices(
     mion=True,
     fir=True,
     run_wise=False,
-    use_cond_groups=True
+    use_cond_groups=True,
 ):
     if not (type(source[0]) in (list, tuple)):
         source = [source]
@@ -1061,9 +1042,7 @@ def get_design_matrices(
     base_conditions = [paradigm_data["base_case_condition"]]
     condition_names = paradigm_data["condition_integerizer"]
     block_length = int(paradigm_data["block_length_trs"])
-    print('block length', block_length, 'c') # H
     num_blocks = int(paradigm_data["trs_per_run"] / block_length)
-    print('num blocks', num_blocks, 'c')
     num_conditions = int(paradigm_data["num_conditions"])
     is_block_design = paradigm_data["is_block"]
     runtime_order_defs = paradigm_data["is_runtime_defined"]
@@ -1090,7 +1069,7 @@ def get_design_matrices(
         sess_name = os.path.basename(sess_dir)
         # returns source with file if passed that way
         complete_source += source[i]
-        if runtime_order_defs:                    
+        if runtime_order_defs:
             sess_dms = _design_matrices_from_condition_lists(
                 ima_order_map,
                 condition_names,
@@ -1117,25 +1096,7 @@ def get_design_matrices(
                     ima = os.path.basename(run_dir)
                 order_num = ima_order_map[ima]
                 order = list(paradigm_data["order_number_definitions"][str(order_num)])
-                if is_block_design:		
-                    img_len = None # HERE 20240805
-                    if ((paradigm_data["name"] == "shape_color_passive_block") and (int(sess_name.split("_")[1]) < 20231214)): # Helen added 20240227. 
-                    	 num_blocks = 20 # If scp session older than 20231214, 20 blocks
-                    elif ((paradigm_data["name"] == "shape_color_passive_block") and (int(sess_name.split("_")[1]) > 20231214)):
-                    	 num_blocks = 10 # If scp session is newer, it has 10 blocks
-                    elif (paradigm_data["name"] == "shape_color_congruency_block"): # HERE 20240805
-                        img_len = nibabel.load(os.path.join(os.path.dirname(run_dir), "epi_masked.nii.gz")).get_fdata().shape[-1]
-                        num_blocks = int(img_len/12)
-                        print('ima', ima, 'img_len', img_len, 'num blocks', num_blocks)
-                    else:
-                      	 pass
-                    ###Helen added 20240417 to be able to include motion correction parameters as glm nuisance regressors
-                    ima_moco_params_path = os.path.join(os.path.dirname(run_dir), "temp_moco.nii.gz.par")
-                    ima_moco_params = pd.read_csv(ima_moco_params_path, header=None, sep="  ", engine="python")
-                    ima_moco_params.columns = ["x_rotation", "y_rotation", "z_rotation", "x_translation", "y_translation", "z_translation"]
-                    if img_len is not None: # HERE 20240805
-                        ima_moco_params = ima_moco_params[:img_len]
-                    ###
+                if is_block_design:
                     sess_dm = analysis.design_matrix_from_order_def(
                         block_length,
                         num_blocks,
@@ -1144,7 +1105,6 @@ def get_design_matrices(
                         base_conditions,
                         condition_names=condition_names,
                         tr_length=tr_length,
-                        moco_params=ima_moco_params,
                         mion=mion,
                         fir=fir,
                     )
@@ -1166,8 +1126,6 @@ def get_design_matrices(
             if os.path.exists(fix_path):
                 fix_data = pd.read_csv(fix_path, index_col=0)
                 fix_data.columns = ["fixation"]
-                fix_data = fix_data[:len(sess_dm)] # HERE 20240805
-                # fix_data["fixation"] = (fix_data['fixation']-fix_data['fixation'].mean())/fix_data['fixation'].std() # normalize fixation data within run. Doesn't make a difference in beta coefficients.
                 fix_data.set_index(sess_dms[j].index, inplace=True)
                 sess_dms[j] = pd.concat([sess_dm, fix_data], axis=1)
             else:
@@ -1189,9 +1147,7 @@ def get_beta_matrix(
     run_wise=False,
     smooth=2.0,
     use_cond_groups=True,
-    use_hv_confound=True,
-    autoregress=True
-): 
+):
     """
     :param source: list of lists of runs for each session
     :param paradigm_path:
@@ -1242,8 +1198,6 @@ def get_beta_matrix(
         mion=mion,
         tr_length=tr_length,
         smooth=smooth,
-        use_hv_confound=use_hv_confound,
-        autoregress=autoregress
     )
     print("Run Level Beta Coefficient Matrices Created")
     return glm_path
@@ -1272,11 +1226,10 @@ def create_contrast(beta_path, paradigm_path, use_cond_groups=True):
 
 
 def construct_subject_glm(
-    para, mion=True, run_wise=False, use_cond_groups=True, smooth=2.0
+    para, mion=True, run_wise=False, use_cond_groups=True, smooth=1.0
 ):
     subj_root, project_root = _env_setup()
     proj_config_path = "config.json"
-    print('para', para)
     with open(para, "r") as f:
         paradigm_data = json.load(f)
     subject = os.path.basename(subj_root)
@@ -1326,168 +1279,21 @@ def construct_subject_glm(
     return glm_path
 
 
-def _clean_time_series(glm: nilearn.glm.first_level.FirstLevelModel,
-                       constant_condition_index: int, run_dir: str,
-                       run_idxs:list=None, ext=""):
-    results = {"beta_path": [],
-               "condition_integer": [],
-               "condition_name": [],
-               "run_number": [],
-               "occ_num": []}
-
-    affine = glm.target_affine
-    if run_idxs is None:
-        run_idxs = list(glm.design_matrices_.keys())
-    for run_idx in run_idxs:
-        dm_cols = list(glm.design_matrices_[run_idx].columns)
-
-        # get index in dm cols of constant and first drift regressor
-        try:
-            drift_dex = dm_cols.index("drift_1")
-            constant_idx = dm_cols.index("constant")
-        except KeyError as e:
-            print("Design Matrix MUST have a regressor labelled constant and a"
-                  " regressor labelled drift 1")
-            exit(1)
-
-        # for OLS std glm, this is meaningless, labelled '0.0' as a
-        # implimentation conveinience to indicate no temporal autocorrelation
-        rhos = list(glm.results_[run_idx].keys())
-
-        base_dm = glm.design_matrices_[run_idx].to_numpy().T  # <c, t>
-
-        dm_base_conds = []
-
-        for cond in dm_cols[:drift_dex]:
-            cond = str(cond)
-            if "delay" in cond:
-                # eliminate nilearn appended _delay_i text
-                dm_base_conds.append(cond[:-8])
-            else:
-                dm_base_conds.append(cond)
-        rl_encode = []
-        # rl_encode has number of delays for each condition in the dm
-        for _, group in itertools.groupby(dm_base_conds):
-            rl_encode.append(len(list(group)))
-        if glm.hrf_model == "mion":
-            all_conds = list(
-                base_dm.T[:, :drift_dex].sum(axis=0) < 0
-            )  # what conditions are used (nonzero) in this dm??
-        else:
-            all_conds = list(base_dm.T[:, :drift_dex].sum(axis=0) > 0)
-        dm_index = 0
-        # collapse dm to discard grey blocks
-
-        # iterate through all conditions in any dm (including delay)
-        for cond, delays in enumerate(rl_encode):
-            # para index stores the index of the condition in the paradigm
-            para_index = cond
-            if constant_condition_index <= cond < constant_idx:
-                para_index += 1
-            # all_conds give the conditions present in this specific dm,
-            if all_conds[dm_index]:
-                # this cond exists in this dm
-                mask_dm = np.abs(base_dm) > 0.1
-                occ_beta_sets = []
-                for delay in range(delays):
-                    condition_time_raw = np.nonzero(mask_dm[dm_index])[0]
-                    condition_time_indexes = []
-                    # adjacent indexes should be grouped
-                    prev = -10
-                    # this should give nested list with reduced time stamps for this condition / delay
-                    for i, t_dex in enumerate(
-                            condition_time_raw.tolist()):
-                        if t_dex != prev + 1:
-                            condition_time_indexes.append([i])
-                        else:
-                            condition_time_indexes[-1].append(i)
-                        prev = t_dex
-                    cleaned_ts = np.zeros((glm.labels_[0].shape[0],
-                              len(condition_time_raw))) # <v, t> this is what we'll chop up to get our trial data
-                    for rho in rhos:
-                        # get ima glm parameters
-                        ima_betas = np.array(
-                            glm.results_[run_idx][rho].theta)  # <c, v>
-                        ima_residuals = np.array(
-                            glm.results_[run_idx][rho].residuals)  # <t, v>
-                        if glm.noise_model == "ols":
-                            voxel_indexes = np.arange(len(ima_betas))
-                            np_dm = base_dm
-                        else:
-                            # need the whitened (autocorrelation corrected) dm for AR
-                            voxel_indexes = np.nonzero(glm.labels_[run_idx] == rho)[0]
-                            np_dm = glm.results_[run_idx][
-                                rho].whitened_design.T  # <c, t>
-                        # multiply coi betas by coi dm and add residuals to create cleaned real time series.
-                        predicted_ts = np.outer(
-                            ima_betas[dm_index].T,
-                            np_dm[dm_index, condition_time_raw]
-                        )
-                        # <v, t> this is the time series we predict for this stimulus in isolation
-                        l_cleaned_ts = (
-                                predicted_ts + ima_residuals[
-                            condition_time_raw].T
-                        )
-                        cleaned_ts[voxel_indexes, :] = l_cleaned_ts # set voxels determined to use this rho
-                    # transform 1d masked voxels into 3d func space
-                    print(cleaned_ts.sum())
-                    masker = (glm.masker_)  # a neat nilearn object that can intelligently mask and unmask your data!
-                    for occ_num, indexes in enumerate(condition_time_indexes):
-                        if delay == 0:
-                            occ_beta_sets.append([])
-                            results["condition_integer"].append(int(para_index))
-                            results["run_number"].append(run_idx)
-                            results["occ_num"].append(occ_num)
-                        trial_data = masker.inverse_transform(cleaned_ts[:, indexes].squeeze().T)
-
-                        out_path = os.path.join(
-                            run_dir,
-                            dm_cols[dm_index]
-                            + "_"
-                            + str(occ_num)
-                            + ext
-                            + "_instance_beta.nii.gz",
-                        )
-                        nibabel.save(trial_data, out_path)
-                        occ_beta_sets[occ_num].append(out_path)
-                    results["beta_path"] += occ_beta_sets
-                    dm_index += 1
-            else:
-                dm_index += delays
-
-    return results
-
-
-def _fit_glm(sources, para, ima_order_map, mion, high_var_confound,
-             autoregress):
-    return get_beta_matrix(
-        sources,
-        para,
-        ima_order_map,
-        mion=mion,
-        run_wise=False,
-        use_cond_groups=False,
-        smooth=0.0,
-        use_hv_confound=high_var_confound,
-        autoregress=autoregress
-    )
-
-def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
+def get_run_betas(para, mion=True):
     import warnings
 
     warnings.filterwarnings("ignore")
     subj_root, project_root = _env_setup()
-    proj_config_path = "config.json" 
+    proj_config_path = "config.json"
     with open(para, "r") as f:
         paradigm_data = json.load(f)
     subject = os.path.basename(subj_root)
     with open(proj_config_path, "r") as f:
         proj_config = json.load(f)
     para_name = paradigm_data["name"]
-    print('the paradigm is ', para_name)
     sessions_dict = proj_config["data_map"][paradigm_data["name"]][subject]
     base_conditions = [paradigm_data["base_case_condition"]]
-    condition_groups = paradigm_data["condition_groups"] 
+    condition_groups = paradigm_data["condition_groups"]
     condition_names = paradigm_data["condition_integerizer"]
 
     if input_control.bool_input("Add behavioral data?"):
@@ -1506,10 +1312,9 @@ def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
         "beta_path": [],
         "session": [],
         "correct": [],
-        "ima": [],
-        "choice_name": [],
-        "make_choice": [],
-        "fixate_correct": []
+        "ima": []
+        # ,
+        # "choice_name": [] ############# Helen added this 20231128
     }
     # creates condition for every stimuli type instead of every stimuli group
     # full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.5)
@@ -1520,7 +1325,7 @@ def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
     for key in condition_groups.keys():
         for cond_idx in condition_groups[key]["conds"]:
             cond2group[cond_idx] = key
-    c = 0
+
     for key in sessions_dict:
         sources = []
         session_betas = sessions_dict[key]["beta_file"]
@@ -1532,13 +1337,19 @@ def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
             session_path = os.path.join(os.path.dirname(session_betas), str(ima))
             sources.append(session_path)
 
-        # use a seperate process to run glm in case it dies.
-        glm_args = (sources, para, ima_order_map, mion, high_var_confound, autoregress)
-        glm_path = _fit_glm(*glm_args)
+        glm_path = get_beta_matrix(
+            sources,
+            para,
+            ima_order_map,
+            mion=mion,
+            run_wise=False,
+            use_cond_groups=False,
+            smooth=0.0,
+        )
         glm = pickle.load(open(glm_path, "rb"))
+        imas = sessions_dict[key]["imas_used"]
         sess_path = os.path.dirname(sessions_dict[key]["session_net"])
         sess = os.path.basename(sess_path)
-        sess_behave = None
         if behavior_key is not None:
             sess_tkns = sess.split("_")
             sess_tkns = sess_tkns[-1]
@@ -1552,83 +1363,156 @@ def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
             ]
         else:
             sess_behave = None
-
-        if high_var_confound:
-            ext = "_nohighvar"
-        else:
-            ext = ""
-        if autoregress:
-            ext += "_ar"
-
         for lindex, ima in enumerate(imas):
-            if sess_behave is not None:
+            if behavior_key is not None:
                 ima_behave = sess_behave[sess_behave["ima"] == int(ima)]
             else:
                 ima_behave = None
-            run_dir = os.path.join(sess_path, str(ima))
-            try:
-                clean_results = _clean_time_series(glm, 0,
-                                                   run_dir, run_idxs=[lindex],
-                                                   ext=ext)
-            except IndexError as e:
-                print(e)
-                continue
-            for j, para_index in enumerate(clean_results["condition_integer"]):
-                # create a new entry in the data log if this the first delay.
-                occ_num = clean_results["occ_num"][j]
-                cond_name = condition_names[str(para_index)]
-                parent_group = cond2group[para_index]
-                data_log["condition_name"].append(cond_name)
-                data_log["condition_group"].append(parent_group)
-                data_log["condition_integer"].append(int(para_index))
-                data_log["session"].append(sess)
-                data_log["ima"].append(ima)
-                data_log["beta_path"].append(clean_results["beta_path"][j])
+            dm_cols = list(glm.design_matrices_[lindex].columns)
 
-                if (
-                    behavior_key is not None
-                    and "Choice" not in cond_name
-                ):
-                    try:
-                        cond_behave_data = ima_behave[
-                            ima_behave["condition_name"] == cond_name
-                        ]["correct"]
-                        correct = int(cond_behave_data.iloc[occ_num])
-                        data_log["correct"].append(correct)
-                        ###################################### Helen added 20231214
-                        choice_names = ima_behave[ima_behave["condition_name"] == cond_name].iloc[occ_num]["choice_name"]
-                        print('here', occ_num, choice_names, 'next')
-                        data_log["choice_name"].append(choice_names)
-                        att_behave_data = ima_behave[ima_behave["condition_name"] == cond_name]["make_choice"]
-                        make_choice = int(att_behave_data.iloc[occ_num])
-                        data_log["make_choice"].append(make_choice)
-                        fixcorr_behave_data = ima_behave[ima_behave["condition_name"] == cond_name]["fixate_correct"] # HEF 20240723
-                        fixate_correct = int(fixcorr_behave_data.iloc[occ_num]) # HEF 20240723
-                        data_log["fixate_correct"].append(fixate_correct) # HEF 20240723
-                        ######################################
-                    except IndexError:
-                        print(
-                            "Failed to get behavior information for sess",
-                            sess,
-                            "ima",
-                            ima,
-                            "cond",
-                            cond_name,
-                        )
-                        data_log["correct"].append(0)
-                        data_log["choice_name"].append("ignore") ######### Helen 20231128
-                        data_log["make_choice"].append(0)
-                        data_log["fixate_correct"].append(0)
+            # get index in dm cols of constant and first drift regressor
+            drift_dex = dm_cols.index("drift_1")
+            constant_idx = dm_cols.index("constant")
+
+            # get ima glm parameters
+            ima_betas = np.array(glm.results_[lindex][0.0].theta)  # <c, v>
+            ima_residuals = np.array(glm.results_[lindex][0.0].residuals)  # <t, v>
+            np_dm = glm.design_matrices_[lindex].to_numpy().T  # <c, t>
+            masker = (
+                glm.masker_
+            )  # a neat nilearn object that can intelligently mask and unmask your data!
+
+            dm_base_conds = []
+            for cond in dm_cols[:drift_dex]:
+                cond = str(cond)
+                if "delay" in cond:
+                    dm_base_conds.append(cond[:-8])
                 else:
-                    data_log["correct"].append(0)
-                    data_log["choice_name"].append("ignore") ########## Helen 20231128
-                    data_log["make_choice"].append(0)
-                    data_log["fixate_correct"].append(0)
-        del glm
-        c += 1  # update session count
+                    dm_base_conds.append(cond)
+
+            rl_encode = []
+            # rl_encode has number of delays for each condition in the dm
+            for _, group in itertools.groupby(dm_base_conds):
+                rl_encode.append(len(list(group)))
+
+            run_dir = os.path.join(sess_path, str(ima))
+
+            if mion:
+                all_conds = list(
+                    np_dm.T[:, :drift_dex].sum(axis=0) < 0
+                )  # what conditions are used (nonzero) in this dm??
+            else:
+                all_conds = list(np_dm.T[:, :drift_dex].sum(axis=0) > 0)
+
+            dm_index = 0
+            # collapse dm to discard grey blocks
+
+            # iterate through all conditions in any dm (including delay)
+            for cond, delays in enumerate(rl_encode):
+                # para index stores the index of the condition in the paradigm
+                para_index = cond
+                if base_conditions[0] <= cond < constant_idx:
+                    para_index += 1
+                cond_name = condition_names[str(para_index)]
+
+                # all_conds give the conditions present in this specific dm,
+                if all_conds[dm_index]:
+                    # this cond exists in this dm
+                    mask_dm = np.abs(np_dm) > 0.2
+                    occ_beta_sets = []
+                    for delay in range(delays):
+                        condition_time_raw = np.nonzero(mask_dm[dm_index])
+                        condition_time_indexes = []
+                        # adjacent indexes should be grouped
+                        prev = -10
+                        for i, t_dex in enumerate(condition_time_raw[0].tolist()):
+                            if t_dex != prev + 1:
+                                condition_time_indexes.append([i])
+                            else:
+                                condition_time_indexes[-1].append(i)
+                            prev = t_dex
+                        # multiply coi betas by coi dm and add residuals to create cleaned real time series.
+                        predicted_ts = np.outer(
+                            ima_betas[dm_index].T, np_dm[dm_index, condition_time_raw]
+                        )  # <v, t> this is the time series we predict for this stimulus in isolation
+                        cleaned_ts = (
+                            predicted_ts + ima_residuals[condition_time_raw].T
+                        )  # <v, t> this is what we'll chop up to get our trial data
+                        for occ_num, indexes in enumerate(condition_time_indexes):
+                            if delay == 0:
+                                occ_beta_sets.append([])
+                                # create a new entry in the data log if this the first delay.
+                                parent_group = cond2group[para_index]
+                                data_log["condition_name"].append(cond_name)
+                                data_log["condition_group"].append(parent_group)
+                                data_log["condition_integer"].append(int(para_index))
+                                data_log["session"].append(sess)
+                                data_log["ima"].append(ima)
+                                if occ_num == 0:
+                                    print(
+                                        "Adding",
+                                        len(condition_time_indexes),
+                                        "Instances of Class",
+                                        cond_name,
+                                        "from Session",
+                                        sess,
+                                        "IMA",
+                                        ima,
+                                    )
+
+                                if (
+                                    behavior_key is not None
+                                    and "Choice" not in cond_name
+                                ):
+                                    try:
+                                        cond_behave_data = ima_behave[
+                                            ima_behave["condition_name"] == cond_name
+                                        ]["correct"]
+                                        correct = int(cond_behave_data.iloc[occ_num])
+                                        data_log["correct"].append(correct)
+                                        ###################################### Helen added 20231128
+                                        # choice_names = ima_behave[ima_behave["condition_name"] == cond_name]["choice_name"]
+                                        # choice_name = choice_names.iloc[occ_num]
+                                        # data_log["choice_name"].append(choice_name)
+                                        ######################################
+                                    except IndexError:
+                                        print(
+                                            "Failed to get behavior information for sess",
+                                            sess,
+                                            "ima",
+                                            ima,
+                                            "cond",
+                                            cond_name,
+                                        )
+                                        data_log["correct"].append(0)
+                                        # data_log["choice_name"].append("ignore") ######### Helen 20231128
+                                else:
+                                    data_log["correct"].append(0)
+                                    # data_log["choice_name"].append("ignore") ########## Helen 20231128
+                            # create the trial data
+                            out_path = os.path.join(
+                                run_dir,
+                                dm_cols[dm_index]
+                                + "_"
+                                + str(occ_num)
+                                + "_instance_beta.nii.gz",
+                            )
+                            # transform 1d masked voxels into 3d func space
+                            trial_data = masker.inverse_transform(
+                                cleaned_ts[:, indexes].squeeze().T
+                            )
+                            # instance_beta = nibabel.Nifti1Image(trial_data, affine=affine, header=header)
+                            nibabel.save(trial_data, out_path)
+                            occ_beta_sets[occ_num].append(out_path)
+                        dm_index += 1
+
+                    data_log["beta_path"] += occ_beta_sets
+                else:
+                    dm_index += delays
+
         os.remove(glm_path)
     data_log_out = os.path.join(
-        subj_root, "analysis", para_name + ext + "_stimulus_response_data_key.csv"
+        subj_root, "analysis", para_name + "_stimulus_response_data_key.csv"
     )
     data_log = pandas.DataFrame.from_dict(data_log, orient="columns")
     data_log.to_csv(data_log_out)
@@ -2196,7 +2080,7 @@ def get_vol_rois_time_series(vol_rois: dict, ts_dict: dict, ds_t1_path):
                 paradigm_data,
                 condition,
                 sess_dir,
-                fname="epi_masked.nii.gz",
+                fname="epi_masked.nii",
                 pre_onset_blocks=pre_block,
                 post_offset_blocks=post_block,
             )
