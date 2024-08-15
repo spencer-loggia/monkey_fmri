@@ -1,6 +1,7 @@
 import copy
 import itertools
 import multiprocessing
+
 multiprocessing.set_start_method("spawn", force=True)
 import pickle
 import time
@@ -365,9 +366,16 @@ def apply_warp(
     interp="Linear",
     type_code=0,
     dim=3,
-    mp=True
+    mp=True,
 ):
-    print('what is my volume in target space?', vol_in_target_space, 'forward gross', forward_gross_transform_path, 'fine transform', fine_transform_path)
+    print(
+        "what is my volume in target space?",
+        vol_in_target_space,
+        "forward gross",
+        forward_gross_transform_path,
+        "fine transform",
+        fine_transform_path,
+    )
     subj_root, project_root = _env_setup()
     if type(source) is not list:
         source = [source]
@@ -484,7 +492,6 @@ def apply_warp_inverse_vol_roi_dir(
     reverse_fine_transform_path,
     func_space_rois_dict,
 ):
-
     subj_root, project_root = _env_setup()
     options = list(ds_vol_roi_dict)
     choice = input_control.select_option_input(options)
@@ -512,7 +519,7 @@ def apply_binary_mask_functional(source, mask, fname="reg_moco.nii.gz"):
     source = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in source]
     out = []
     mask_nii = nibabel.load(mask)
-    print('mask at ', str(mask))
+    print("mask at ", str(mask))
     for run_dir in source:
         src_nii = nibabel.load(run_dir)
         masked_nii = preprocess._apply_binary_mask_3D(src_nii, mask_nii)
@@ -654,9 +661,9 @@ def _define_contrasts(condition_integerizers, base_index):
             contrast_matrix[pos_cond] = 1
         for neg_cond in neg_conds:
             contrast_matrix[neg_cond] = -1
-        contrast_matrix[
-            base_index
-        ] = 0  # the base case should not be considered in contrasts generally
+        contrast_matrix[base_index] = (
+            0  # the base case should not be considered in contrasts generally
+        )
         contrast_matrix[contrast_matrix == 1] /= np.count_nonzero(contrast_matrix == 1)
         contrast_matrix[contrast_matrix == -1] /= np.count_nonzero(
             contrast_matrix == -1
@@ -1011,19 +1018,28 @@ def _design_matrices_from_condition_lists(
             clist = int_clist
         else:
             clist = [int(c) for c in clist]
-        
-        # Load in linear motion correctino parameters 
+
+        # Load in linear motion correctino parameters
         ima_moco_params_path = os.path.join(sess_dir, ima, "temp_moco.nii.gz.par")
-        ima_moco_params = pd.read_csv(ima_moco_params_path, header=None, sep="  ", engine="python")
-        ima_moco_params.columns = ["x_rotation", "y_rotation", "z_rotation", "x_translation", "y_translation", "z_translation"]
-                      
+        ima_moco_params = pd.read_csv(
+            ima_moco_params_path, header=None, sep="  ", engine="python"
+        )
+        ima_moco_params.columns = [
+            "x_rotation",
+            "y_rotation",
+            "z_rotation",
+            "x_translation",
+            "y_translation",
+            "z_translation",
+        ]
+
         dm = analysis.design_matrix_from_run_list(
             clist,
             num_conditions,
             base_conditions,
             condition_names,
             condition_groups,
-            moco_params = ima_moco_params,
+            moco_params=ima_moco_params,
             tr_length=tr_length,
             mion=mion,
             reorder=(not run_wise),
@@ -1049,7 +1065,7 @@ def get_design_matrices(
     mion=True,
     fir=True,
     run_wise=False,
-    use_cond_groups=True
+    use_cond_groups=True,
 ):
     if not (type(source[0]) in (list, tuple)):
         source = [source]
@@ -1061,9 +1077,9 @@ def get_design_matrices(
     base_conditions = [paradigm_data["base_case_condition"]]
     condition_names = paradigm_data["condition_integerizer"]
     block_length = int(paradigm_data["block_length_trs"])
-    print('block length', block_length, 'c') # H
+    print("block length", block_length, "c")  # H
     num_blocks = int(paradigm_data["trs_per_run"] / block_length)
-    print('num blocks', num_blocks, 'c')
+    print("num blocks", num_blocks, "c")
     num_conditions = int(paradigm_data["num_conditions"])
     is_block_design = paradigm_data["is_block"]
     runtime_order_defs = paradigm_data["is_runtime_defined"]
@@ -1090,7 +1106,7 @@ def get_design_matrices(
         sess_name = os.path.basename(sess_dir)
         # returns source with file if passed that way
         complete_source += source[i]
-        if runtime_order_defs:                    
+        if runtime_order_defs:
             sess_dms = _design_matrices_from_condition_lists(
                 ima_order_map,
                 condition_names,
@@ -1117,23 +1133,48 @@ def get_design_matrices(
                     ima = os.path.basename(run_dir)
                 order_num = ima_order_map[ima]
                 order = list(paradigm_data["order_number_definitions"][str(order_num)])
-                if is_block_design:		
-                    img_len = None # HERE 20240805
-                    if ((paradigm_data["name"] == "shape_color_passive_block") and (int(sess_name.split("_")[1]) < 20231214)): # Helen added 20240227. 
-                    	 num_blocks = 20 # If scp session older than 20231214, 20 blocks
-                    elif ((paradigm_data["name"] == "shape_color_passive_block") and (int(sess_name.split("_")[1]) > 20231214)):
-                    	 num_blocks = 10 # If scp session is newer, it has 10 blocks
-                    elif (paradigm_data["name"] == "shape_color_congruency_block"): # HERE 20240805
-                        img_len = nibabel.load(os.path.join(os.path.dirname(run_dir), "epi_masked.nii.gz")).get_fdata().shape[-1]
-                        num_blocks = int(img_len/12)
-                        print('ima', ima, 'img_len', img_len, 'num blocks', num_blocks)
+                if is_block_design:
+                    img_len = None  # HERE 20240805
+                    if (paradigm_data["name"] == "shape_color_passive_block") and (
+                        int(sess_name.split("_")[1]) < 20231214
+                    ):  # Helen added 20240227.
+                        num_blocks = 20  # If scp session older than 20231214, 20 blocks
+                    elif (paradigm_data["name"] == "shape_color_passive_block") and (
+                        int(sess_name.split("_")[1]) > 20231214
+                    ):
+                        num_blocks = 10  # If scp session is newer, it has 10 blocks
+                    elif (
+                        paradigm_data["name"] == "shape_color_congruency_block"
+                    ):  # HERE 20240805
+                        img_len = (
+                            nibabel.load(
+                                os.path.join(
+                                    os.path.dirname(run_dir), "epi_masked.nii.gz"
+                                )
+                            )
+                            .get_fdata()
+                            .shape[-1]
+                        )
+                        num_blocks = int(img_len / 12)
+                        print("ima", ima, "img_len", img_len, "num blocks", num_blocks)
                     else:
-                      	 pass
+                        pass
                     ###Helen added 20240417 to be able to include motion correction parameters as glm nuisance regressors
-                    ima_moco_params_path = os.path.join(os.path.dirname(run_dir), "temp_moco.nii.gz.par")
-                    ima_moco_params = pd.read_csv(ima_moco_params_path, header=None, sep="  ", engine="python")
-                    ima_moco_params.columns = ["x_rotation", "y_rotation", "z_rotation", "x_translation", "y_translation", "z_translation"]
-                    if img_len is not None: # HERE 20240805
+                    ima_moco_params_path = os.path.join(
+                        os.path.dirname(run_dir), "temp_moco.nii.gz.par"
+                    )
+                    ima_moco_params = pd.read_csv(
+                        ima_moco_params_path, header=None, sep="  ", engine="python"
+                    )
+                    ima_moco_params.columns = [
+                        "x_rotation",
+                        "y_rotation",
+                        "z_rotation",
+                        "x_translation",
+                        "y_translation",
+                        "z_translation",
+                    ]
+                    if img_len is not None:  # HERE 20240805
                         ima_moco_params = ima_moco_params[:img_len]
                     ###
                     sess_dm = analysis.design_matrix_from_order_def(
@@ -1166,7 +1207,7 @@ def get_design_matrices(
             if os.path.exists(fix_path):
                 fix_data = pd.read_csv(fix_path, index_col=0)
                 fix_data.columns = ["fixation"]
-                fix_data = fix_data[:len(sess_dm)] # HERE 20240805
+                fix_data = fix_data[: len(sess_dm)]  # HERE 20240805
                 # fix_data["fixation"] = (fix_data['fixation']-fix_data['fixation'].mean())/fix_data['fixation'].std() # normalize fixation data within run. Doesn't make a difference in beta coefficients.
                 fix_data.set_index(sess_dms[j].index, inplace=True)
                 sess_dms[j] = pd.concat([sess_dm, fix_data], axis=1)
@@ -1190,8 +1231,8 @@ def get_beta_matrix(
     smooth=2.0,
     use_cond_groups=True,
     use_hv_confound=True,
-    autoregress=True
-): 
+    autoregress=True,
+):
     """
     :param source: list of lists of runs for each session
     :param paradigm_path:
@@ -1243,7 +1284,7 @@ def get_beta_matrix(
         tr_length=tr_length,
         smooth=smooth,
         use_hv_confound=use_hv_confound,
-        autoregress=autoregress
+        autoregress=autoregress,
     )
     print("Run Level Beta Coefficient Matrices Created")
     return glm_path
@@ -1276,7 +1317,7 @@ def construct_subject_glm(
 ):
     subj_root, project_root = _env_setup()
     proj_config_path = "config.json"
-    print('para', para)
+    print("para", para)
     with open(para, "r") as f:
         paradigm_data = json.load(f)
     subject = os.path.basename(subj_root)
@@ -1326,14 +1367,20 @@ def construct_subject_glm(
     return glm_path
 
 
-def _clean_time_series(glm: nilearn.glm.first_level.FirstLevelModel,
-                       constant_condition_index: int, run_dir: str,
-                       run_idxs:list=None, ext=""):
-    results = {"beta_path": [],
-               "condition_integer": [],
-               "condition_name": [],
-               "run_number": [],
-               "occ_num": []}
+def _clean_time_series(
+    glm: nilearn.glm.first_level.FirstLevelModel,
+    constant_condition_index: int,
+    run_dir: str,
+    run_idxs: list = None,
+    ext="",
+):
+    results = {
+        "beta_path": [],
+        "condition_integer": [],
+        "condition_name": [],
+        "run_number": [],
+        "occ_num": [],
+    }
 
     affine = glm.target_affine
     if run_idxs is None:
@@ -1346,8 +1393,10 @@ def _clean_time_series(glm: nilearn.glm.first_level.FirstLevelModel,
             drift_dex = dm_cols.index("drift_1")
             constant_idx = dm_cols.index("constant")
         except KeyError as e:
-            print("Design Matrix MUST have a regressor labelled constant and a"
-                  " regressor labelled drift 1")
+            print(
+                "Design Matrix MUST have a regressor labelled constant and a"
+                " regressor labelled drift 1"
+            )
             exit(1)
 
         # for OLS std glm, this is meaningless, labelled '0.0' as a
@@ -1395,21 +1444,21 @@ def _clean_time_series(glm: nilearn.glm.first_level.FirstLevelModel,
                     # adjacent indexes should be grouped
                     prev = -10
                     # this should give nested list with reduced time stamps for this condition / delay
-                    for i, t_dex in enumerate(
-                            condition_time_raw.tolist()):
+                    for i, t_dex in enumerate(condition_time_raw.tolist()):
                         if t_dex != prev + 1:
                             condition_time_indexes.append([i])
                         else:
                             condition_time_indexes[-1].append(i)
                         prev = t_dex
-                    cleaned_ts = np.zeros((glm.labels_[0].shape[0],
-                              len(condition_time_raw))) # <v, t> this is what we'll chop up to get our trial data
+                    cleaned_ts = np.zeros(
+                        (glm.labels_[0].shape[0], len(condition_time_raw))
+                    )  # <v, t> this is what we'll chop up to get our trial data
                     for rho in rhos:
                         # get ima glm parameters
-                        ima_betas = np.array(
-                            glm.results_[run_idx][rho].theta)  # <c, v>
+                        ima_betas = np.array(glm.results_[run_idx][rho].theta)  # <c, v>
                         ima_residuals = np.array(
-                            glm.results_[run_idx][rho].residuals)  # <t, v>
+                            glm.results_[run_idx][rho].residuals
+                        )  # <t, v>
                         if glm.noise_model == "ols":
                             voxel_indexes = np.arange(len(ima_betas))
                             np_dm = base_dm
@@ -1417,28 +1466,31 @@ def _clean_time_series(glm: nilearn.glm.first_level.FirstLevelModel,
                             # need the whitened (autocorrelation corrected) dm for AR
                             voxel_indexes = np.nonzero(glm.labels_[run_idx] == rho)[0]
                             np_dm = glm.results_[run_idx][
-                                rho].whitened_design.T  # <c, t>
+                                rho
+                            ].whitened_design.T  # <c, t>
                         # multiply coi betas by coi dm and add residuals to create cleaned real time series.
                         predicted_ts = np.outer(
-                            ima_betas[dm_index].T,
-                            np_dm[dm_index, condition_time_raw]
+                            ima_betas[dm_index].T, np_dm[dm_index, condition_time_raw]
                         )
                         # <v, t> this is the time series we predict for this stimulus in isolation
                         l_cleaned_ts = (
-                                predicted_ts + ima_residuals[
-                            condition_time_raw].T
+                            predicted_ts + ima_residuals[condition_time_raw].T
                         )
-                        cleaned_ts[voxel_indexes, :] = l_cleaned_ts # set voxels determined to use this rho
+                        cleaned_ts[voxel_indexes, :] = (
+                            l_cleaned_ts  # set voxels determined to use this rho
+                        )
                     # transform 1d masked voxels into 3d func space
                     print(cleaned_ts.sum())
-                    masker = (glm.masker_)  # a neat nilearn object that can intelligently mask and unmask your data!
+                    masker = glm.masker_  # a neat nilearn object that can intelligently mask and unmask your data!
                     for occ_num, indexes in enumerate(condition_time_indexes):
                         if delay == 0:
                             occ_beta_sets.append([])
                             results["condition_integer"].append(int(para_index))
                             results["run_number"].append(run_idx)
                             results["occ_num"].append(occ_num)
-                        trial_data = masker.inverse_transform(cleaned_ts[:, indexes].squeeze().T)
+                        trial_data = masker.inverse_transform(
+                            cleaned_ts[:, indexes].squeeze().T
+                        )
 
                         out_path = os.path.join(
                             run_dir,
@@ -1458,8 +1510,7 @@ def _clean_time_series(glm: nilearn.glm.first_level.FirstLevelModel,
     return results
 
 
-def _fit_glm(sources, para, ima_order_map, mion, high_var_confound,
-             autoregress):
+def _fit_glm(sources, para, ima_order_map, mion, high_var_confound, autoregress):
     return get_beta_matrix(
         sources,
         para,
@@ -1469,25 +1520,26 @@ def _fit_glm(sources, para, ima_order_map, mion, high_var_confound,
         use_cond_groups=False,
         smooth=0.0,
         use_hv_confound=high_var_confound,
-        autoregress=autoregress
+        autoregress=autoregress,
     )
+
 
 def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
     import warnings
 
     warnings.filterwarnings("ignore")
     subj_root, project_root = _env_setup()
-    proj_config_path = "config.json" 
+    proj_config_path = "config.json"
     with open(para, "r") as f:
         paradigm_data = json.load(f)
     subject = os.path.basename(subj_root)
     with open(proj_config_path, "r") as f:
         proj_config = json.load(f)
     para_name = paradigm_data["name"]
-    print('the paradigm is ', para_name)
+    print("the paradigm is ", para_name)
     sessions_dict = proj_config["data_map"][paradigm_data["name"]][subject]
     base_conditions = [paradigm_data["base_case_condition"]]
-    condition_groups = paradigm_data["condition_groups"] 
+    condition_groups = paradigm_data["condition_groups"]
     condition_names = paradigm_data["condition_integerizer"]
 
     if input_control.bool_input("Add behavioral data?"):
@@ -1509,7 +1561,7 @@ def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
         "ima": [],
         "choice_name": [],
         "make_choice": [],
-        "fixate_correct": []
+        "fixate_correct": [],
     }
     # creates condition for every stimuli type instead of every stimuli group
     # full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.5)
@@ -1567,9 +1619,9 @@ def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
                 ima_behave = None
             run_dir = os.path.join(sess_path, str(ima))
             try:
-                clean_results = _clean_time_series(glm, 0,
-                                                   run_dir, run_idxs=[lindex],
-                                                   ext=ext)
+                clean_results = _clean_time_series(
+                    glm, 0, run_dir, run_idxs=[lindex], ext=ext
+                )
             except IndexError as e:
                 print(e)
                 continue
@@ -1585,10 +1637,7 @@ def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
                 data_log["ima"].append(ima)
                 data_log["beta_path"].append(clean_results["beta_path"][j])
 
-                if (
-                    behavior_key is not None
-                    and "Choice" not in cond_name
-                ):
+                if behavior_key is not None and "Choice" not in cond_name:
                     try:
                         cond_behave_data = ima_behave[
                             ima_behave["condition_name"] == cond_name
@@ -1596,15 +1645,25 @@ def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
                         correct = int(cond_behave_data.iloc[occ_num])
                         data_log["correct"].append(correct)
                         ###################################### Helen added 20231214
-                        choice_names = ima_behave[ima_behave["condition_name"] == cond_name].iloc[occ_num]["choice_name"]
-                        print('here', occ_num, choice_names, 'next')
+                        choice_names = ima_behave[
+                            ima_behave["condition_name"] == cond_name
+                        ].iloc[occ_num]["choice_name"]
+                        print("here", occ_num, choice_names, "next")
                         data_log["choice_name"].append(choice_names)
-                        att_behave_data = ima_behave[ima_behave["condition_name"] == cond_name]["make_choice"]
+                        att_behave_data = ima_behave[
+                            ima_behave["condition_name"] == cond_name
+                        ]["make_choice"]
                         make_choice = int(att_behave_data.iloc[occ_num])
                         data_log["make_choice"].append(make_choice)
-                        fixcorr_behave_data = ima_behave[ima_behave["condition_name"] == cond_name]["fixate_correct"] # HEF 20240723
-                        fixate_correct = int(fixcorr_behave_data.iloc[occ_num]) # HEF 20240723
-                        data_log["fixate_correct"].append(fixate_correct) # HEF 20240723
+                        fixcorr_behave_data = ima_behave[
+                            ima_behave["condition_name"] == cond_name
+                        ]["fixate_correct"]  # HEF 20240723
+                        fixate_correct = int(
+                            fixcorr_behave_data.iloc[occ_num]
+                        )  # HEF 20240723
+                        data_log["fixate_correct"].append(
+                            fixate_correct
+                        )  # HEF 20240723
                         ######################################
                     except IndexError:
                         print(
@@ -1616,12 +1675,14 @@ def get_run_betas(para, mion=True, high_var_confound=True, autoregress=True):
                             cond_name,
                         )
                         data_log["correct"].append(0)
-                        data_log["choice_name"].append("ignore") ######### Helen 20231128
+                        data_log["choice_name"].append(
+                            "ignore"
+                        )  ######### Helen 20231128
                         data_log["make_choice"].append(0)
                         data_log["fixate_correct"].append(0)
                 else:
                     data_log["correct"].append(0)
-                    data_log["choice_name"].append("ignore") ########## Helen 20231128
+                    data_log["choice_name"].append("ignore")  ########## Helen 20231128
                     data_log["make_choice"].append(0)
                     data_log["fixate_correct"].append(0)
         del glm

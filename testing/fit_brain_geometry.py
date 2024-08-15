@@ -6,10 +6,11 @@
 
 import sys
 import os
-sys.path.append('/home/spencer/Projects/monkey_fmri/bin')
+
+sys.path.append("/home/spencer/Projects/monkey_fmri/bin")
 import matplotlib.pyplot as plt
 import torch
-from   bin.model import BrainMimic
+from bin.model import BrainMimic
 import networkx as nx
 import nibabel as nib
 import pandas as pd
@@ -19,8 +20,8 @@ import json
 # In[2]:
 
 
-structure_graph_path = '/home/spencer/Projects/monkey_fmri/MTurk1/misc_testing_files/fully_connected_simple.gml'  # path to shape color graph
-data = json.load(open(structure_graph_path, 'r'))
+structure_graph_path = "/home/spencer/Projects/monkey_fmri/MTurk1/misc_testing_files/fully_connected_simple.gml"  # path to shape color graph
+data = json.load(open(structure_graph_path, "r"))
 gt = nx.readwrite.node_link_graph(data)
 
 
@@ -29,14 +30,16 @@ gt = nx.readwrite.node_link_graph(data)
 
 # prune gt
 for s, t, data in list(gt.edges(data=True)):
-    if abs(data['weight']) < .5:
+    if abs(data["weight"]) < 0.5:
         gt.remove_edge(s, t)
 
 
 # In[4]:
 
 
-roi_atlas = nib.load('/home/spencer/Projects/monkey_fmri/MTurk1/D99_v2.0_dist/simplified_atlas.nii')
+roi_atlas = nib.load(
+    "/home/spencer/Projects/monkey_fmri/MTurk1/D99_v2.0_dist/simplified_atlas.nii"
+)
 
 
 # In[5]:
@@ -44,11 +47,13 @@ roi_atlas = nib.load('/home/spencer/Projects/monkey_fmri/MTurk1/D99_v2.0_dist/si
 
 start_node = None
 for n, data in gt.nodes(data=True):
-    if data['roi_name'] == 'V1':
+    if data["roi_name"] == "V1":
         start_node = n
         break
-echo = BrainMimic(gt, start_node, units_per_voxel=1, stimuli_shape=(1, 3, 64, 64), start_lr=.01)
-#echo.load_network_state('/home/spencer/Projects/monkey_fmri/MTurk1/misc_testing_files/SL_brain_mimic_epoch_2_19')
+echo = BrainMimic(
+    gt, start_node, units_per_voxel=1, stimuli_shape=(1, 3, 64, 64), start_lr=0.01
+)
+# echo.load_network_state('/home/spencer/Projects/monkey_fmri/MTurk1/misc_testing_files/SL_brain_mimic_epoch_2_19')
 
 
 # In[6]:
@@ -56,18 +61,40 @@ echo = BrainMimic(gt, start_node, units_per_voxel=1, stimuli_shape=(1, 3, 64, 64
 
 # load paradigm data
 from dataloaders import dyloc_data_loader, shape_color_dataloader
-stimuli = [shape_color_dataloader.ShapeColorBasicData("/home/spencer/Projects/monkey_fmri/MTurk1/stimuli/small_stimuli", exp_image_size=(64, 64)),
-           dyloc_data_loader.DylocDataloader("/home/spencer/Projects/monkey_fmri/MTurk1/stimuli/dyloc_downsampled", exp_image_size=(64, 64), stim_frames=10)]
+
+stimuli = [
+    shape_color_dataloader.ShapeColorBasicData(
+        "/home/spencer/Projects/monkey_fmri/MTurk1/stimuli/small_stimuli",
+        exp_image_size=(64, 64),
+    ),
+    dyloc_data_loader.DylocDataloader(
+        "/home/spencer/Projects/monkey_fmri/MTurk1/stimuli/dyloc_downsampled",
+        exp_image_size=(64, 64),
+        stim_frames=10,
+    ),
+]
 
 
-# 
+#
 
 # In[ ]:
 
 
 # stimuli provided are looped in batch to match stimulus frame number
-echo.fit_rdms(stimuli, super_epochs=10, epochs=20, stimulus_frames=20, verbose=True, snapshot_out='/home/spencer/Projects/monkey_fmri/MTurk1/misc_testing_files',
-              start_lr=.0001, final_lr=.00000001, prune_start=.05, prune_stop=.03, inject_noise=True, out_prefix='noise_low_l1_5prune')
+echo.fit_rdms(
+    stimuli,
+    super_epochs=10,
+    epochs=20,
+    stimulus_frames=20,
+    verbose=True,
+    snapshot_out="/home/spencer/Projects/monkey_fmri/MTurk1/misc_testing_files",
+    start_lr=0.0001,
+    final_lr=0.00000001,
+    prune_start=0.05,
+    prune_stop=0.03,
+    inject_noise=True,
+    out_prefix="noise_low_l1_5prune",
+)
 
 
 # In[6]:
@@ -80,25 +107,27 @@ nx.draw_networkx(echo.brain, with_labels=True)
 
 
 import numpy as np
+
 weights = []
 
-comp = sorted(nx.connected_components(echo.brain.to_undirected()), key=len, reverse=True)
+comp = sorted(
+    nx.connected_components(echo.brain.to_undirected()), key=len, reverse=True
+)
 ai_graph = echo.brain.subgraph(comp[0]).copy()
 
 edges = list(ai_graph.edges(data=True))
 
 for node, data in list(ai_graph.nodes(data=True)):
-    name = data['roi_name']
+    name = data["roi_name"]
     ai_graph.remove_node(node)
     ai_graph.add_node(int(node), roi_name=str(name))
 
 for u, v, data in edges:
-    if 'sequence' in data:
-        weight = float(torch.mean(data['sequence'][0].weight.detach().flatten()).item())
+    if "sequence" in data:
+        weight = float(torch.mean(data["sequence"][0].weight.detach().flatten()).item())
         weights.append(weight)
         ai_graph.add_edge(u, v, weight=weight)
 threshold = 2 * np.std(np.array(weights))
-
 
 
 # In[8]:
@@ -106,28 +135,34 @@ threshold = 2 * np.std(np.array(weights))
 
 # rep graph
 import graspologic as gr
+
 pos_graph = ai_graph.copy()
 for s, t, data in pos_graph.edges(data=True):
-    pos_graph.edges[(s, t)]['weight'] = float(np.abs(data['weight']))
-undirected_connectome, layout = gr.layouts.layout_tsne(pos_graph,
-                                                       perplexity=10,
-                                                       n_iter=1000)
+    pos_graph.edges[(s, t)]["weight"] = float(np.abs(data["weight"]))
+undirected_connectome, layout = gr.layouts.layout_tsne(
+    pos_graph, perplexity=10, n_iter=1000
+)
 
 
 # In[9]:
 
 
 from graspologic.layouts.classes import NodePosition
-for i in range(len(layout)):
-    new_data = gr.layouts.classes.NodePosition(node_id=int(layout[i].node_id),
-                                               x=layout[i].x,
-                                               y=layout[i].y,
-                                               size=layout[i].size,
-                                               community=layout[i].community)
-    layout[i] = new_data
-cmap = plt.get_cmap('viridis')
 
-raw_edge_weights = np.array([edge[2]['weight'] for edge in undirected_connectome.edges(data=True)])
+for i in range(len(layout)):
+    new_data = gr.layouts.classes.NodePosition(
+        node_id=int(layout[i].node_id),
+        x=layout[i].x,
+        y=layout[i].y,
+        size=layout[i].size,
+        community=layout[i].community,
+    )
+    layout[i] = new_data
+cmap = plt.get_cmap("viridis")
+
+raw_edge_weights = np.array(
+    [edge[2]["weight"] for edge in undirected_connectome.edges(data=True)]
+)
 edge_weights = raw_edge_weights - min(raw_edge_weights)
 edge_weights = edge_weights / max(edge_weights)
 
@@ -135,15 +170,15 @@ edge_colors = np.array([cmap(val) for val in edge_weights])
 
 edge_widths = np.abs(raw_edge_weights) - np.min(raw_edge_weights)
 edge_widths = edge_widths / max(edge_widths)
-edge_widths = (1. * edge_widths) + .25
+edge_widths = (1.0 * edge_widths) + 0.25
 
-node_colors = ['#808080'] * len(undirected_connectome.nodes())
+node_colors = ["#808080"] * len(undirected_connectome.nodes())
 labels = {}
 for n in undirected_connectome.nodes:
-    if 'roi_name' in undirected_connectome.nodes[n]:
-        labels[n] = undirected_connectome.nodes[n]['roi_name']
+    if "roi_name" in undirected_connectome.nodes[n]:
+        labels[n] = undirected_connectome.nodes[n]["roi_name"]
     else:
-        labels[n] = 'unnamed'
+        labels[n] = "unnamed"
 
 
 # In[10]:
@@ -151,36 +186,42 @@ for n in undirected_connectome.nodes:
 
 # add edge colors
 def rgb_to_hex(r, g, b):
-  return ('{:X}{:X}{:X}').format(int(r*255), int(g*255), int(b*255))
+    return ("{:X}{:X}{:X}").format(int(r * 255), int(g * 255), int(b * 255))
 
 
 for i, n in enumerate(undirected_connectome.nodes()):
-    ai_graph.nodes[n]['graphics'] = {'x': float(layout[i].x),
-                                  'y': float(layout[i].y),
-                                  'w': float(layout[i].size),
-                                  'h': float(layout[i].size)}
+    ai_graph.nodes[n]["graphics"] = {
+        "x": float(layout[i].x),
+        "y": float(layout[i].y),
+        "w": float(layout[i].size),
+        "h": float(layout[i].size),
+    }
 
 
 # In[11]:
 
 
-drawing = gr.layouts.render._draw_graph(undirected_connectome, layout, node_colors, 1.,
-                                        edge_line_width=edge_widths,
-                                        edge_alpha=1.,
-                                        edge_colors=edge_colors,
-                                        labels=labels,
-                                        figure_width=25,
-                                        figure_height=25)
+drawing = gr.layouts.render._draw_graph(
+    undirected_connectome,
+    layout,
+    node_colors,
+    1.0,
+    edge_line_width=edge_widths,
+    edge_alpha=1.0,
+    edge_colors=edge_colors,
+    labels=labels,
+    figure_width=25,
+    figure_height=25,
+)
 
 
 # In[12]:
 
 
-data = nx.readwrite.write_gml(ai_graph, '/home/spencer/Projects/monkey_fmri/MTurk1/misc_testing_files/linux_SL_cynetwork_out_mk1.gml')
+data = nx.readwrite.write_gml(
+    ai_graph,
+    "/home/spencer/Projects/monkey_fmri/MTurk1/misc_testing_files/linux_SL_cynetwork_out_mk1.gml",
+)
 
 
 # In[ ]:
-
-
-
-

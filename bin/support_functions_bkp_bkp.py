@@ -472,7 +472,6 @@ def apply_warp_inverse_vol_roi_dir(
     reverse_fine_transform_path,
     func_space_rois_dict,
 ):
-
     subj_root, project_root = _env_setup()
     options = list(ds_vol_roi_dict)
     choice = input_control.select_option_input(options)
@@ -641,9 +640,9 @@ def _define_contrasts(condition_integerizers, base_index):
             contrast_matrix[pos_cond] = 1
         for neg_cond in neg_conds:
             contrast_matrix[neg_cond] = -1
-        contrast_matrix[
-            base_index
-        ] = 0  # the base case should not be considered in contrasts generally
+        contrast_matrix[base_index] = (
+            0  # the base case should not be considered in contrasts generally
+        )
         contrast_matrix[contrast_matrix == 1] /= np.count_nonzero(contrast_matrix == 1)
         contrast_matrix[contrast_matrix == -1] /= np.count_nonzero(
             contrast_matrix == -1
@@ -1042,9 +1041,9 @@ def get_design_matrices(
     base_conditions = [paradigm_data["base_case_condition"]]
     condition_names = paradigm_data["condition_integerizer"]
     block_length = int(paradigm_data["block_length_trs"])
-    print('block length', block_length, 'c') # H
+    print("block length", block_length, "c")  # H
     num_blocks = int(paradigm_data["trs_per_run"] / block_length)
-    print('num blocks', num_blocks, 'c')
+    print("num blocks", num_blocks, "c")
     num_conditions = int(paradigm_data["num_conditions"])
     is_block_design = paradigm_data["is_block"]
     runtime_order_defs = paradigm_data["is_runtime_defined"]
@@ -1286,7 +1285,7 @@ def get_run_betas(para, mion=True):
 
     warnings.filterwarnings("ignore")
     subj_root, project_root = _env_setup()
-    proj_config_path = "config.json" 
+    proj_config_path = "config.json"
     with open(para, "r") as f:
         paradigm_data = json.load(f)
     subject = os.path.basename(subj_root)
@@ -1316,7 +1315,7 @@ def get_run_betas(para, mion=True):
         "correct": [],
         "ima": [],
         "choice_name": [],
-        "attention": [] ############# Helen added this 20231214
+        "attention": [],  ############# Helen added this 20231214
     }
     # creates condition for every stimuli type instead of every stimuli group
     # full_cond_glm_path = construct_subject_glm(para=para, mion=mion, run_wise=False, use_cond_groups=False, smooth=0.5)
@@ -1473,10 +1472,14 @@ def get_run_betas(para, mion=True):
                                         correct = int(cond_behave_data.iloc[occ_num])
                                         data_log["correct"].append(correct)
                                         ###################################### Helen added 20231214
-                                        choice_names = ima_behave[ima_behave["condition_name"] == cond_name].iloc[occ_num]["choice_name"]
-                                        print('here', occ_num, choice_names, 'next')
+                                        choice_names = ima_behave[
+                                            ima_behave["condition_name"] == cond_name
+                                        ].iloc[occ_num]["choice_name"]
+                                        print("here", occ_num, choice_names, "next")
                                         data_log["choice_name"].append(choice_names)
-                                        att_behave_data = ima_behave[ima_behave["condition_name"] == cond_name]["attention"]
+                                        att_behave_data = ima_behave[
+                                            ima_behave["condition_name"] == cond_name
+                                        ]["attention"]
                                         attention = int(att_behave_data.iloc[occ_num])
                                         data_log["attention"].append(attention)
                                         ######################################
@@ -1490,11 +1493,15 @@ def get_run_betas(para, mion=True):
                                             cond_name,
                                         )
                                         data_log["correct"].append(0)
-                                        data_log["choice_name"].append("ignore") ######### Helen 20231128
+                                        data_log["choice_name"].append(
+                                            "ignore"
+                                        )  ######### Helen 20231128
                                         data_log["attention"].append(0)
                                 else:
                                     data_log["correct"].append(0)
-                                    data_log["choice_name"].append("ignore") ########## Helen 20231128
+                                    data_log["choice_name"].append(
+                                        "ignore"
+                                    )  ########## Helen 20231128
                                     data_log["attention"].append(0)
 
                             # create the trial data

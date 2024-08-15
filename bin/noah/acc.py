@@ -227,7 +227,6 @@ class DataLoader:
         return mean_beta, std_beta
 
     def crop_img(self, img, make_cube=True):
-
         cropped_img = img[
             self.crop[0][0] : self.crop[0][1],
             self.crop[1][0] : self.crop[1][1],

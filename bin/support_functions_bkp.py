@@ -472,7 +472,6 @@ def apply_warp_inverse_vol_roi_dir(
     reverse_fine_transform_path,
     func_space_rois_dict,
 ):
-
     subj_root, project_root = _env_setup()
     options = list(ds_vol_roi_dict)
     choice = input_control.select_option_input(options)
@@ -641,9 +640,9 @@ def _define_contrasts(condition_integerizers, base_index):
             contrast_matrix[pos_cond] = 1
         for neg_cond in neg_conds:
             contrast_matrix[neg_cond] = -1
-        contrast_matrix[
-            base_index
-        ] = 0  # the base case should not be considered in contrasts generally
+        contrast_matrix[base_index] = (
+            0  # the base case should not be considered in contrasts generally
+        )
         contrast_matrix[contrast_matrix == 1] /= np.count_nonzero(contrast_matrix == 1)
         contrast_matrix[contrast_matrix == -1] /= np.count_nonzero(
             contrast_matrix == -1
@@ -1312,7 +1311,7 @@ def get_run_betas(para, mion=True):
         "beta_path": [],
         "session": [],
         "correct": [],
-        "ima": []
+        "ima": [],
         # ,
         # "choice_name": [] ############# Helen added this 20231128
     }

@@ -35,6 +35,7 @@ from sklearn.mixture import GaussianMixture
 try:
     from sklearnex import patch_sklearn
     from sklearnex.linear_model import LinearRegression
+
     patch_sklearn()
 except ModuleNotFoundError:
     print("Intel Hardware Acceleration is not enabled. ")
@@ -56,6 +57,7 @@ from nilearn.plotting import plot_design_matrix, plot_contrast_matrix
 from nilearn.glm.first_level.hemodynamic_models import mion_hrf, spm_time_derivative
 
 from preprocess import _pad_to_cube
+
 
 def _norm_4d(arr: np.ndarray):
     """
@@ -99,7 +101,7 @@ def _confound(epi):
     return pd.DataFrame(high_variance_confounds(epi, percentile=2, n_confounds=2))
 
 
-def ts_smooth(input_ts: np.ndarray, kernel_std=1., temporal_smoothing=True):
+def ts_smooth(input_ts: np.ndarray, kernel_std=1.0, temporal_smoothing=True):
     """
     Smooth the functional data
     :param input_ts: original time series data
@@ -115,11 +117,15 @@ def ts_smooth(input_ts: np.ndarray, kernel_std=1., temporal_smoothing=True):
     if temporal_smoothing:
         smoothed = _smooth(input_ts, kernel_std)
     else:
-        smoothed = np.apply_along_axis(lambda m: _smooth(m, kernel_std), axis=3, arr=input_ts)
+        smoothed = np.apply_along_axis(
+            lambda m: _smooth(m, kernel_std), axis=3, arr=input_ts
+        )
     return smoothed
 
 
-def average_functional_data(run_dirs, output, fname='normalized.nii', through_time=False):
+def average_functional_data(
+    run_dirs, output, fname="normalized.nii", through_time=False
+):
     """
     Averages a set of epis producing a single 4D time series. If through_time is True, also averages through the time
     dimmensiong, producing a single 3D volume.
@@ -150,40 +156,47 @@ def average_functional_data(run_dirs, output, fname='normalized.nii', through_ti
     return avg_func
 
 
-def _create_SNR_volume_wrapper(input_dir, noise_path, out_path, type='tSNR'):
+def _create_SNR_volume_wrapper(input_dir, noise_path, out_path, type="tSNR"):
     func = nib.load(input_dir)
     func_data = func.get_fdata()
     func_affine = func.affine
     noise = nib.load(noise_path)
     noise_data = noise.get_fdata()
-    if type == 'tSNR':
+    if type == "tSNR":
         sd = np.std(noise_data, axis=3)
         sd[np.where(sd == 0)] = 1
         mean = np.mean(func_data, axis=3)
         res = mean / sd
-    elif type == 'CNR':
+    elif type == "CNR":
         sdn = np.std(noise_data, axis=3)
         sdn[np.where(sdn == 0)] = 1
         sdf = np.std(func_data, axis=3)
         sdf[np.where(sdf == 0)] = 1
         res = sdf / sdn
     res_nii = nib.Nifti1Image(res, func_affine)
-    nib.save(res_nii, os.path.join(out_path, '{}.nii.gz'.format(type)))
+    nib.save(res_nii, os.path.join(out_path, "{}.nii.gz".format(type)))
 
 
-def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = None, fname='clean.nii.gz',
-                   type='tSNR'):
-    '''
+def create_SNR_map(
+    input_dirs: List[str],
+    noise_dir,
+    output: Union[None, str] = None,
+    fname="clean.nii.gz",
+    type="tSNR",
+):
+    """
     create_SNR_map: Creates a tSND or a CNR map.
     :param input_dirs:
     :param output:
     :param fname:
     :param type:
     :return:
-    '''
+    """
     args = []
-    noise_path = os.path.join(noise_dir, 'noise.nii.gz')
-    sources = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in input_dirs]
+    noise_path = os.path.join(noise_dir, "noise.nii.gz")
+    sources = [
+        os.path.join(f, fname) if not os.path.isfile(f) else f for f in input_dirs
+    ]
     for source in sources:
         if os.path.isfile(source):
             if not output:
@@ -197,15 +210,23 @@ def create_SNR_map(input_dirs: List[str], noise_dir, output: Union[None, str] = 
         res = p.starmap(_create_SNR_volume_wrapper, args)
 
 
-def _make_nl_dm(frames, time_df, hrf, stim_min_onset, delay_periods, moco_regs): # Helen added moco_regs
+def _make_nl_dm(
+    frames, time_df, hrf, stim_min_onset, delay_periods, moco_regs
+):  # Helen added moco_regs
     svd_converge = False
     trys = 0
     while not svd_converge and trys < 4:
         try:
-            dm = first_level.make_first_level_design_matrix(frames, time_df, hrf,
-                                                            drift_model='cosine', high_pass=.005,
-                                                            min_onset=stim_min_onset, fir_delays=delay_periods,
-                                                            add_regs=moco_regs) # Helen added add_regs
+            dm = first_level.make_first_level_design_matrix(
+                frames,
+                time_df,
+                hrf,
+                drift_model="cosine",
+                high_pass=0.005,
+                min_onset=stim_min_onset,
+                fir_delays=delay_periods,
+                add_regs=moco_regs,
+            )  # Helen added add_regs
         except (ValueError, np.linalg.LinAlgError):
             trys += 1
             continue
@@ -216,9 +237,18 @@ def _make_nl_dm(frames, time_df, hrf, stim_min_onset, delay_periods, moco_regs):
     return dm
 
 
-def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditions: int, order: List[int],
-                                 base_conditions_idxs: List[int], condition_names: dict, moco_params, tr_length=3, mion=True,
-                                 fir=False): # Helen added moco_params
+def design_matrix_from_order_def(
+    block_length: int,
+    num_blocks: int,
+    num_conditions: int,
+    order: List[int],
+    base_conditions_idxs: List[int],
+    condition_names: dict,
+    moco_params,
+    tr_length=3,
+    mion=True,
+    fir=False,
+):  # Helen added moco_params
     """
     Creates as num_conditions x time onehot encoded matrix from an order number definition
     :param block_length:
@@ -228,11 +258,9 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
     :param base_conditions_idxs: the integers corresponding to base case (usually gray) conditions
     :return: design matrix with constant one on base conditions and linear drift nuisance regressors on cols -1 and -2
     """
-    fir=False
+    fir = False
     k = len(order)
-    timing = {"trial_type": [],
-              "onset": [],
-              "duration": []}
+    timing = {"trial_type": [], "onset": [], "duration": []}
     for i in range(num_blocks):
         active_condition = order[i % k]
         if active_condition in base_conditions_idxs:
@@ -246,17 +274,28 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
     time_df = pd.DataFrame.from_dict(timing)
 
     if fir:
-        hrf = 'fir'
+        hrf = "fir"
     else:
         if mion:
             hrf = "mion"
         else:
             hrf = "spm + derivative"
-    dm = _make_nl_dm(frames, time_df, hrf, delay_periods=[0], stim_min_onset=-32, moco_regs=moco_params) # Helen added moco_regs=moco_params
+    dm = _make_nl_dm(
+        frames,
+        time_df,
+        hrf,
+        delay_periods=[0],
+        stim_min_onset=-32,
+        moco_regs=moco_params,
+    )  # Helen added moco_regs=moco_params
     if fir and mion:
         dm *= -1
     # reorder
-    cond_names = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_conditions_idxs]
+    cond_names = [
+        condition_names[cn]
+        for cn in condition_names.keys()
+        if int(cn) not in base_conditions_idxs
+    ]
     cols = list(dm.columns)
     for i, c in enumerate(cond_names):
         cols[i] = c
@@ -264,9 +303,18 @@ def design_matrix_from_order_def(block_length: int, num_blocks: int, num_conditi
     return dm
 
 
-def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_condition_idxs: List[int],
-                                condition_names: dict, condition_groups: dict, moco_params, tr_length=3.0, mion=True,
-                                reorder=True, use_cond_groups=True):
+def design_matrix_from_run_list(
+    run_list: np.array,
+    num_conditions: int,
+    base_condition_idxs: List[int],
+    condition_names: dict,
+    condition_groups: dict,
+    moco_params,
+    tr_length=3.0,
+    mion=True,
+    reorder=True,
+    use_cond_groups=True,
+):
     """
     Creates a design matrix from a list of lengths number of trs, holding the stimulus condition at each tr.
     Basically just onehot encodes the run_list, except base case conditions are given a constant value and a
@@ -285,13 +333,9 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     # set up nilearn default timing specification
     # construct separate timing dicts for hemodynamic
     # and fir mode conditions.
-    hrf_timing = {"trial_type": [],
-                  "onset": [],
-                  "duration": []}
+    hrf_timing = {"trial_type": [], "onset": [], "duration": []}
 
-    fir_timing = {"trial_type": [],
-                  "onset": [],
-                  "duration": []}
+    fir_timing = {"trial_type": [], "onset": [], "duration": []}
     global_fir_delay = 0
 
     num_trs = len(run_list)
@@ -314,13 +358,13 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
         if cond not in base_condition_idxs:
             # if this condition doesn't belong to a group, it's assigned its own regression using standard hrf (not fir)
             if condition_groups is None:
-                hrf_timing['trial_type'].append(condition_names[str(cond)])
-                hrf_timing['onset'].append(t * tr_length)
-                hrf_timing['duration'].append(len(block) * tr_length)
+                hrf_timing["trial_type"].append(condition_names[str(cond)])
+                hrf_timing["onset"].append(t * tr_length)
+                hrf_timing["duration"].append(len(block) * tr_length)
             else:
                 # standard case, models each condition group with its own regressor of set of FIR regressors.
                 group_name = cond2group[cond]
-                fir_delay = condition_groups[group_name]['fir']
+                fir_delay = condition_groups[group_name]["fir"]
                 if use_cond_groups:
                     # regressor for each group
                     regressor_name = group_name
@@ -332,17 +376,19 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
                     if fir_delay < 0:
                         # ok, code says we want to use single TR fir regressors, with 0 delay
                         for j in range(len(block)):
-                            fir_timing['trial_type'].append(regressor_name + "_r" + str(j))
-                            fir_timing['onset'].append((t + j) * tr_length)
-                            fir_timing['duration'].append(tr_length)
+                            fir_timing["trial_type"].append(
+                                regressor_name + "_r" + str(j)
+                            )
+                            fir_timing["onset"].append((t + j) * tr_length)
+                            fir_timing["duration"].append(tr_length)
                     else:
-                        fir_timing['trial_type'].append(regressor_name)
-                        fir_timing['onset'].append(t * tr_length)
-                        fir_timing['duration'].append(tr_length * len(block))
+                        fir_timing["trial_type"].append(regressor_name)
+                        fir_timing["onset"].append(t * tr_length)
+                        fir_timing["duration"].append(tr_length * len(block))
                 else:
-                    hrf_timing['trial_type'].append(regressor_name)
-                    hrf_timing['onset'].append(t * tr_length)
-                    hrf_timing['duration'].append(len(block) * tr_length)
+                    hrf_timing["trial_type"].append(regressor_name)
+                    hrf_timing["onset"].append(t * tr_length)
+                    hrf_timing["duration"].append(len(block) * tr_length)
         t += len(block)
     hrf_time_df = pd.DataFrame.from_dict(hrf_timing)
     fir_time_df = pd.DataFrame.from_dict(fir_timing)
@@ -350,10 +396,24 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
         hrf = "mion"
     else:
         hrf = "spm + derivative"
-    
+
     # make seperate design matrix for FIR and HRF
-    fir_dm = _make_nl_dm(frames, fir_time_df, "fir", delay_periods=[1], stim_min_onset=-32, moco_regs=None) # Helen added moco_regs=None so it won't throw error 
-    hrf_dm = _make_nl_dm(frames, hrf_time_df, hrf, delay_periods=[0], stim_min_onset=-32, moco_regs=moco_params)
+    fir_dm = _make_nl_dm(
+        frames,
+        fir_time_df,
+        "fir",
+        delay_periods=[1],
+        stim_min_onset=-32,
+        moco_regs=None,
+    )  # Helen added moco_regs=None so it won't throw error
+    hrf_dm = _make_nl_dm(
+        frames,
+        hrf_time_df,
+        hrf,
+        delay_periods=[0],
+        stim_min_onset=-32,
+        moco_regs=moco_params,
+    )
 
     # fix naming
     cols = []
@@ -370,7 +430,11 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
         fir_dm *= -1
     # get our condition names
     if condition_groups is None or not use_cond_groups or reorder is False:
-        cond_names_set = [condition_names[cn] for cn in condition_names.keys() if int(cn) not in base_condition_idxs]
+        cond_names_set = [
+            condition_names[cn]
+            for cn in condition_names.keys()
+            if int(cn) not in base_condition_idxs
+        ]
     else:
         # for fir we have to generate additional conditions for each delay regressor matching nilearn nomenclature
         cond_names_set = list(condition_groups.keys())
@@ -379,15 +443,17 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     for cond_name in cond_names_set:
         if use_cond_groups:
             cond_group = cond_name
-            fir_delay = condition_groups[cond_name]['fir']
+            fir_delay = condition_groups[cond_name]["fir"]
         else:
             cond_group = cond2group[int(name_integerizer[cond_name])]
-            fir_delay = condition_groups[cond_group]['fir']
+            fir_delay = condition_groups[cond_group]["fir"]
         if fir_delay is None:
             cond_names_list.append(cond_name)
         else:
-            cond_names_list += [cond_name + "_delay_" + str(delay)
-                                for delay in range(block_lengths[cond_group])]
+            cond_names_list += [
+                cond_name + "_delay_" + str(delay)
+                for delay in range(block_lengths[cond_group])
+            ]
 
     # merge the two dms
     dm = pd.concat([fir_dm, hrf_dm], axis=1)
@@ -406,17 +472,29 @@ def design_matrix_from_run_list(run_list: np.array, num_conditions: int, base_co
     return dm
 
 
-def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_condition_idxs: List[int], output_dir: str, fname: str, mion=True, fir=True, tr_length=3., smooth=1., use_hv_confound=True, autoregress=True):
+def nilearn_glm(
+    source: List[str],
+    design_matrices: List[pd.DataFrame],
+    base_condition_idxs: List[int],
+    output_dir: str,
+    fname: str,
+    mion=True,
+    fir=True,
+    tr_length=3.0,
+    smooth=1.0,
+    use_hv_confound=True,
+    autoregress=True,
+):
     if fir:
         if mion:
             hrf = "mion"
         else:
             hrf = "spm + derivative"
     else:
-        hrf = 'fir'
-    #tmp_dir = os.path.join("/media/ssbeast/DATA/cache", 'tmp_glm_cache')
+        hrf = "fir"
+    # tmp_dir = os.path.join("/media/ssbeast/DATA/cache", 'tmp_glm_cache')
     tmp_dir = "/media/ssbeast/DATA/cache/tmp_glm_cache"
-    #tmp_dir = os.path.join("/media/data/cache", 'tmp_glm_cache')
+    # tmp_dir = os.path.join("/media/data/cache", 'tmp_glm_cache')
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
     os.mkdir(tmp_dir)
@@ -425,26 +503,32 @@ def nilearn_glm(source: List[str], design_matrices: List[pd.DataFrame], base_con
     else:
         nm = "ols"
     fmri_glm = first_level.FirstLevelModel(
-                minimize_memory=False,
-                hrf_model=hrf,
-                t_r=tr_length,
-                standardize=False,
-                slice_time_ref=0,
-                smoothing_fwhm=smooth,
-                signal_scaling=False,
-                verbose=True,
-                n_jobs=multiprocessing.cpu_count() - 1,
-                noise_model=nm,
-                memory=tmp_dir
-        )
-    epis = [nib.load(run) if os.path.isfile(run) else nib.load(os.path.join(run, fname)) for run in source]
+        minimize_memory=False,
+        hrf_model=hrf,
+        t_r=tr_length,
+        standardize=False,
+        slice_time_ref=0,
+        smoothing_fwhm=smooth,
+        signal_scaling=False,
+        verbose=True,
+        n_jobs=multiprocessing.cpu_count() - 1,
+        noise_model=nm,
+        memory=tmp_dir,
+    )
+    epis = [
+        nib.load(run) if os.path.isfile(run) else nib.load(os.path.join(run, fname))
+        for run in source
+    ]
     print("CHECK DM LENGTH", len(design_matrices[0]))
     # estimate high variance confounds
     if use_hv_confound:
         print("TRY: HIGH VAR CONFOUND ESTIMATION")
-        with Pool() as p: # try taking out for SCD 20240801
+        with Pool() as p:  # try taking out for SCD 20240801
             confounds = p.map(_confound, epis)
-        design_matrices = [pd.concat([dm, confounds[i].set_index(dm.index)], axis=1) for i, dm in enumerate(design_matrices)]
+        design_matrices = [
+            pd.concat([dm, confounds[i].set_index(dm.index)], axis=1)
+            for i, dm in enumerate(design_matrices)
+        ]
     fmri_glm = fmri_glm.fit(epis, design_matrices=design_matrices)
     fmri_glm.source_paths = source
     fig, axs = plt.subplots(1)
@@ -476,12 +560,17 @@ def create_averaged_beta(beta_paths, out_dir=None):
     beta_nii = nib.Nifti1Image(avg_betas, affine=affine, header=beta_nii.header)
     if out_dir is None:
         out_dir = os.path.dirname(os.path.dirname(beta_paths[0]))
-    out_path = os.path.join(out_dir, 'reg_beta_coef.nii.gz')
+    out_path = os.path.join(out_dir, "reg_beta_coef.nii.gz")
     nib.save(beta_nii, out_path)
     return out_path
 
 
-def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_descriptors: List[str], output_dir: str):
+def create_contrasts(
+    beta_matrix: str,
+    contrast_matrix: np.ndarray,
+    contrast_descriptors: List[str],
+    output_dir: str,
+):
     """
     We want voxels in A that are greater than
     """
@@ -492,32 +581,38 @@ def create_contrasts(beta_matrix: str, contrast_matrix: np.ndarray, contrast_des
 
     out_paths = []
     for i, cond in enumerate(np.transpose(avg_contrasts, (3, 0, 1, 2))):
-        contrast_nii = nib.Nifti1Image(cond, affine=beta_nii.affine, header=beta_nii.header)
-        out = os.path.join(output_dir, contrast_descriptors[i] + '_contrast.nii.gz')
+        contrast_nii = nib.Nifti1Image(
+            cond, affine=beta_nii.affine, header=beta_nii.header
+        )
+        out = os.path.join(output_dir, contrast_descriptors[i] + "_contrast.nii.gz")
         nib.save(contrast_nii, out)
         out_paths.append(out)
 
     return avg_contrasts, out_paths
 
 
-def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, output_dir, mode='z_score'):
+def nilearn_contrasts(
+    glm_model_path, contrast_matrix, contrast_descriptors, output_dir, mode="z_score"
+):
     glm = pickle.load(open(glm_model_path, "rb"))
     dm_cols = list(glm.design_matrices_[0].columns)
-    if 'fixation' in dm_cols:
+    if "fixation" in dm_cols:
         add_contrasts = 2
     else:
         add_contrasts = 1
-    contrast_matrices = [[] for _ in range(contrast_matrix.shape[1] + add_contrasts)] # room for auto background and fixatoin contrast
+    contrast_matrices = [
+        [] for _ in range(contrast_matrix.shape[1] + add_contrasts)
+    ]  # room for auto background and fixatoin contrast
 
     n_reg_dex = dm_cols.index("drift_1")
-    #n_reg_dex = 2 # helen look here
+    # n_reg_dex = 2 # helen look here
     contrast_descriptors.append("background")
-    
-    if 'fixation' in dm_cols:
+
+    if "fixation" in dm_cols:
         contrast_descriptors.append("fixation")
-    
+
     is_fir = True in ["delay" in cname for cname in dm_cols[:n_reg_dex]]
-    #is_fir=None # helen look here
+    # is_fir=None # helen look here
 
     if is_fir:
         cm = contrast_matrix.tolist()
@@ -549,7 +644,11 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
         if is_fir:
             drift_regressors += 1
 
-        cm = np.pad(contrast_matrix, ((0, drift_regressors), (0, 0)), constant_values=((0, 0), (0, 0))).T
+        cm = np.pad(
+            contrast_matrix,
+            ((0, drift_regressors), (0, 0)),
+            constant_values=((0, 0), (0, 0)),
+        ).T
 
         # always compute background contrast
         back_contrast = np.zeros((1, cm.shape[1]))
@@ -557,11 +656,11 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
         back_contrast[0, constant_dex] = 1
         cm = np.concatenate([cm, back_contrast], axis=0)
         # compute fixation contrast
-        if 'fixation' in dm_cols:
+        if "fixation" in dm_cols:
             fixation_contrast = np.zeros((1, cm.shape[1]))
             fixation_dex = list(dm.columns).index("fixation")
             fixation_contrast[0, fixation_dex] = 1
-            cm = np.concatenate([cm, fixation_contrast], axis=0)            
+            cm = np.concatenate([cm, fixation_contrast], axis=0)
 
         for i, contrast in enumerate(cm):
             contrast_matrices[i].append(contrast)
@@ -571,8 +670,8 @@ def nilearn_contrasts(glm_model_path, contrast_matrix, contrast_descriptors, out
         # for dm in glm.design_matrices_[-2:]:
         #     plot_contrast_matrix(contrast, design_matrix=dm)
         #     plt.show()
-        contrast_nii = glm.compute_contrast(contrast, stat_type='t', output_type=mode)
-        out_path = os.path.join(output_dir, contrast_descriptors[i] + '.nii.gz')
+        contrast_nii = glm.compute_contrast(contrast, stat_type="t", output_type=mode)
+        out_path = os.path.join(output_dir, contrast_descriptors[i] + ".nii.gz")
         nib.save(contrast_nii, out_path)
         out_paths.append(out_path)
     return out_paths
@@ -591,23 +690,51 @@ def _find_scale_factor(high_res: np.ndarray, low_res: np.ndarray):
     if all(prod == prod[0]):
         return prod[0]
     else:
-        raise ValueError('dimension should have been scaled evenly here')
+        raise ValueError("dimension should have been scaled evenly here")
 
 
 def _scale_and_standardize(scale, path):
     subdivide_arg = str(1 / scale)
-    subprocess.run(['mri_convert', path, '-vs', subdivide_arg, subdivide_arg, subdivide_arg, path, '--out_type', 'nii'])
-    subprocess.run(['mri_convert', path, '-iis', '1', '-ijs', '1', '-iks', '1', path, '--out_type', 'nii'])
+    subprocess.run(
+        [
+            "mri_convert",
+            path,
+            "-vs",
+            subdivide_arg,
+            subdivide_arg,
+            subdivide_arg,
+            path,
+            "--out_type",
+            "nii",
+        ]
+    )
+    subprocess.run(
+        [
+            "mri_convert",
+            path,
+            "-iis",
+            "1",
+            "-ijs",
+            "1",
+            "-iks",
+            "1",
+            path,
+            "--out_type",
+            "nii",
+        ]
+    )
     return path
 
 
-def create_contrast_surface(anatomical_white_surface: str,
-                            contrast_vol_path: str,
-                            orig_low_res_anatomical: str,
-                            orig_high_res_anatomical: str,
-                            hemi: str,
-                            subject_id='castor_test',
-                            output=None):
+def create_contrast_surface(
+    anatomical_white_surface: str,
+    contrast_vol_path: str,
+    orig_low_res_anatomical: str,
+    orig_high_res_anatomical: str,
+    hemi: str,
+    subject_id="castor_test",
+    output=None,
+):
     """
     Takes a contrast volume, resizes it to the appropriate dimensions, corrects the affine,
     and projects it onto an anatomical surface
@@ -623,8 +750,8 @@ def create_contrast_surface(anatomical_white_surface: str,
     :param hemi: The hemisphere to process. (make sure surface file matches)
     :param subject_id: name of subject (project exp)
     """
-    if hemi not in ['rh', 'lh']:
-        raise ValueError('Hemi must be one of rh or lh.')
+    if hemi not in ["rh", "lh"]:
+        raise ValueError("Hemi must be one of rh or lh.")
     high_res = nib.load(orig_high_res_anatomical)
     high_res_data = high_res.get_fdata()
     high_res_data = _pad_to_cube(high_res_data)
@@ -638,19 +765,35 @@ def create_contrast_surface(anatomical_white_surface: str,
 
     if not output:
         output = os.path.dirname(contrast_vol_path)
-    out_desc = os.path.basename(contrast_vol_path).split('.')[0]
-    path = os.path.join(output, 'tmp.nii')
+    out_desc = os.path.basename(contrast_vol_path).split(".")[0]
+    path = os.path.join(output, "tmp.nii")
     nib.save(new_nii, path)
 
-    os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
+    os.environ.setdefault(
+        "SUBJECTS_DIR", os.path.abspath(os.environ.get("FMRI_WORK_DIR"))
+    )
     # subprocess.run(['fslroi', path, path_gz, '0', '256', '0', '256', '0,', '256'])
-    #path = _scale_and_standardize(scale, path)
-    overlay_out_path = os.path.join(output, 'sigsurface_' + hemi + '_' + out_desc + '.mgh')
-    subprocess.run(['mri_vol2surf', '--projfrac-max', '.05', '.95', '.025',
-                    '--src', path,
-                    '--out', overlay_out_path,
-                    '--hemi', hemi,
-                    '--regheader', subject_id])
+    # path = _scale_and_standardize(scale, path)
+    overlay_out_path = os.path.join(
+        output, "sigsurface_" + hemi + "_" + out_desc + ".mgh"
+    )
+    subprocess.run(
+        [
+            "mri_vol2surf",
+            "--projfrac-max",
+            ".05",
+            ".95",
+            ".025",
+            "--src",
+            path,
+            "--out",
+            overlay_out_path,
+            "--hemi",
+            hemi,
+            "--regheader",
+            subject_id,
+        ]
+    )
     return overlay_out_path
 
 
@@ -663,21 +806,37 @@ def labels_to_roi_mask(label_dir, hemi, out_dir, t1, subject_id) -> Tuple[str, l
     :param subject_id:
     :return:
     """
-    os.environ.setdefault("SUBJECTS_DIR", os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
-    print(os.path.abspath(os.environ.get('FMRI_WORK_DIR')))
-    if hemi not in ['rh', 'lh']:
-        raise ValueError('Hemi must be one of rh or lh.')
+    os.environ.setdefault(
+        "SUBJECTS_DIR", os.path.abspath(os.environ.get("FMRI_WORK_DIR"))
+    )
+    print(os.path.abspath(os.environ.get("FMRI_WORK_DIR")))
+    if hemi not in ["rh", "lh"]:
+        raise ValueError("Hemi must be one of rh or lh.")
     for f in os.listdir(label_dir):
-        output = os.path.join(out_dir, f.split('.')[0] + '.nii.gz')
-        if '.label' in f and hemi in f:
-            subprocess.run(['mri_label2vol',
-                            '--label', os.path.join(label_dir, f),
-                            '--regheader', t1,
-                            '--temp', t1,
-                            '--proj', 'frac', '0', '1', '.05',
-                            '--hemi', hemi,
-                            '--subject', subject_id,
-                            '--o', output])
+        output = os.path.join(out_dir, f.split(".")[0] + ".nii.gz")
+        if ".label" in f and hemi in f:
+            subprocess.run(
+                [
+                    "mri_label2vol",
+                    "--label",
+                    os.path.join(label_dir, f),
+                    "--regheader",
+                    t1,
+                    "--temp",
+                    t1,
+                    "--proj",
+                    "frac",
+                    "0",
+                    "1",
+                    ".05",
+                    "--hemi",
+                    hemi,
+                    "--subject",
+                    subject_id,
+                    "--o",
+                    output,
+                ]
+            )
     return out_dir
 
 
@@ -707,7 +866,9 @@ def create_contrast_overlay_image(contrast_data, sig_thresh, saturation):
     return contrast_img
 
 
-def create_slice_maps(function_reg_vol, anatomical, reg_contrast, sig_thresh=10, saturation=15):
+def create_slice_maps(
+    function_reg_vol, anatomical, reg_contrast, sig_thresh=10, saturation=15
+):
     """
     :param saturation:
     :param sig_thresh:
@@ -734,22 +895,36 @@ def create_slice_maps(function_reg_vol, anatomical, reg_contrast, sig_thresh=10,
     a_arr = np.transpose(a_arr, axes=[1, 0, 2, 3])
 
     # slice
-    slices = [(f_arr[:, :, i, :].squeeze().astype(int), a_arr[:, :, i, :].squeeze().astype(int))
-              for i in range(18, f_arr.shape[2] - 10)]
+    slices = [
+        (
+            f_arr[:, :, i, :].squeeze().astype(int),
+            a_arr[:, :, i, :].squeeze().astype(int),
+        )
+        for i in range(18, f_arr.shape[2] - 10)
+    ]
     fig, axs = plt.subplots(len(slices), 2)
     fig.set_size_inches(8, (2 * len(slices)))
-    name = os.path.basename(reg_contrast).split('.')[0]
-    fig.suptitle(name + " Overlayed On Registered Epi (Left) and DS T1 (right) \n "
-                 "Coronal Slices (Posterior to Anterior) \n"
-                 "Threshold: " + str(sig_thresh) + " std dev, Saturation: " + str(saturation) + " std dev", y=.999)
+    name = os.path.basename(reg_contrast).split(".")[0]
+    fig.suptitle(
+        name + " Overlayed On Registered Epi (Left) and DS T1 (right) \n "
+        "Coronal Slices (Posterior to Anterior) \n"
+        "Threshold: "
+        + str(sig_thresh)
+        + " std dev, Saturation: "
+        + str(saturation)
+        + " std dev",
+        y=0.999,
+    )
     fig.tight_layout(pad=2)
     for i, slice_tup in enumerate(slices):
         f_slice = slice_tup[0]
         a_slice = slice_tup[1]
-        axs[i, 0].set_title("slice " + str(i + 18) + ' / ' + str(len(slices) + 28))
+        axs[i, 0].set_title("slice " + str(i + 18) + " / " + str(len(slices) + 28))
         axs[i, 0].imshow(f_slice)
         axs[i, 1].imshow(a_slice)
-    out_path = os.path.join(os.path.dirname(function_reg_vol), name + '_slice_comparison.jpg')
+    out_path = os.path.join(
+        os.path.dirname(function_reg_vol), name + "_slice_comparison.jpg"
+    )
     fig.savefig(out_path)
     return out_path
 
@@ -760,7 +935,9 @@ def _fit_model(model: GaussianMixture, data):
     return assignments, bic
 
 
-def _segment_contrast_image(contrast_data, kernel=.6, threshold=5., negative=False, size_thresh=4):
+def _segment_contrast_image(
+    contrast_data, kernel=0.6, threshold=5.0, negative=False, size_thresh=4
+):
     """
     :param contrast_data: sig_val: <contrast_types, w, h, d>
     :param threshold:
@@ -773,15 +950,19 @@ def _segment_contrast_image(contrast_data, kernel=.6, threshold=5., negative=Fal
     segs = np.zeros_like(smoothed)
     if negative:
         segs[smoothed < (-1 * threshold)] = 1
-        desc = 'negative'
+        desc = "negative"
     else:
         segs[smoothed > threshold] = 1
-        desc = 'positive'
+        desc = "positive"
     labels, num_rois = label(segs)
     sample_rp = regionprops(labels)
 
     # remove too small rois
-    invalid_labels = {label_id + 1 for label_id in range(0, num_rois) if sample_rp[label_id].area <= size_thresh}
+    invalid_labels = {
+        label_id + 1
+        for label_id in range(0, num_rois)
+        if sample_rp[label_id].area <= size_thresh
+    }
     valid_labels = set(range(1, num_rois)) - invalid_labels
     for label_id in invalid_labels:
         labels[labels == label_id] = 0
@@ -797,7 +978,9 @@ def _segment_contrast_image(contrast_data, kernel=.6, threshold=5., negative=Fal
     return labels, len(valid_labels) + 1
 
 
-def get_auto_roi_masks(contrast_paths: List[str], out_dir='./', max_rois=10, min_rois=1, sig_threshold=6):
+def get_auto_roi_masks(
+    contrast_paths: List[str], out_dir="./", max_rois=10, min_rois=1, sig_threshold=6
+):
     all_c = None
     for contrast_path in contrast_paths:
         cnii = nib.load(contrast_path)
@@ -813,18 +996,22 @@ def get_auto_roi_masks(contrast_paths: List[str], out_dir='./', max_rois=10, min
     l_num_labels = 0
     count = 0
     max_iter = 150
-    kernel = .1
+    kernel = 0.1
     while (min_rois > l_num_labels or h_num_labels > max_rois) and count < max_iter:
-        pos_labels, num_pos_rois = _segment_contrast_image(all_c, threshold=sig_threshold, kernel=kernel)
-        neg_labels, num_neg_rois = _segment_contrast_image(all_c, threshold=sig_threshold, kernel=kernel, negative=True)
+        pos_labels, num_pos_rois = _segment_contrast_image(
+            all_c, threshold=sig_threshold, kernel=kernel
+        )
+        neg_labels, num_neg_rois = _segment_contrast_image(
+            all_c, threshold=sig_threshold, kernel=kernel, negative=True
+        )
         h_num_labels = max(num_pos_rois, num_neg_rois)
         l_num_labels = min(num_pos_rois, num_neg_rois)
         if h_num_labels > max_rois:
-            kernel += .01
-            sig_threshold += .5
+            kernel += 0.01
+            sig_threshold += 0.5
         elif l_num_labels < min_rois:
-            kernel -= .02
-            sig_threshold -= .25
+            kernel -= 0.02
+            sig_threshold -= 0.25
         count += 1
     out_dir = _create_dir_if_needed(os.path.dirname(out_dir), os.path.basename(out_dir))
     for pos in (True, False):
@@ -840,7 +1027,9 @@ def get_auto_roi_masks(contrast_paths: List[str], out_dir='./', max_rois=10, min
             mask_nii = nib.Nifti1Image(mask, header=cnii.header, affine=cnii.affine)
             nib.save(mask_nii, out_path)
         clean_data = (labels > 0).astype(float)
-        cleaned_nii = nib.Nifti1Image(clean_data, header=cnii.header, affine=cnii.affine)
+        cleaned_nii = nib.Nifti1Image(
+            clean_data, header=cnii.header, affine=cnii.affine
+        )
         nib.save(cleaned_nii, os.path.join(out_dir, "all_" + n + "_rois.nii.gz"))
     return out_dir
 
@@ -852,14 +1041,32 @@ def _plot_3d_scatter(rois, label_id, brain_box, ax, color, size_tresh=0):
     clust_idx_tuples = np.array(np.nonzero(rois == label_id))
     if clust_idx_tuples.shape[1] <= size_tresh:
         return ax
-    clust_idx_tuples = clust_idx_tuples[:,
-                       np.random.choice(clust_idx_tuples.shape[1], int(clust_idx_tuples.shape[1] / 10) + 1,
-                                        replace=False)]
-    ax.scatter(clust_idx_tuples[0], clust_idx_tuples[1], clust_idx_tuples[2], c=color, alpha=.15)
-    ax.scatter(brain_box[0], brain_box[1], brain_box[2], c='gray', alpha=.5, s=.05)
+    clust_idx_tuples = clust_idx_tuples[
+        :,
+        np.random.choice(
+            clust_idx_tuples.shape[1],
+            int(clust_idx_tuples.shape[1] / 10) + 1,
+            replace=False,
+        ),
+    ]
+    ax.scatter(
+        clust_idx_tuples[0],
+        clust_idx_tuples[1],
+        clust_idx_tuples[2],
+        c=color,
+        alpha=0.15,
+    )
+    ax.scatter(brain_box[0], brain_box[1], brain_box[2], c="gray", alpha=0.5, s=0.05)
     label_point = clust_idx_tuples.mean(axis=1).flatten()
-    ax.text(label_point[0], label_point[1], label_point[2], '%s' % (str(label_id)), size=20, zorder=0,
-            color=color)
+    ax.text(
+        label_point[0],
+        label_point[1],
+        label_point[2],
+        "%s" % (str(label_id)),
+        size=20,
+        zorder=0,
+        color=color,
+    )
     return ax
 
 
@@ -875,43 +1082,77 @@ def get_roi_betas(roi_mask_paths, betas_path):
     if len(betas.shape) == 3:
         betas = betas[:, :, :, None]
     _, _, _, k = betas.shape
-    print('loaded shape: ', betas.shape, 'beta matrix')
+    print("loaded shape: ", betas.shape, "beta matrix")
     roi_betas = []
     roi_names = []
     for roi_mask_path in roi_mask_paths:
         roi_mask_nii = nib.load(roi_mask_path)
-        roi_names.append(os.path.basename(roi_mask_path).split('.')[0])
+        roi_names.append(os.path.basename(roi_mask_path).split(".")[0])
         roi_mask = np.array(roi_mask_nii.get_fdata())
-        clust_idxs = np.nonzero(roi_mask >= .5)
+        clust_idxs = np.nonzero(roi_mask >= 0.5)
         roi_beta = betas[clust_idxs[0], clust_idxs[1], clust_idxs[2]].reshape(-1, k)
         roi_betas.append(roi_beta)
     return roi_betas, roi_names
 
 
-def plot_roi_activation_histogram(roi_mask_paths: List[str], betas_path, num_conditions, condition_desc):
+def plot_roi_activation_histogram(
+    roi_mask_paths: List[str], betas_path, num_conditions, condition_desc
+):
     assert len(condition_desc) == num_conditions
     plot_size = int(np.ceil(np.sqrt(num_conditions)))
     fig, axs = plt.subplots(plot_size, plot_size)
     roi_betas, roi_names = get_roi_betas(roi_mask_paths, betas_path)
-    colors = plt.get_cmap('hsv')
+    colors = plt.get_cmap("hsv")
     num_rois = len(roi_betas)
-    fig.set_size_inches(h=plot_size*1.5, w=plot_size*2)
+    fig.set_size_inches(h=plot_size * 1.5, w=plot_size * 2)
     fig.tight_layout()
     for j, roi in enumerate(roi_betas):
         _, k = roi.shape
         assert k == num_conditions
         for i in range(num_conditions):
             condition = roi[:, i]
-            print('roi', j, 'cond', i, 'mean', np.mean(condition), 'dev', np.std(condition), 'max mag', np.max(np.abs(condition)))
-            axs[int(np.floor(i / plot_size)), i % plot_size].hist(condition, bins='auto', color=colors(j / num_rois), alpha=.3, label=roi_names[j])
-            axs[int(np.floor(i / plot_size)), i % plot_size].set_title(condition_desc[i])
-            axs[int(np.floor(i / plot_size)), i % plot_size].set_xlim(left=-10, right=10)
+            print(
+                "roi",
+                j,
+                "cond",
+                i,
+                "mean",
+                np.mean(condition),
+                "dev",
+                np.std(condition),
+                "max mag",
+                np.max(np.abs(condition)),
+            )
+            axs[int(np.floor(i / plot_size)), i % plot_size].hist(
+                condition,
+                bins="auto",
+                color=colors(j / num_rois),
+                alpha=0.3,
+                label=roi_names[j],
+            )
+            axs[int(np.floor(i / plot_size)), i % plot_size].set_title(
+                condition_desc[i]
+            )
+            axs[int(np.floor(i / plot_size)), i % plot_size].set_xlim(
+                left=-10, right=10
+            )
     fig.show()
-    plt.legend(loc='lower left')
+    plt.legend(loc="lower left")
     plt.show()
 
 
-def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, colors, size_thresh=0, roi_name=None, ts_name=''):
+def _get_roi_time_course(
+    rois,
+    label_id,
+    fdata,
+    ax,
+    block_length,
+    block_order,
+    colors,
+    size_thresh=0,
+    roi_name=None,
+    ts_name="",
+):
     """
 
     :param num_rois:
@@ -946,9 +1187,17 @@ def _get_roi_time_course(rois, label_id, fdata, ax, block_length, block_order, c
     return mean_ts, ax, color_map
 
 
-def get_condition_time_series_comparision(functional_dirs, block_length, ima_order_num_map: Dict[str, int],
-                                          order_num_defs: Dict[str, List[int]], target_condition, output,
-                                          fname='epi_masked.nii.gz', pre_onset_trs=6, post_offset_trs=18):
+def get_condition_time_series_comparision(
+    functional_dirs,
+    block_length,
+    ima_order_num_map: Dict[str, int],
+    order_num_defs: Dict[str, List[int]],
+    target_condition,
+    output,
+    fname="epi_masked.nii.gz",
+    pre_onset_trs=6,
+    post_offset_trs=18,
+):
     """
     Goal is to take a set of epis that were recorded with different stimuli presentation order (needs to be a block
     cesign) and create a new functional file that compares the waveform of the functional blog with an average over
@@ -965,7 +1214,9 @@ def get_condition_time_series_comparision(functional_dirs, block_length, ima_ord
     :return:
     """
     total_length = pre_onset_trs + block_length + post_offset_trs
-    functional_dirs = [os.path.join(f, fname) if not os.path.isfile(f) else f for f in functional_dirs]
+    functional_dirs = [
+        os.path.join(f, fname) if not os.path.isfile(f) else f for f in functional_dirs
+    ]
     w, h, d, _ = nib.load(functional_dirs[0]).get_fdata().shape
     corrected_arr = np.zeros((w, h, d, total_length))
     avg_count = 0
@@ -974,11 +1225,17 @@ def get_condition_time_series_comparision(functional_dirs, block_length, ima_ord
         ima = os.path.basename(func_dir)
         order_num = ima_order_num_map[ima]
         cond_seq = order_num_defs[str(order_num)]
-        cond_idxs = np.array([i for i in range(len(cond_seq)) if cond_seq[i] == target_condition])
+        cond_idxs = np.array(
+            [i for i in range(len(cond_seq)) if cond_seq[i] == target_condition]
+        )
         onset_trs = cond_idxs * block_length
         data_nii = nib.load(func)
         data = data_nii.get_fdata()
-        padded_data = np.pad(data, pad_width=((0, 0), (0, 0), (0, 0), (pre_onset_trs, post_offset_trs)), mode='mean')
+        padded_data = np.pad(
+            data,
+            pad_width=((0, 0), (0, 0), (0, 0), (pre_onset_trs, post_offset_trs)),
+            mode="mean",
+        )
         # start ad stop below are adjusted to account for padding
         start_trs = onset_trs
         stop_trs = pre_onset_trs + onset_trs + block_length + post_offset_trs
@@ -989,12 +1246,16 @@ def get_condition_time_series_comparision(functional_dirs, block_length, ima_ord
             local_data = padded_data[:, :, :, start:stop]
             corrected_arr += local_data
     corrected_arr /= avg_count
-    order_compare_nifti = nib.Nifti1Image(corrected_arr, affine=data_nii.affine, header=data_nii.header)
+    order_compare_nifti = nib.Nifti1Image(
+        corrected_arr, affine=data_nii.affine, header=data_nii.header
+    )
     nib.save(order_compare_nifti, output)
     return output
 
 
-def segment_get_time_course(contrast_file: str, functional_file: str, block_length, block_order):
+def segment_get_time_course(
+    contrast_file: str, functional_file: str, block_length, block_order
+):
     c_nii = nib.load(contrast_file)
     c_data = np.array(c_nii.get_fdata())
     c_data = _norm_4d(c_data)
@@ -1007,37 +1268,53 @@ def segment_get_time_course(contrast_file: str, functional_file: str, block_leng
     mask[neg_seg > 0] += 1
     pos_seg[mask == 2] = -1
     neg_seg[mask == 2] = -1
-    brain_area = np.array(np.nonzero(f_data[:, :, :, 0] > np.mean(f_data[:, :, :, 0].flatten())))
-    brain_area = brain_area[:, np.random.choice(brain_area.shape[1], 2000, replace=False)]
+    brain_area = np.array(
+        np.nonzero(f_data[:, :, :, 0] > np.mean(f_data[:, :, :, 0].flatten()))
+    )
+    brain_area = brain_area[
+        :, np.random.choice(brain_area.shape[1], 2000, replace=False)
+    ]
     fig_3d = plt.figure()
     ax3d = Axes3D(fig_3d)
-    colors = plt.get_cmap('hsv')
+    colors = plt.get_cmap("hsv")
     for is_negative in [True, False]:
         if is_negative:
             seg = neg_seg
             num_rois = num_neg_rois
-            color = 'blue'
-            desc = 'negative'
+            color = "blue"
+            desc = "negative"
         else:
             seg = pos_seg
             num_rois = num_pos_rois
-            color = 'red'
-            desc = 'positive'
+            color = "red"
+            desc = "positive"
         fig_ts, axs_ts = plt.subplots(num_rois)
-        fig_ts.suptitle(desc + ' condition time series')
+        fig_ts.suptitle(desc + " condition time series")
         fig_ts.set_size_inches(8, 1.5 * num_rois)
         fig_ts.tight_layout()
         color_map = None
         for label_id in range(1, num_rois):
-            _, _, color_map = _get_roi_time_course(seg, label_id, f_data, axs_ts[label_id - 1], block_length, block_order, colors)
+            _, _, color_map = _get_roi_time_course(
+                seg,
+                label_id,
+                f_data,
+                axs_ts[label_id - 1],
+                block_length,
+                block_order,
+                colors,
+            )
             _plot_3d_scatter(seg, label_id, brain_area, ax3d, color)
-        _plot_3d_scatter(seg, -1, brain_area, ax3d, 'black')
+        _plot_3d_scatter(seg, -1, brain_area, ax3d, "black")
     if color_map:
-        fig_ts.legend([plt.Line2D([0], [0], color=colors(i), lw=2, alpha=.6) for i in color_map],
-                      ['condition ' + str(i) for i in range(len(color_map))])
+        fig_ts.legend(
+            [plt.Line2D([0], [0], color=colors(i), lw=2, alpha=0.6) for i in color_map],
+            ["condition " + str(i) for i in range(len(color_map))],
+        )
     seg = pos_seg + neg_seg
     all_seg = np.nonzero(seg != 0)
     cleaned_contrast = np.zeros_like(c_data)
     cleaned_contrast[all_seg] = c_data[all_seg]
-    con_nii = nib.Nifti1Image(cleaned_contrast, affine=c_nii.affine, header=c_nii.header)
+    con_nii = nib.Nifti1Image(
+        cleaned_contrast, affine=c_nii.affine, header=c_nii.header
+    )
     return con_nii

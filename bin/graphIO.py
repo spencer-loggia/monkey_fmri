@@ -15,26 +15,42 @@ class GraphIO:
     """
 
     @staticmethod
-    def infer_edge_attributes(graph: Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]):
+    def infer_edge_attributes(
+        graph: Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph],
+    ):
         if type(graph) in [nx.MultiDiGraph, nx.MultiGraph]:
-            edge_att_names = set(itertools.chain(*[list(graph.edges[n].keys()) for n in graph.edges(keys=True)]))
+            edge_att_names = set(
+                itertools.chain(
+                    *[list(graph.edges[n].keys()) for n in graph.edges(keys=True)]
+                )
+            )
         else:
-            edge_att_names = set(itertools.chain(*[list(graph.edges[n].keys()) for n in graph.edges()]))
+            edge_att_names = set(
+                itertools.chain(*[list(graph.edges[n].keys()) for n in graph.edges()])
+            )
         return edge_att_names
 
     @staticmethod
-    def infer_node_attributes(graph: Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]):
+    def infer_node_attributes(
+        graph: Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph],
+    ):
         # find edge attributes names if not provided.
-        node_att_names = set(itertools.chain(*[list(graph.nodes[n].keys()) for n in graph.nodes()]))
+        node_att_names = set(
+            itertools.chain(*[list(graph.nodes[n].keys()) for n in graph.nodes()])
+        )
         return node_att_names
 
     @staticmethod
-    def infer_graph_attributes(graph: Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph]):
+    def infer_graph_attributes(
+        graph: Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph],
+    ):
         graph_att_names = set(graph.graph.keys())
         return graph_att_names
 
     @staticmethod
-    def multigraph_to_graphs(mg: Union[nx.MultiDiGraph, nx.MultiGraph]) -> Dict[Hashable, Union[nx.Graph, nx.DiGraph]]:
+    def multigraph_to_graphs(
+        mg: Union[nx.MultiDiGraph, nx.MultiGraph],
+    ) -> Dict[Hashable, Union[nx.Graph, nx.DiGraph]]:
         """
         Convert a networkx multigraph to a dictionary of graphs.
         :param mg: The input MultiGraph or MultiDiGraph to convert,
@@ -45,7 +61,9 @@ class GraphIO:
         elif type(mg) is nx.MultiDiGraph:
             g_class = nx.DiGraph
         else:
-            raise TypeError("Must give a MultiGraph or MultiDiGraph to convert_multigraph")
+            raise TypeError(
+                "Must give a MultiGraph or MultiDiGraph to convert_multigraph"
+            )
         graphs = {}
         for edge in mg.edges(data=True, keys=True):
             link = tuple(edge[:2])
@@ -60,7 +78,9 @@ class GraphIO:
         return graphs
 
     @classmethod
-    def flatten_multigraph(cls, mg: Union[nx.MultiDiGraph, nx.MultiGraph], sum_weight=True) -> Union[nx.Graph, nx.DiGraph]:
+    def flatten_multigraph(
+        cls, mg: Union[nx.MultiDiGraph, nx.MultiGraph], sum_weight=True
+    ) -> Union[nx.Graph, nx.DiGraph]:
         """
         flattens a multigraph into a single graph
         :param sum_weight: whether to sum weights of duplicate edges
@@ -73,16 +93,18 @@ class GraphIO:
             elif type(mg) is nx.MultiDiGraph:
                 G = nx.DiGraph()
             else:
-                raise TypeError("Must give a MultiGraph or MultiDiGraph to convert_multigraph")
+                raise TypeError(
+                    "Must give a MultiGraph or MultiDiGraph to convert_multigraph"
+                )
             G.add_nodes_from(mg.nodes(data=True))
             for u, v, data in mg.edges(data=True):
-                w = data['weight'] if 'weight' in data else 1.0
+                w = data["weight"] if "weight" in data else 1.0
                 if G.has_edge(u, v):
-                    G[u][v]['weight'] += w
+                    G[u][v]["weight"] += w
                 else:
                     G.add_edge(u, v, weight=w)
                 for att_key in data:
-                    if 'weight' not in att_key:
+                    if "weight" not in att_key:
                         G[u][v][att_key] = data[att_key]
             for key in mg.graph.keys():
                 G.graph[key] = mg.graph[key]
@@ -92,13 +114,18 @@ class GraphIO:
             elif type(mg) is nx.MultiDiGraph:
                 G = nx.DiGraph(mg)
             else:
-                raise TypeError("Must give a MultiGraph or MultiDiGraph to convert_multigraph")
+                raise TypeError(
+                    "Must give a MultiGraph or MultiDiGraph to convert_multigraph"
+                )
         return G
 
     @staticmethod
-    def graphs_to_multigraph(graphs: Union[List[Union[nx.Graph, nx.DiGraph]],
-                                           Dict[Hashable, Union[nx.Graph, nx.DiGraph]]]
-                             ) -> Union[nx.MultiGraph, nx.MultiDiGraph]:
+    def graphs_to_multigraph(
+        graphs: Union[
+            List[Union[nx.Graph, nx.DiGraph]],
+            Dict[Hashable, Union[nx.Graph, nx.DiGraph]],
+        ],
+    ) -> Union[nx.MultiGraph, nx.MultiDiGraph]:
         """
         Get a nx MultiGraph or MultiDiGraph from list of nx Graphs or DiGraphs.
         :param graphs: The list or dictionary of input graphs to convert. If list, indexes are used as edge keys. If
@@ -126,7 +153,9 @@ class GraphIO:
         return multi_graph
 
     @classmethod
-    def get_adjacency_representation(cls, graph: Union[nx.Graph, nx.DiGraph, nx.MultiDiGraph, nx.MultiGraph]):
+    def get_adjacency_representation(
+        cls, graph: Union[nx.Graph, nx.DiGraph, nx.MultiDiGraph, nx.MultiGraph]
+    ):
         """
         Get the graph as an adjacency matrix, a list of node attribute DataFrames, and a list of edge attribute
         DataFrames. If a multigraph is passed, it will be converted to a dictionary of graphs keyed on edges keys via
@@ -152,7 +181,7 @@ class GraphIO:
 
         for key in graph.keys():
             g = graph[key]
-            np_adj = nx.to_numpy_matrix(g, weight='weight')
+            np_adj = nx.to_numpy_matrix(g, weight="weight")
             ids = g.nodes()
             g = nx.convert_node_labels_to_integers(g)
             edge_data = g.edges(data=True)
@@ -160,10 +189,12 @@ class GraphIO:
             node_data = g.nodes(data=True)
             node_data = {n[0]: n[1] for n in node_data}
             for i, n in enumerate(ids):
-                node_data[i]['original_node_label'] = n
-            out[key] = (np_adj,
-                        pd.DataFrame.from_dict(node_data, orient='index'),
-                        pd.DataFrame.from_dict(edge_data, orient='index'))
+                node_data[i]["original_node_label"] = n
+            out[key] = (
+                np_adj,
+                pd.DataFrame.from_dict(node_data, orient="index"),
+                pd.DataFrame.from_dict(edge_data, orient="index"),
+            )
 
         if len(out) == 1:
             return out[0]
@@ -171,10 +202,12 @@ class GraphIO:
             return out
 
     @classmethod
-    def dump(cls,
-             graph: Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph],
-             path: str,
-             create_using=nx.readwrite.node_link_data):
+    def dump(
+        cls,
+        graph: Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph],
+        path: str,
+        create_using=nx.readwrite.node_link_data,
+    ):
         """
         Write graph to disk at specified path, using the json file spec.
         :param create_using: function to use for serialization
@@ -187,38 +220,49 @@ class GraphIO:
         edge_att_names = cls.infer_edge_attributes(graph)
         graph_att_names = cls.infer_graph_attributes(graph)
         all_att = node_att_names | edge_att_names | graph_att_names
-        reserved = {'id', 'source', 'target', 'key'}
+        reserved = {"id", "source", "target", "key"}
 
         if len(reserved.intersection(all_att)) > 0:
-            raise KeyError("Keywords id, source, target, and key are reserved in this format. Any attributes using "
-                           "these keywords must be renamed")
+            raise KeyError(
+                "Keywords id, source, target, and key are reserved in this format. Any attributes using "
+                "these keywords must be renamed"
+            )
 
         if False in [type(n) == str for n in all_att]:
-            print("WARNING: Non-string attribute names detected. "
-                  "These will be converted to strings for json compliance", sys.stderr)
+            print(
+                "WARNING: Non-string attribute names detected. "
+                "These will be converted to strings for json compliance",
+                sys.stderr,
+            )
         try:
             node_link = create_using(graph)
         except nx.NetworkXError:
             raise KeyError("Node link map is corrupted")
 
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(node_link, f)
 
     @classmethod
-    def load(cls, path: str, load_using=nx.readwrite.node_link_graph) -> Tuple[Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph], set, set, set]:
+    def load(
+        cls, path: str, load_using=nx.readwrite.node_link_graph
+    ) -> Tuple[
+        Union[nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph], set, set, set
+    ]:
         """
         load a json graph from disk.
         :param path: location of graph file.
         :return (graph object, edge attributes, node attributes, graph attributes)
         """
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             data_dict = json.load(f)
 
         try:
             graph = nx.readwrite.node_link_graph(data_dict)
         except nx.NetworkXError:
-            raise IOError("Unable to graph. Make sure the file is not corrupted, and"
-                          "uses the standard source, target, id, and key field names")
+            raise IOError(
+                "Unable to graph. Make sure the file is not corrupted, and"
+                "uses the standard source, target, id, and key field names"
+            )
 
         e_att_names = cls.infer_edge_attributes(graph)
         n_att_names = cls.infer_node_attributes(graph)

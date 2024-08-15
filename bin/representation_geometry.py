@@ -10,7 +10,7 @@ import graspologic as gr
 import sklearn as sk
 from scipy.stats import spearmanr
 
-_distance_metrics_ = ['euclidian', 'pearson', 'spearman', 'dot', 'cosine']
+_distance_metrics_ = ["euclidian", "pearson", "spearman", "dot", "cosine"]
 
 
 def pdist_general(X, metric, **kwargs):
@@ -33,7 +33,7 @@ def _pad_to_cube(arr: np.ndarray, time_axis=3):
     :return:
     """
     if time_axis < np.ndim(arr):
-        size = max(arr.shape[:time_axis] + arr.shape[time_axis+1:])
+        size = max(arr.shape[:time_axis] + arr.shape[time_axis + 1 :])
         print(size)
     else:
         size = max(arr.shape)
@@ -46,7 +46,7 @@ def _pad_to_cube(arr: np.ndarray, time_axis=3):
             ax_pad[i] = (int(np.floor(ideal)), int(np.ceil(ideal)))
         else:
             ax_pad[i] = (0, 0)
-    arr = np.pad(arr, ax_pad, mode='constant', constant_values=(0, 0))
+    arr = np.pad(arr, ax_pad, mode="constant", constant_values=(0, 0))
     return arr
 
 
@@ -74,16 +74,18 @@ def _pearson_pdist(arr: torch.Tensor):
     return coef[indices[0], indices[1]]
 
 
-def dissimilarity(beta: torch.Tensor, metric='dot'):
+def dissimilarity(beta: torch.Tensor, metric="dot"):
     if len(beta.shape) != 3:
-        raise IndexError("beta should be 3 dimensional and have batch on dim 0, observations on dim 1 and conditions on dim 2")
+        raise IndexError(
+            "beta should be 3 dimensional and have batch on dim 0, observations on dim 1 and conditions on dim 2"
+        )
     if metric not in _distance_metrics_:
-        raise ValueError('metric must be one of ' + str(_distance_metrics_))
-    elif metric == 'dot':
+        raise ValueError("metric must be one of " + str(_distance_metrics_))
+    elif metric == "dot":
         rdm = _dot_pdist(beta, normalize=False)
-    elif metric == 'cosine':
+    elif metric == "cosine":
         rdm = _dot_pdist(beta, normalize=True)
-    elif metric == 'pearson':
+    elif metric == "pearson":
         rdm = _pearson_pdist(beta)
     else:
         raise NotImplementedError
@@ -108,11 +110,17 @@ def spearman_correlation(x: torch.Tensor, y: torch.Tensor):
 
     n = x.size(0)
     upper = 6 * torch.sum((x_rank - y_rank).pow(2))
-    down = n * (n ** 2 - 1.0)
+    down = n * (n**2 - 1.0)
     return 1.0 - (upper / down)
 
 
-def pairwise_rsa(beta: torch.Tensor, atlas: torch.Tensor, min_roi_dim=5, ignore_atlas_base=True, metric='cosine'):
+def pairwise_rsa(
+    beta: torch.Tensor,
+    atlas: torch.Tensor,
+    min_roi_dim=5,
+    ignore_atlas_base=True,
+    metric="cosine",
+):
     if type(beta) is np.ndarray:
         beta = torch.from_numpy(beta)
     if type(atlas) is np.ndarray:
@@ -156,7 +164,7 @@ def pca(betas: torch.Tensor, brain_mask=None, n_components=2, noisy=False):
     eig_vals = eig_vals[sort_idx]
     # eig_vecs = eig_vecs * eig_vals
     if noisy:
-        proj_mat = eig_vecs[:, 1:n_components+1]
+        proj_mat = eig_vecs[:, 1 : n_components + 1]
     else:
         proj_mat = eig_vecs[:, :n_components]
     projected_betas = betas @ proj_mat
@@ -167,6 +175,7 @@ class LogisticDecoder:
     """
     Class designed to fit a single task on a singe voxel set (e.g. roi)
     """
+
     def __init__(self, in_dim, out_dim):
         """
         Constructs a new linear decoder
@@ -181,18 +190,29 @@ class LogisticDecoder:
     def _reshape_time_course(self, X):
         X = X.reshape(-1, X.shape[-1]).T  # voxels x n_samples
         if X.shape[0] != self.in_dim:
-            raise ValueError("time course voxels flat must be the shape of in_dim attribute.")
+            raise ValueError(
+                "time course voxels flat must be the shape of in_dim attribute."
+            )
         return X
 
     def get_target_loss_stats(self, y_target, y_hat):
         loss = torch.nn.CrossEntropyLoss()
         c_entropy = loss(y_hat, y_target)
         pred_labels = torch.argmax(y_hat, dim=1)
-        confusion = confusion_matrix(y_target.detach().numpy(), pred_labels.detach().numpy(),
-                                     labels=np.arange(self.out_dim))
+        confusion = confusion_matrix(
+            y_target.detach().numpy(),
+            pred_labels.detach().numpy(),
+            labels=np.arange(self.out_dim),
+        )
         return pred_labels, c_entropy, confusion
 
-    def fit(self, X: torch.Tensor, targets: torch.Tensor, optim_threshold=1e-9, cutoff_epoch=10000):
+    def fit(
+        self,
+        X: torch.Tensor,
+        targets: torch.Tensor,
+        optim_threshold=1e-9,
+        cutoff_epoch=10000,
+    ):
         """
         fit (compute beta coefficients for) this linear model.
         :param X:
@@ -202,9 +222,13 @@ class LogisticDecoder:
         """
         # reshape to n_blocks x all
         X = self._reshape_time_course(X)
-        target_arr = torch.nn.functional.one_hot(targets, num_classes=self.out_dim)  # n_blocks x k
-        self.beta = torch.nn.Parameter(torch.inverse(X.T @ X) @ X.T @ target_arr.double())
-        optimizer = torch.optim.Adam(lr=.01, params=[self.beta])
+        target_arr = torch.nn.functional.one_hot(
+            targets, num_classes=self.out_dim
+        )  # n_blocks x k
+        self.beta = torch.nn.Parameter(
+            torch.inverse(X.T @ X) @ X.T @ target_arr.double()
+        )
+        optimizer = torch.optim.Adam(lr=0.01, params=[self.beta])
         cross_entropy = torch.nn.CrossEntropyLoss()
         print("Initialized Logistic Optimizer...")
         grad_dt = torch.inf
@@ -217,7 +241,11 @@ class LogisticDecoder:
             class_loss = cross_entropy(class_probs, targets)
             class_loss.backward()
             optimizer.step()
-            grad_dt = (torch.linalg.norm((old_beta.flatten() - self.beta.data.flatten())).detach().clone()) / len(old_beta.flatten())
+            grad_dt = (
+                torch.linalg.norm((old_beta.flatten() - self.beta.data.flatten()))
+                .detach()
+                .clone()
+            ) / len(old_beta.flatten())
             print("Epoch", epoch, "gradient delta", grad_dt.item())
             epoch += 1
         return self.beta
@@ -253,7 +281,9 @@ class ROIDecoder:
         self.atlas: torch.Tensor = atlas
         self.roi_lookup: dict = roi_lookup
         self.out_dim: int = out_dim
-        self.models: List[Union[None, LogisticDecoder]] = [None for _ in range(len(roi_lookup))]
+        self.models: List[Union[None, LogisticDecoder]] = [
+            None for _ in range(len(roi_lookup))
+        ]
 
     def fit(self, X, targets, optim_threshold=1e-9, cutoff_epoch=10000):
         """
@@ -266,7 +296,12 @@ class ROIDecoder:
             roi_time_course = X[self.atlas == roi_idx]
             roi_time_course = roi_time_course.reshape(roi_time_course.shape[0], -1)
             roi_model = LogisticDecoder(roi_time_course.shape[1], self.out_dim)
-            roi_model.fit(roi_time_course, targets, optim_threshold=optim_threshold, cutoff_epoch=cutoff_epoch)
+            roi_model.fit(
+                roi_time_course,
+                targets,
+                optim_threshold=optim_threshold,
+                cutoff_epoch=cutoff_epoch,
+            )
             self.models[i] = roi_model
 
     def predict(self, X, targets):
@@ -281,21 +316,28 @@ class ROIDecoder:
 
 
 class SearchLightDecoder:
-
-    def __init__(self, brain_mask, roi_loookup, out_dim, kernel=4, dev='cuda:0'):
+    def __init__(self, brain_mask, roi_loookup, out_dim, kernel=4, dev="cuda:0"):
         self.kernel = kernel
         self.out_dim = out_dim
         self.lookup = roi_loookup
         self.device = torch.device(dev)
-        self.ce_loss = torch.nn.CrossEntropyLoss(reduction='none')
+        self.ce_loss = torch.nn.CrossEntropyLoss(reduction="none")
         self.softmax = torch.nn.Softmax(dim=1)
         self.conv1 = None
         self.conv2 = None
 
-    def fit(self, X, targets, optim_threshold=1e-9, cutoff_epoch=5000, lr=.0001, batch_size=10):
-        if self.device != 'cpu':
+    def fit(
+        self,
+        X,
+        targets,
+        optim_threshold=1e-9,
+        cutoff_epoch=5000,
+        lr=0.0001,
+        batch_size=10,
+    ):
+        if self.device != "cpu":
             torch.cuda.empty_cache()
-        X = _pad_to_cube(X) # spatial, spatial, spatial, batch
+        X = _pad_to_cube(X)  # spatial, spatial, spatial, batch
         X = torch.from_numpy(X.transpose((3, 0, 1, 2))).float()
         X = torch.unsqueeze(X, dim=1)  # batch, channels, spatial, spatial, spatial
         print(X.shape)
@@ -304,22 +346,28 @@ class SearchLightDecoder:
         # computing padding that maintains spatial dims
         pad = (((in_spatial - 1) * stride) - in_spatial + self.kernel) / 2
         if not pad.is_integer() or pad >= self.kernel:
-            print('kernel', self.kernel, "is invalid.")
+            print("kernel", self.kernel, "is invalid.")
             return
         pad = int(pad)
         print(pad)
-        self.conv1 = torch.nn.Conv3d(kernel_size=self.kernel,
-                                     in_channels=1,
-                                     out_channels=8,
-                                     padding=pad,
-                                     dtype=torch.float,
-                                     device=self.device)
-        self.conv2 = torch.nn.Conv3d(kernel_size=1,
-                                     in_channels=8,
-                                     out_channels=self.out_dim,
-                                     dtype=torch.float,
-                                     device=self.device)
-        optimizer = torch.optim.Adam(params=[self.conv1.weight, self.conv2.weight], lr=lr)
+        self.conv1 = torch.nn.Conv3d(
+            kernel_size=self.kernel,
+            in_channels=1,
+            out_channels=8,
+            padding=pad,
+            dtype=torch.float,
+            device=self.device,
+        )
+        self.conv2 = torch.nn.Conv3d(
+            kernel_size=1,
+            in_channels=8,
+            out_channels=self.out_dim,
+            dtype=torch.float,
+            device=self.device,
+        )
+        optimizer = torch.optim.Adam(
+            params=[self.conv1.weight, self.conv2.weight], lr=lr
+        )
         epoch = 0
         targets = targets.reshape(len(targets), 1, 1, 1)
         targets = torch.tile(targets, (1, in_spatial, in_spatial, in_spatial))
@@ -329,14 +377,23 @@ class SearchLightDecoder:
             perm_targets = targets[perm_idxs].to(self.device)
             epoch_loss = 0
             for batch_start in range(0, len(targets), batch_size):
-
-                x_batch = perm_x[batch_start:min(batch_start + batch_size, len(targets))]
-                y_batch = perm_targets[batch_start:min(batch_start + batch_size, len(targets))]
+                x_batch = perm_x[
+                    batch_start : min(batch_start + batch_size, len(targets))
+                ]
+                y_batch = perm_targets[
+                    batch_start : min(batch_start + batch_size, len(targets))
+                ]
                 optimizer.zero_grad()
                 h = self.conv1(x_batch)
-                h = self.conv2(h)  # a (samples, classes, spatial1, spatial2, spatial3) tensor
-                ce = self.ce_loss(h, y_batch)  # loss per hyper-voxel (voxel is actually result of linear convolution)
-                loss = torch.mean(ce.flatten()) # 3rt the ce so we care more about making low examples lower
+                h = self.conv2(
+                    h
+                )  # a (samples, classes, spatial1, spatial2, spatial3) tensor
+                ce = self.ce_loss(
+                    h, y_batch
+                )  # loss per hyper-voxel (voxel is actually result of linear convolution)
+                loss = torch.mean(
+                    ce.flatten()
+                )  # 3rt the ce so we care more about making low examples lower
                 loss.backward()
                 optimizer.step()
                 old_loss = loss.detach().cpu().clone()
@@ -352,14 +409,13 @@ class SearchLightDecoder:
         targets = targets.reshape(len(targets), 1, 1, 1)
         targets = torch.tile(targets, (1, in_spatial, in_spatial, in_spatial))
         h = self.conv1.to("cpu")(X)
-        h = self.conv2.to('cpu')(h)
+        h = self.conv2.to("cpu")(h)
         yhat = self.softmax(h)
         ce = self.ce_loss(yhat, targets)
         return yhat, ce
 
 
 class SearchlightDissimilarity:
-
     def __init__(self, betas, desired_kernel_size=5):
         """
 
@@ -377,13 +433,25 @@ class SearchlightDissimilarity:
         self.betas = betas
         self.spatial = self.betas.shape[-1]
         self.features = self.betas.shape[1]
-        self.kernel, self.pad = util.conv_identity_params(self.spatial, desired_kernel_size)
+        self.kernel, self.pad = util.conv_identity_params(
+            self.spatial, desired_kernel_size
+        )
         self.rdms = None
 
     def fit(self, stride=5):
-        unfolded = util.unfold_nd(self.betas, kernel_size=self.kernel, padding=self.pad, spatial_dims=3, stride=stride)
-        unfolded = unfolded.view(self.features, self.kernel**3, unfolded.shape[-1]).transpose(0, 2)  # num folds, fold_size, features
-        self.rdms = torch.nan_to_num(dissimilarity(unfolded, metric='cosine'), nan=0.)  # num_folds, dissim_vec
+        unfolded = util.unfold_nd(
+            self.betas,
+            kernel_size=self.kernel,
+            padding=self.pad,
+            spatial_dims=3,
+            stride=stride,
+        )
+        unfolded = unfolded.view(
+            self.features, self.kernel**3, unfolded.shape[-1]
+        ).transpose(0, 2)  # num folds, fold_size, features
+        self.rdms = torch.nan_to_num(
+            dissimilarity(unfolded, metric="cosine"), nan=0.0
+        )  # num_folds, dissim_vec
 
     def predict(self):
         """

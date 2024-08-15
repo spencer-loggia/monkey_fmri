@@ -11,14 +11,14 @@ def dir_input(msg: str):
 
 
 def bool_input(msg: str):
-    tkn = ''
-    while tkn not in ['y', 'n']:
-        tkn = input(msg + ' (y / n) ').strip().lower()
-    return tkn == 'y'
+    tkn = ""
+    while tkn not in ["y", "n"]:
+        tkn = input(msg + " (y / n) ").strip().lower()
+    return tkn == "y"
 
 
 def numeric_input(msg: str):
-    tkn = ''
+    tkn = ""
     while not tkn.isnumeric():
         tkn = input(msg)
     return float(tkn)
@@ -49,13 +49,15 @@ def tuple_list_input(msg: str, cast=int):
     grammatical = False
     tuples = []
     while not grammatical:
-        sent = input(msg + ' <format: (item_11, ..., item_1n), ..., (item_n1, ..., item_nn)> : ')
-        sent = ''.join(sent.split()) # remove whitespace
+        sent = input(
+            msg + " <format: (item_11, ..., item_1n), ..., (item_n1, ..., item_nn)> : "
+        )
+        sent = "".join(sent.split())  # remove whitespace
         sent = sent[1:-1]
-        tkns = sent.split('),(')
+        tkns = sent.split("),(")
         for tkn in tkns:
             try:
-                tup = eval('[' + tkn + ']')
+                tup = eval("[" + tkn + "]")
                 if type(tup) is not list:
                     raise ValueError
             except (ValueError, SyntaxError):
@@ -64,7 +66,7 @@ def tuple_list_input(msg: str, cast=int):
             try:
                 tup = [cast(t) for t in tup]
             except ValueError:
-                print('failed to cast some values to ' + str(cast))
+                print("failed to cast some values to " + str(cast))
                 continue
             tuples.append(tuple(tup))
         break
@@ -78,15 +80,15 @@ def str_list_input(msg: str):
 
 
 def select_option_input(option_desc: List[str]):
-    print('********************************')
+    print("********************************")
     for i, option in enumerate(option_desc):
-        print(i + 1, ':', option_desc[i])
+        print(i + 1, ":", option_desc[i])
     good_select = False
     help_req = False
     while not good_select:
         try:
-            choice = input('Enter the number for the desired operation: ')
-            if '-h' in choice:
+            choice = input("Enter the number for the desired operation: ")
+            if "-h" in choice:
                 choice = choice.split()[0]
                 help_req = True
             elif len(choice) > 0 and choice[0] == "-":

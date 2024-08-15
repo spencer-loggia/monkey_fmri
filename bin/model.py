@@ -27,18 +27,20 @@ def _compute_roi_dim(num, dist_from_root, root_spatial_dim):
     :param num:
     :return: a tuple defining the dimensionality of a computation roi, (channels, spatial1, spatial2)
     """
-    max_possible_dim = math.ceil(num ** .5)
+    max_possible_dim = math.ceil(num**0.5)
     allowed_dim = math.inf
     dist_from_root = float(dist_from_root)
     root_spatial_dim = float(root_spatial_dim)
     while allowed_dim > max_possible_dim:
         allowed_dim = max(root_spatial_dim * 2 ** (-1 * dist_from_root), 1)
         dist_from_root += 1
-    channel_dim = math.ceil(num / (allowed_dim ** 2))
+    channel_dim = math.ceil(num / (allowed_dim**2))
     return 1, int(channel_dim), int(allowed_dim), int(allowed_dim)
 
 
-def _compute_convolutional_sequence(in_spatial, out_spatial, in_channels, out_channels, mean=0., std=.01):
+def _compute_convolutional_sequence(
+    in_spatial, out_spatial, in_channels, out_channels, mean=0.0, std=0.01
+):
     """
     Return a convolution, spatial rescaling, and hyperbolic tangent sequence that maps the units of one node to the
     units of another.
@@ -49,7 +51,7 @@ def _compute_convolutional_sequence(in_spatial, out_spatial, in_channels, out_ch
     :return:
     """
     stride = 1
-    pad = .1
+    pad = 0.1
     kernel = min(6, in_spatial)
     while round(pad) != pad or pad >= kernel:
         # compute padding that will maintain spatial dims during actual conv
@@ -63,10 +65,16 @@ def _compute_convolutional_sequence(in_spatial, out_spatial, in_channels, out_ch
         assert in_spatial / rescale_kernel == out_spatial
     else:
         rescale_kernel = int(out_spatial / in_spatial)
-        rescale = torch.nn.Upsample(scale_factor=rescale_kernel, mode='nearest')
+        rescale = torch.nn.Upsample(scale_factor=rescale_kernel, mode="nearest")
         assert in_spatial * rescale_kernel == out_spatial
-    conv = torch.nn.Conv2d(kernel_size=int(kernel), padding=int(pad), stride=1, in_channels=int(in_channels),
-                           out_channels=int(out_channels), bias=False)
+    conv = torch.nn.Conv2d(
+        kernel_size=int(kernel),
+        padding=int(pad),
+        stride=1,
+        in_channels=int(in_channels),
+        out_channels=int(out_channels),
+        bias=False,
+    )
     weights = torch.nn.Parameter(torch.normal(mean, std, size=conv.weight.shape))
     conv.weight = weights
     activation = torch.nn.Tanh()
@@ -81,19 +89,26 @@ def exp_decay(cur_x, start_y, stop_y, stop_x):
 
 
 class BrainMimic:
-
-    def __init__(self, structure: nx.Graph, input_node,
-                 units_per_voxel=10, stimuli_shape=(1, 3, 64, 64), start_lr=.0001):
+    def __init__(
+        self,
+        structure: nx.Graph,
+        input_node,
+        units_per_voxel=10,
+        stimuli_shape=(1, 3, 64, 64),
+        start_lr=0.0001,
+    ):
         structure = nx.to_directed(structure)
         # add intra-node connectivity
         for n in structure.nodes:
             structure.add_edge(n, n)
-        self.brain = ReverbNetwork(structure, node_shape=stimuli_shape, input_node=input_node)
+        self.brain = ReverbNetwork(
+            structure, node_shape=stimuli_shape, input_node=input_node
+        )
         self.rdm_loss_fxn = torch.nn.MSELoss()
         self.stim_shape = stimuli_shape
         self.structure = structure
 
-    def prune_graph(self, prune_factor=.05, min_edges=30, verbose=True):
+    def prune_graph(self, prune_factor=0.05, min_edges=30, verbose=True):
         """
         TODO: FIX
         Deletes low ranked node edges.
@@ -104,8 +119,13 @@ class BrainMimic:
         print("current number edges:", len(self.brain.edges()))
         if len(self.brain.edges()) <= min_edges:
             return
-        total_weights = torch.stack([torch.mean(torch.abs(res[2]['sequence'][0].weight))
-                                     for res in self.brain.edges(data=True)], dim=0)
+        total_weights = torch.stack(
+            [
+                torch.mean(torch.abs(res[2]["sequence"][0].weight))
+                for res in self.brain.edges(data=True)
+            ],
+            dim=0,
+        )
         total_weights, _ = torch.sort(total_weights)
         mean_weight = torch.mean(total_weights).detach().item()
         print("average weight :", mean_weight)
@@ -115,23 +135,35 @@ class BrainMimic:
             if s == -1:
                 # cant disconnect exp
                 continue
-            link_weight = torch.mean(torch.abs(data['sequence'][0].weight).flatten())
+            link_weight = torch.mean(torch.abs(data["sequence"][0].weight).flatten())
             if abs(link_weight) <= cutoff:
                 self.brain.remove_edge(s, t)
                 if verbose:
-                    print("Pruned edge ", self.brain.nodes[s]['roi_name'], '->', self.brain.nodes[t]['roi_name'],
-                          "with weight", link_weight.detach().item())
+                    print(
+                        "Pruned edge ",
+                        self.brain.nodes[s]["roi_name"],
+                        "->",
+                        self.brain.nodes[t]["roi_name"],
+                        "with weight",
+                        link_weight.detach().item(),
+                    )
         # remove any edges that become disconnected from stimulus
-        reachable = nx.descendants(self.brain, self.head_node) | {self.head_node,
-                                                                  -1}  # all nodes reachable from head, plus head
+        reachable = nx.descendants(self.brain, self.head_node) | {
+            self.head_node,
+            -1,
+        }  # all nodes reachable from head, plus head
         # itself and stimuli pseudo-node
         for node in list(self.brain.nodes()):
             if node not in reachable:
                 if verbose:
-                    print("Removed disconnected node ", self.brain.nodes[node]['roi_name'])
+                    print(
+                        "Removed disconnected node ", self.brain.nodes[node]["roi_name"]
+                    )
                 self.brain.remove_node(node)
 
-    def beta_dissimilarity_loss(self, activation_states, run_list, num_conditions, paradigm_index, verbose=True):
+    def beta_dissimilarity_loss(
+        self, activation_states, run_list, num_conditions, paradigm_index, verbose=True
+    ):
         """
 
         :param activation_states: Dictionary keyed on nodes with list of state tensors of same length as run list. All
@@ -143,23 +175,32 @@ class BrainMimic:
                  representations at corresponding nodes in `self.structure`.
         """
         # this design matrix holds for all parallel stimuli in batch this epoch
-        design_matrix = torch.from_numpy(analysis.design_matrix_from_run_list(run_list,
-                                                                              num_conditions,
-                                                                              base_condition_idxs=[])).float()  # t x k
+        design_matrix = torch.from_numpy(
+            analysis.design_matrix_from_run_list(
+                run_list, num_conditions, base_condition_idxs=[]
+            )
+        ).float()  # t x k
         design_matrix = design_matrix[:, :-1]
-        loss = torch.Tensor([0.])
+        loss = torch.Tensor([0.0])
 
         # compute beta matrix from network activity, compute rdms on matrix, compare to brain rdms
         for node in activation_states.keys():
             time_course = torch.stack(activation_states[node], dim=1)  # batch x t x n
-            betas = torch.transpose(torch.inverse(design_matrix.T @ design_matrix) @ design_matrix.T @ time_course, 1,
-                                    2)  # batch x n x k
+            betas = torch.transpose(
+                torch.inverse(design_matrix.T @ design_matrix)
+                @ design_matrix.T
+                @ time_course,
+                1,
+                2,
+            )  # batch x n x k
             betas = torch.mean(betas, dim=0)  # average out batch dimmension
-            rdm = representation_geometry.dissimilarity(betas, metric='dot')
+            rdm = representation_geometry.dissimilarity(betas, metric="dot")
             # rdm.register_hook(lambda x: print(node, 'gradient:', x))
 
-            self.brain.nodes[node]['rdm'][paradigm_index] = rdm.detach().clone()
-            target_brain_rdm = torch.Tensor(self.structure.nodes[node]['rdm'][paradigm_index])
+            self.brain.nodes[node]["rdm"][paradigm_index] = rdm.detach().clone()
+            target_brain_rdm = torch.Tensor(
+                self.structure.nodes[node]["rdm"][paradigm_index]
+            )
             local_loss = self.rdm_loss_fxn(rdm, target_brain_rdm)
             loss = loss + local_loss
         loss = loss / len(self.brain.nodes)
@@ -167,7 +208,9 @@ class BrainMimic:
             print("computed beta coefficients")
         return loss
 
-    def linear_decode_classification_loss(self, decode_nodes: List[int], target_classes):
+    def linear_decode_classification_loss(
+        self, decode_nodes: List[int], target_classes
+    ):
         """
         We should be able to linearly decode some target from the decode nodes.
         :param decode_nodes: the node to attempt to decode stimuli from.
@@ -176,9 +219,21 @@ class BrainMimic:
         """
         raise NotImplementedError
 
-    def fit_rdms(self, stim_gen: List[PsychDataloader], super_epochs=10, epochs=30, stimulus_frames=20, batch_size=10,
-                 start_lr=.00001, final_lr=.00000001, prune_start=.1, prune_stop=.01, verbose=True, snapshot_out='./',
-                 reg_weight=.2):
+    def fit_rdms(
+        self,
+        stim_gen: List[PsychDataloader],
+        super_epochs=10,
+        epochs=30,
+        stimulus_frames=20,
+        batch_size=10,
+        start_lr=0.00001,
+        final_lr=0.00000001,
+        prune_start=0.1,
+        prune_stop=0.01,
+        verbose=True,
+        snapshot_out="./",
+        reg_weight=0.2,
+    ):
         """
         Attempt to find  structure for the brain network that matches observed geometry.
 
@@ -189,7 +244,7 @@ class BrainMimic:
         # optimize over all incoming edges with source node thats been computed.
 
         for node in self.brain.nodes():
-            self.brain.nodes[node]['rdm'] = [None for _ in stim_gen]
+            self.brain.nodes[node]["rdm"] = [None for _ in stim_gen]
 
         super_loss_history = []
         for super_epoch in range(super_epochs):
@@ -199,9 +254,9 @@ class BrainMimic:
             loss_history = []
 
             for epoch in range(epochs):
-                loss_history.append(0.)
+                loss_history.append(0.0)
                 self.optimizer.zero_grad()
-                epoch_loss = torch.Tensor([0.])
+                epoch_loss = torch.Tensor([0.0])
                 print("\n********************")
                 print("META: LOCAL Epoch # ", epoch, "(auper epoch", super_epoch, ")")
                 print("********************")
@@ -226,16 +281,25 @@ class BrainMimic:
                         # set batch size
                         # allocating memory in network for stimulus shapes
                         for node, data in self.brain.nodes(data=True):
-                            in_shape = list(data['shape'])
+                            in_shape = list(data["shape"])
                             in_shape[0] = batch_size
-                            self.brain.nodes[node]['neurons'] = torch.ones(in_shape) * self.default_state
+                            self.brain.nodes[node]["neurons"] = (
+                                torch.ones(in_shape) * self.default_state
+                            )
 
                         for i in range(stimulus_frames):
                             if verbose:
-                                print("\nPRESENTING cond", condition_names[cond.item()], "frame", i)
-                            stim = stim_cond[i % actual_stim_frames]  # cycle over stimframes if not enough in dataset
+                                print(
+                                    "\nPRESENTING cond",
+                                    condition_names[cond.item()],
+                                    "frame",
+                                    i,
+                                )
+                            stim = stim_cond[
+                                i % actual_stim_frames
+                            ]  # cycle over stimframes if not enough in dataset
                             # set internal state of stimulus input pseudo-node to equal this stimulus batch
-                            self.brain.nodes[-1]['neurons'] = stim
+                            self.brain.nodes[-1]["neurons"] = stim
                             run_list.append(cond)
                             nodes = list(self.brain.nodes())
                             random.shuffle(nodes)
@@ -250,18 +314,36 @@ class BrainMimic:
                             for node in nodes:
                                 if node == -1:
                                     continue
-                                self.brain.nodes[node]['neurons'] = activation_states[node][-1]
-                                activation_states[node][-1] = activation_states[node][-1].reshape(batch_size, -1)
+                                self.brain.nodes[node]["neurons"] = activation_states[
+                                    node
+                                ][-1]
+                                activation_states[node][-1] = activation_states[node][
+                                    -1
+                                ].reshape(batch_size, -1)
 
-                    paradigm_dissimilarity_loss = self.beta_dissimilarity_loss(activation_states, run_list,
-                                                                               len(cond_presentation_order), para_idx,
-                                                                               verbose=verbose)
-                    epoch_loss = epoch_loss + paradigm_dissimilarity_loss  # this could cause numerical instability ...
+                    paradigm_dissimilarity_loss = self.beta_dissimilarity_loss(
+                        activation_states,
+                        run_list,
+                        len(cond_presentation_order),
+                        para_idx,
+                        verbose=verbose,
+                    )
+                    epoch_loss = (
+                        epoch_loss + paradigm_dissimilarity_loss
+                    )  # this could cause numerical instability ...
 
                     # save states
-                    nx.write_gpickle(self.brain, os.path.join(snapshot_out, 'brain_mimic_epoch_' + str(epoch)))
+                    nx.write_gpickle(
+                        self.brain,
+                        os.path.join(snapshot_out, "brain_mimic_epoch_" + str(epoch)),
+                    )
                     if verbose:
-                        print("completed", str(paradigm), "LOSS = ", paradigm_dissimilarity_loss.detach().item())
+                        print(
+                            "completed",
+                            str(paradigm),
+                            "LOSS = ",
+                            paradigm_dissimilarity_loss.detach().item(),
+                        )
 
                 # finalize loss term
                 reg = self.weight_regularization(verbose=verbose)
@@ -271,15 +353,22 @@ class BrainMimic:
                 self.optimizer.step()
                 loss_history[-1] += epoch_loss.detach().item()
                 if verbose:
-                    print("COMPLETED super epoch", super_epoch, "epoch", epoch,
-                          "optimization subroutine: TOTAL LOSS = ", loss_history[-1], "REGULARIZATION = ",
-                          reg_weight * reg.detach().item())
+                    print(
+                        "COMPLETED super epoch",
+                        super_epoch,
+                        "epoch",
+                        epoch,
+                        "optimization subroutine: TOTAL LOSS = ",
+                        loss_history[-1],
+                        "REGULARIZATION = ",
+                        reg_weight * reg.detach().item(),
+                    )
             loss_history = np.array(loss_history)
             super_loss_history.append(loss_history)
             plt.plot(loss_history)
             plt.title("Super Epoch #" + str(super_epoch) + " epoch loss history")
             plt.show(block=False)
-            plt.pause(.001)
+            plt.pause(0.001)
             # remove unimportant node edges
             prune_factor = exp_decay(super_epoch, prune_start, prune_stop, super_epochs)
             self.prune_graph(prune_factor, verbose=verbose)

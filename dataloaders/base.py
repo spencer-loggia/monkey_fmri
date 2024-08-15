@@ -19,4 +19,3 @@ class PsychDataloader:
                                     List[condition_names]
         """
         pass
-
