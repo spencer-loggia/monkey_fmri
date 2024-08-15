@@ -32,15 +32,6 @@ from multiprocessing import Pool
 from skimage.measure import regionprops
 from sklearn.mixture import GaussianMixture
 
-try:
-    from sklearnex import patch_sklearn
-    from sklearnex.linear_model import LinearRegression
-
-    patch_sklearn()
-except ModuleNotFoundError:
-    print("Intel Hardware Acceleration is not enabled. ")
-    from sklearn.linear_model import LinearRegression
-
 import pandas as pd
 
 from mpl_toolkits.mplot3d import Axes3D
